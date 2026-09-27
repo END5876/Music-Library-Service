@@ -15,11 +15,13 @@
 //
 // API：
 //   GET  /health                                   健康檢查（不驗證金鑰）
-//   GET  /api/music/list                           列出整個音樂庫（filename / name / size / playCount）
+//   GET  /api/music/list                           列出整個音樂庫（filename / name / size）
 //   GET  /api/music/exists?filename=                檢查指定 filename 是否已存在
 //   GET  /api/music/file/*                          下載檔案內容（* 是相對於音樂庫根目錄的路徑）
 //   PUT  /api/music/file/*                          上傳／覆寫檔案內容（原始位元組，不做任何解析）
-//   POST /api/music/playcount/increment?filename=    播放次數 +1，回傳最新次數
+//
+// 這個服務刻意不提供播放次數功能：每個呼叫端 Bot 各自計算、各自
+// 記錄自己的播放次數，不透過這裡同步或集中管理。
 //
 // filename 的路徑分隔一律使用 '/'。
 
@@ -84,16 +86,6 @@ app.put('/api/music/file/*', (req, res) => {
       console.error('❌ [MusicLibrary] 寫入檔案失敗:', err.message);
       if (!res.headersSent) res.status(400).json({ error: err.message });
     });
-});
-
-// ── 播放次數 ──────────────────────────────────────────────
-app.post('/api/music/playcount/increment', async (req, res) => {
-  try {
-    const next = await store.incrementPlayCount(req.query.filename);
-    res.json({ filename: req.query.filename, playCount: next });
-  } catch (err) {
-    res.status(400).json({ error: err.message });
-  }
 });
 
 app.listen(PORT, () => {

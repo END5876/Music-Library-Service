@@ -20,7 +20,9 @@ header（未設定 `MUSIC_LIB_SECRET` 時不驗證，僅建議在完全信任的
 | GET | `/api/music/exists?filename=` | 檢查指定檔案是否存在 |
 | GET | `/api/music/file/*` | 下載檔案 |
 | PUT | `/api/music/file/*` | 上傳／覆寫檔案（原始位元組 body） |
-| POST | `/api/music/playcount/increment?filename=` | 播放次數 +1 |
+
+這個服務刻意不提供播放次數功能：每個呼叫端 Bot 各自計算、各自
+記錄自己的播放次數，不透過這裡同步或集中管理。
 
 ## 本機開發
 

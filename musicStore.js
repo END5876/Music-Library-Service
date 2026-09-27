@@ -17,14 +17,7 @@ const CACHE_SUBDIR = 'cache';
 const CACHE_DIR = path.join(MUSIC_DIR, CACHE_SUBDIR);
 const MAX_CACHE_SIZE_MB = parseInt(process.env.MAX_CACHE_SIZE_MB || '2048', 10);
 
-// 播放次數紀錄放在 MUSIC_DIR 的上一層，跟音樂庫內容本身分開存放，
-// 語意上這是「音樂庫的中繼資料」而不是「音樂庫的內容」。
-const PLAYCOUNT_PATH = path.join(MUSIC_DIR, '..', 'musicPlayCount.json');
-
 const SUPPORTED_EXTENSIONS = ['.mp3', '.wav', '.ogg', '.flac', '.m4a', '.aac'];
-
-let playCountMap = new Map();
-let playCountLoaded = false;
 
 // ════════════════════════════════════════════════════════
 //  基礎工具
@@ -32,8 +25,6 @@ let playCountLoaded = false;
 function ensureDirs() {
   if (!fs.existsSync(MUSIC_DIR)) fs.mkdirSync(MUSIC_DIR, { recursive: true });
   if (!fs.existsSync(CACHE_DIR)) fs.mkdirSync(CACHE_DIR, { recursive: true });
-  const playCountDir = path.dirname(PLAYCOUNT_PATH);
-  if (!fs.existsSync(playCountDir)) fs.mkdirSync(playCountDir, { recursive: true });
 }
 
 function normalizeSlashes(p) {
@@ -87,47 +78,12 @@ function walkFiles(dir) {
 }
 
 // ════════════════════════════════════════════════════════
-//  播放次數（集中式，取代過去各 Bot 各自的 musicPlayCount.json）
-// ════════════════════════════════════════════════════════
-function loadPlayCounts() {
-  if (playCountLoaded) return;
-  playCountLoaded = true;
-  try {
-    if (fs.existsSync(PLAYCOUNT_PATH)) {
-      const raw = JSON.parse(fs.readFileSync(PLAYCOUNT_PATH, 'utf-8'));
-      playCountMap = new Map(Object.entries(raw));
-      console.log(`[MusicLibrary] 已載入 ${playCountMap.size} 筆播放次數紀錄`);
-    }
-  } catch (err) {
-    console.warn('⚠️ [MusicLibrary] 播放次數紀錄載入失敗，使用空白紀錄:', err.message);
-    playCountMap = new Map();
-  }
-}
-
-function savePlayCounts() {
-  try {
-    ensureDirs();
-    fs.writeFileSync(PLAYCOUNT_PATH, JSON.stringify(Object.fromEntries(playCountMap), null, 2), 'utf-8');
-  } catch (err) {
-    console.error('❌ [MusicLibrary] 播放次數紀錄儲存失敗:', err.message);
-  }
-}
-
-async function incrementPlayCount(rawRelPath) {
-  const { relPath } = toSafeRelPath(rawRelPath);
-  loadPlayCounts();
-  const next = (playCountMap.get(relPath) || 0) + 1;
-  playCountMap.set(relPath, next);
-  savePlayCounts();
-  return next;
-}
-
-// ════════════════════════════════════════════════════════
 //  清單 / 存在檢查 / 讀取
+//  ★ 不含播放次數：每台呼叫端 Bot 各自計算自己的播放次數，
+//    這個服務只負責檔案本身，不記錄、不回傳播放次數。
 // ════════════════════════════════════════════════════════
 async function listAll() {
   ensureDirs();
-  loadPlayCounts();
 
   const allFiles = walkFiles(MUSIC_DIR);
 
@@ -145,13 +101,9 @@ async function listAll() {
         name: cleanDisplayName(`${sourcePrefix}${baseName}`),
         size: stat.size,
         mtimeMs: stat.mtimeMs,
-        playCount: playCountMap.get(relPath) || 0,
       };
     })
-    .sort((a, b) => {
-      if (b.playCount !== a.playCount) return b.playCount - a.playCount;
-      return a.name.localeCompare(b.name, 'zh-Hant');
-    });
+    .sort((a, b) => a.name.localeCompare(b.name, 'zh-Hant'));
 }
 
 async function exists(rawRelPath) {
@@ -262,5 +214,4 @@ module.exports = {
   exists,
   resolveForRead,
   writeFileFromStream,
-  incrementPlayCount,
 };
