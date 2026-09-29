@@ -1,0 +1,317 @@
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>音樂庫播放器</title>
+<style>
+  :root {
+    --bg: #fafafa; --panel: #fff; --text: #1c1c1e; --muted: #6e6e73;
+    --line: #e5e5ea; --accent: #5865f2; --accent-text: #fff; --hover: #f2f2f7; --active: #eef0ff;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #111214; --panel: #1b1c1f; --text: #f2f2f3; --muted: #9a9aa2;
+      --line: #2c2d31; --accent: #7983f5; --accent-text: #0d0e10; --hover: #24252a; --active: #262a4a;
+    }
+  }
+  * { box-sizing: border-box; }
+  html, body { height: 100%; margin: 0; }
+  body {
+    background: var(--bg); color: var(--text);
+    font: 15px/1.4 system-ui, -apple-system, "Noto Sans TC", "PingFang TC", "Microsoft JhengHei", sans-serif;
+    display: flex; flex-direction: column;
+  }
+  header {
+    display: flex; gap: 8px; align-items: center; padding: 12px 16px;
+    padding-top: calc(12px + env(safe-area-inset-top, 0px));
+    background: var(--panel); border-bottom: 1px solid var(--line);
+  }
+  header h1 { font-size: 17px; margin: 0; flex: 0 0 auto; }
+  header .count { color: var(--muted); font-size: 13px; flex: 1; }
+  input, select, button { font: inherit; color: inherit; }
+  input[type=search], input[type=password], select {
+    background: var(--bg); border: 1px solid var(--line); border-radius: 8px; padding: 8px 10px; min-width: 0;
+  }
+  button {
+    background: var(--panel); border: 1px solid var(--line); border-radius: 8px;
+    padding: 8px 12px; cursor: pointer;
+  }
+  button:hover { background: var(--hover); }
+  button.primary { background: var(--accent); color: var(--accent-text); border-color: var(--accent); }
+  button.on { background: var(--active); border-color: var(--accent); }
+  .toolbar { display: flex; gap: 8px; padding: 10px 16px; border-bottom: 1px solid var(--line); }
+  .toolbar input { flex: 1; }
+  #list { flex: 1; overflow-y: auto; margin: 0; padding: 0; list-style: none; }
+  #list li {
+    display: flex; gap: 10px; align-items: baseline; padding: 10px 16px;
+    border-bottom: 1px solid var(--line); cursor: pointer;
+  }
+  #list li:hover { background: var(--hover); }
+  #list li.current { background: var(--active); color: var(--accent); font-weight: 600; }
+  #list .idx { color: var(--muted); font-size: 12px; width: 32px; text-align: right; flex: 0 0 auto; }
+  #list .title { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  #list .size { color: var(--muted); font-size: 12px; flex: 0 0 auto; }
+  #empty { padding: 32px 16px; text-align: center; color: var(--muted); }
+  footer {
+    background: var(--panel); border-top: 1px solid var(--line);
+    padding: 10px 16px calc(10px + env(safe-area-inset-bottom, 0px));
+    display: flex; flex-direction: column; gap: 8px;
+  }
+  #nowPlaying { font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-height: 1.4em; }
+  #status { color: var(--muted); font-size: 12px; min-height: 1.2em; }
+  .controls { display: flex; gap: 6px; align-items: center; flex-wrap: wrap; }
+  audio { flex: 1; min-width: 180px; height: 36px; }
+  #login {
+    position: fixed; inset: 0; background: rgba(0,0,0,.55); display: none;
+    align-items: center; justify-content: center; padding: 16px; z-index: 10;
+  }
+  #login.show { display: flex; }
+  #login .box {
+    background: var(--panel); border-radius: 14px; padding: 24px; width: 100%; max-width: 340px;
+    display: flex; flex-direction: column; gap: 12px;
+  }
+  #login h2 { margin: 0; font-size: 18px; }
+  #loginErr { color: #e5484d; font-size: 13px; min-height: 1.2em; }
+</style>
+</head>
+<body>
+<header>
+  <h1>🎵 音樂庫</h1>
+  <span class="count" id="count"></span>
+  <button id="logoutBtn" style="display:none">登出</button>
+</header>
+
+<div class="toolbar">
+  <input type="search" id="search" placeholder="搜尋歌名…" autocomplete="off">
+  <select id="folder" title="資料夾"><option value="">全部</option></select>
+</div>
+
+<ul id="list"></ul>
+<div id="empty" style="display:none">沒有符合的曲目</div>
+
+<footer>
+  <div id="nowPlaying">尚未播放</div>
+  <div class="controls">
+    <button id="prevBtn" title="上一首 (P)">⏮</button>
+    <button id="nextBtn" title="下一首 (N)">⏭</button>
+    <button id="shuffleBtn" title="隨機播放 (S)">🔀</button>
+    <button id="repeatBtn" title="循環模式 (R)">🔁 全部</button>
+    <audio id="audio" controls preload="none"></audio>
+  </div>
+  <div id="status"></div>
+</footer>
+
+<div id="login">
+  <form class="box" id="loginForm">
+    <h2>請輸入密碼</h2>
+    <input type="password" id="pw" placeholder="密碼" autocomplete="current-password" required>
+    <div id="loginErr"></div>
+    <button class="primary" type="submit">登入</button>
+  </form>
+</div>
+
+<script>
+(() => {
+  const $ = (id) => document.getElementById(id);
+  const audio = $('audio');
+  const REPEATS = ['all', 'one', 'off'];
+  const REPEAT_LABEL = { all: '🔁 全部', one: '🔂 單曲', off: '➡️ 不循環' };
+
+  let all = [];          // 全部曲目
+  let view = [];         // 目前篩選後的播放佇列
+  let currentFile = null; // 目前播放的 filename
+  let shuffle = false;
+  let repeat = 'all';
+  let history = [];      // 隨機模式下的「上一首」堆疊
+  let errorStreak = 0;
+
+  try {
+    const s = JSON.parse(localStorage.getItem('ml_prefs') || '{}');
+    if (typeof s.volume === 'number') audio.volume = s.volume;
+    shuffle = !!s.shuffle;
+    if (REPEATS.includes(s.repeat)) repeat = s.repeat;
+  } catch {}
+  function savePrefs() {
+    try { localStorage.setItem('ml_prefs', JSON.stringify({ volume: audio.volume, shuffle, repeat })); } catch {}
+  }
+
+  const streamUrl = (filename) =>
+    '/web/stream/' + filename.split('/').map(encodeURIComponent).join('/');
+
+  function fmtSize(b) { return b >= 1048576 ? (b / 1048576).toFixed(1) + ' MB' : Math.max(1, Math.round(b / 1024)) + ' KB'; }
+  function setStatus(t) { $('status').textContent = t || ''; }
+
+  // ── 登入 ────────────────────────────────────────────────
+  function showLogin(msg) {
+    $('login').classList.add('show');
+    $('loginErr').textContent = msg || '';
+    $('pw').focus();
+  }
+  $('loginForm').addEventListener('submit', async (e) => {
+    e.preventDefault();
+    $('loginErr').textContent = '';
+    try {
+      const r = await fetch('/web/login', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ password: $('pw').value }),
+      });
+      if (r.ok) { $('pw').value = ''; $('login').classList.remove('show'); loadList(); return; }
+      const j = await r.json().catch(() => ({}));
+      $('loginErr').textContent = j.error || '登入失敗';
+    } catch { $('loginErr').textContent = '連線失敗'; }
+  });
+  $('logoutBtn').addEventListener('click', async () => {
+    audio.pause();
+    await fetch('/web/logout', { method: 'POST' }).catch(() => {});
+    all = []; view = []; render();
+    showLogin();
+  });
+
+  // ── 清單 ────────────────────────────────────────────────
+  async function loadList() {
+    setStatus('載入清單中…');
+    let r;
+    try { r = await fetch('/web/api/list'); } catch { return setStatus('連線失敗'); }
+    if (r.status === 401) { setStatus(''); return showLogin(); }
+    if (!r.ok) return setStatus('讀取清單失敗');
+    all = (await r.json()).files || [];
+    $('logoutBtn').style.display = '';
+
+    const folders = [...new Set(all.map(f => f.filename.includes('/') ? f.filename.split('/')[0] : '').filter(Boolean))].sort();
+    const sel = $('folder'); const keep = sel.value;
+    sel.innerHTML = '<option value="">全部</option>';
+    for (const f of folders) {
+      const o = document.createElement('option'); o.value = f; o.textContent = f; sel.appendChild(o);
+    }
+    if (folders.includes(keep)) sel.value = keep;
+    setStatus('');
+    applyFilter();
+  }
+
+  function applyFilter() {
+    const q = $('search').value.trim().toLowerCase();
+    const folder = $('folder').value;
+    view = all.filter(f =>
+      (!folder || f.filename.startsWith(folder + '/')) &&
+      (!q || f.name.toLowerCase().includes(q) || f.filename.toLowerCase().includes(q)));
+    render();
+  }
+
+  function render() {
+    $('count').textContent = all.length ? `${view.length} / ${all.length} 首` : '';
+    const ul = $('list'); ul.textContent = '';
+    $('empty').style.display = view.length || !all.length ? 'none' : 'block';
+    const frag = document.createDocumentFragment();
+    view.forEach((f, i) => {
+      const li = document.createElement('li');
+      li.dataset.file = f.filename;
+      if (f.filename === currentFile) li.className = 'current';
+      const idx = document.createElement('span'); idx.className = 'idx'; idx.textContent = i + 1;
+      const t = document.createElement('span'); t.className = 'title'; t.textContent = f.name; t.title = f.filename;
+      const s = document.createElement('span'); s.className = 'size'; s.textContent = fmtSize(f.size);
+      li.append(idx, t, s);
+      frag.appendChild(li);
+    });
+    ul.appendChild(frag);
+  }
+  $('list').addEventListener('click', (e) => {
+    const li = e.target.closest('li'); if (!li) return;
+    history = [];
+    play(li.dataset.file);
+  });
+  $('search').addEventListener('input', applyFilter);
+  $('folder').addEventListener('change', applyFilter);
+
+  // ── 播放 ────────────────────────────────────────────────
+  function play(filename, { pushHistory = true } = {}) {
+    const track = all.find(f => f.filename === filename); if (!track) return;
+    if (pushHistory && currentFile && currentFile !== filename) history.push(currentFile);
+    currentFile = filename;
+    audio.src = streamUrl(filename);
+    audio.play().catch(() => {});
+    $('nowPlaying').textContent = track.name;
+    document.title = track.name + ' · 音樂庫';
+    setStatus('');
+    for (const li of $('list').children) {
+      const on = li.dataset.file === filename;
+      li.classList.toggle('current', on);
+      if (on) li.scrollIntoView({ block: 'nearest' });
+    }
+    if ('mediaSession' in navigator) {
+      navigator.mediaSession.metadata = new MediaMetadata({ title: track.name, artist: '音樂庫' });
+    }
+  }
+
+  function pickNext() {
+    if (!view.length) return null;
+    const i = view.findIndex(f => f.filename === currentFile);
+    if (shuffle) {
+      if (view.length === 1) return view[0].filename;
+      let n; do { n = view[Math.floor(Math.random() * view.length)].filename; } while (n === currentFile);
+      return n;
+    }
+    if (i < 0) return view[0].filename;
+    if (i + 1 < view.length) return view[i + 1].filename;
+    return repeat === 'all' ? view[0].filename : null;
+  }
+  function next() { const n = pickNext(); if (n) play(n); }
+  function prev() {
+    if (audio.currentTime > 3) { audio.currentTime = 0; return; }
+    if (history.length) return play(history.pop(), { pushHistory: false });
+    const i = view.findIndex(f => f.filename === currentFile);
+    if (i > 0) play(view[i - 1].filename, { pushHistory: false });
+    else if (view.length && repeat === 'all') play(view[view.length - 1].filename, { pushHistory: false });
+  }
+
+  audio.addEventListener('ended', () => {
+    errorStreak = 0;
+    if (repeat === 'one') { audio.currentTime = 0; audio.play().catch(() => {}); }
+    else next();
+  });
+  audio.addEventListener('playing', () => { errorStreak = 0; setStatus(''); });
+  audio.addEventListener('volumechange', savePrefs);
+  audio.addEventListener('error', () => {
+    if (!currentFile) return;
+    errorStreak += 1;
+    if (audio.error && audio.error.code === 4 && errorStreak === 1) {
+      // 可能是登入過期：用清單 API 探測一下
+      fetch('/web/api/list').then(r => { if (r.status === 401) showLogin('登入已過期，請重新登入'); });
+    }
+    setStatus('這首無法播放，已略過');
+    if (errorStreak < Math.min(view.length, 5)) setTimeout(next, 800);
+    else setStatus('連續多首無法播放，已停止');
+  });
+
+  function syncButtons() {
+    $('shuffleBtn').classList.toggle('on', shuffle);
+    $('repeatBtn').textContent = REPEAT_LABEL[repeat];
+    $('repeatBtn').classList.toggle('on', repeat !== 'off');
+  }
+  $('prevBtn').onclick = prev;
+  $('nextBtn').onclick = next;
+  $('shuffleBtn').onclick = () => { shuffle = !shuffle; syncButtons(); savePrefs(); };
+  $('repeatBtn').onclick = () => { repeat = REPEATS[(REPEATS.indexOf(repeat) + 1) % REPEATS.length]; syncButtons(); savePrefs(); };
+
+  if ('mediaSession' in navigator) {
+    navigator.mediaSession.setActionHandler('previoustrack', prev);
+    navigator.mediaSession.setActionHandler('nexttrack', next);
+  }
+
+  document.addEventListener('keydown', (e) => {
+    if (/^(INPUT|SELECT|TEXTAREA)$/.test(e.target.tagName) || e.ctrlKey || e.metaKey || e.altKey) return;
+    if (e.key === ' ') { e.preventDefault(); audio.paused ? audio.play().catch(() => {}) : audio.pause(); }
+    else if (e.key === 'n' || e.key === 'N') next();
+    else if (e.key === 'p' || e.key === 'P') prev();
+    else if (e.key === 's' || e.key === 'S') $('shuffleBtn').click();
+    else if (e.key === 'r' || e.key === 'R') $('repeatBtn').click();
+    else if (e.key === 'ArrowRight') audio.currentTime = Math.min(audio.duration || 0, audio.currentTime + 10);
+    else if (e.key === 'ArrowLeft') audio.currentTime = Math.max(0, audio.currentTime - 10);
+  });
+
+  syncButtons();
+  loadList();
+})();
+</script>
+</body>
+</html>
