@@ -43,6 +43,44 @@ header（未設定 `MUSIC_LIB_SECRET` 時不驗證，僅建議在完全信任的
 | POST | `/web/logout` | 清除 Cookie |
 | GET | `/web/api/list` | 曲目清單（需登入） |
 | GET | `/web/stream/*` | 串流音檔，支援 Range（需登入） |
+| GET | `/web/api/capabilities` | `{ online }`：伺服器是否可線上串流 |
+| GET | `/web/api/search?q=` | 搜尋 YouTube + Bilibili |
+| GET | `/web/api/info?url=` | 取得影片資訊（標題、時長） |
+| GET | `/web/play?url=` | 線上播放（快取命中＝檔案；否則即時串流＋背景下載） |
+
+### 線上串流（YouTube / Bilibili，yt-dlp）
+
+網頁播放器上的 **🌐 線上** 按鈕：搜尋（YouTube + Bilibili）或直接貼影片網址，點歌即播，
+可以「＋」加入佇列（佇列優先於音樂庫的下一首，行為同 Bot）。
+
+播放流程移植自 Mousebot 的 `onlineMusicHandler.js`，邏輯與常數相同：
+
+1. 先查快取（`<MUSIC_DIR>/cache`，檔名格式與 Bot 相同，所以 Bot 與網頁的快取互相命中）。
+   命中 → 直接播放檔案（可拖曳進度）。
+2. 未命中 → yt-dlp 即時串流（YouTube 沿用 client 輪換策略：default → mweb+po → tv → tv_simply → web_embedded）。
+3. 影片 ≤ 7 分鐘 → 同時背景下載快取，完成後自動響度正規化（loudnorm，-16 LUFS）；
+   > 7 分鐘、直播或未知長度 → 只串流不下載。同一網址不會重複下載。
+4. 串流出錯 → 連續錯誤計數（上限 5）＋最多重試 3 次（間隔 3 秒）。
+
+和 Bot 不同的地方：
+
+- 即時串流的資料會經 ffmpeg 轉成 mp3 再送給瀏覽器（Bot 是交給 Discord 語音）。
+  所以**第一次播放（未快取）時沒有總長度、不能拖曳進度**；下載完成後再播就是檔案，可以拖曳。
+- 這個服務本身就是共用音樂庫，下載＋正規化完的檔案已在庫內，沒有「上傳到共用音樂庫」那一步。
+- 只允許 YouTube / Bilibili 網域（其他網址一律 400），並限制同時串流／搜尋數量。
+- 目前不支援播放清單網址（只播單支影片）。
+
+**伺服器需要安裝 `yt-dlp` 和 `ffmpeg`**，沒裝的話線上功能自動停用，音樂庫播放不受影響。
+Dockerfile 範例（Debian／Ubuntu 系映像）：
+
+```dockerfile
+RUN apt-get update && apt-get install -y --no-install-recommends ffmpeg ca-certificates curl \
+ && curl -fsSL https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp_linux -o /usr/local/bin/yt-dlp \
+ && chmod a+rx /usr/local/bin/yt-dlp \
+ && rm -rf /var/lib/apt/lists/*
+```
+
+YouTube 需要的環境變數（`WARP_PROXY_URL`、`YOUTUBE_PO_TOKEN`、cookies 檔等）和 Bot 相同，見 `.env.example`。
 
 > 瀏覽器需要連得到這個服務，所以要在 Zeabur 幫**這個服務**綁一個公開網域。
 > Bot 之間的內部呼叫仍可走 Private Networking；公開之後請務必同時設定

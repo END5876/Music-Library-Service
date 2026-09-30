@@ -63,6 +63,12 @@ function cleanDisplayName(raw) {
   return t || '未知標題';
 }
 
+// 下載中／正規化中／上傳中的暫存檔（例如 xxx.tmp.mp3、xxx.norm_123.tmp.mp3、xxx.upload_1_ab.tmp）
+// 不能出現在清單裡，否則會被當成一首「壞掉的歌」。
+function isTempName(name) {
+  return /\.tmp(\.[A-Za-z0-9]+)?$/i.test(name);
+}
+
 function walkFiles(dir) {
   const entries = fs.readdirSync(dir, { withFileTypes: true });
   let out = [];
@@ -70,7 +76,7 @@ function walkFiles(dir) {
     const fullPath = path.join(dir, entry.name);
     if (entry.isDirectory()) {
       out = out.concat(walkFiles(fullPath));
-    } else if (!entry.name.endsWith('.tmp')) {
+    } else if (!isTempName(entry.name)) {
       out.push(fullPath);
     }
   }

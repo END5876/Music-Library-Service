@@ -52,6 +52,17 @@
   #list .idx { color: var(--muted); font-size: 12px; width: 32px; text-align: right; flex: 0 0 auto; }
   #list .title { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   #list .size { color: var(--muted); font-size: 12px; flex: 0 0 auto; }
+  #online { display: none; border-bottom: 1px solid var(--line); max-height: 45vh; overflow-y: auto; background: var(--panel); }
+  #online.show { display: block; }
+  #online form { border-bottom: 0; }
+  #onlineResults, #queueList { list-style: none; margin: 0; padding: 0; }
+  #onlineResults li, #queueList li { display: flex; gap: 8px; align-items: center; padding: 8px 16px; border-top: 1px solid var(--line); cursor: pointer; }
+  #onlineResults li:hover, #queueList li:hover { background: var(--hover); }
+  #onlineResults .meta { flex: 1; min-width: 0; }
+  #onlineResults .t, #queueList .t { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  #onlineResults .sub { color: var(--muted); font-size: 12px; }
+  #onlineHint, #queueHead { padding: 6px 16px; color: var(--muted); font-size: 12px; display: flex; align-items: center; gap: 8px; justify-content: space-between; }
+  #queueList li { cursor: default; }
   #empty { padding: 32px 16px; text-align: center; color: var(--muted); }
   footer {
     background: var(--panel); border-top: 1px solid var(--line);
@@ -85,6 +96,18 @@
 <div class="toolbar">
   <input type="search" id="search" placeholder="搜尋歌名…" autocomplete="off">
   <select id="folder" title="資料夾"><option value="">全部</option></select>
+  <button id="onlineBtn" style="display:none" title="線上搜尋 YouTube / Bilibili">🌐 線上</button>
+</div>
+
+<div id="online">
+  <form id="onlineForm" class="toolbar">
+    <input type="search" id="onlineQ" placeholder="搜尋 YouTube / Bilibili，或貼上影片網址" autocomplete="off">
+    <button class="primary" type="submit">搜尋</button>
+  </form>
+  <div id="onlineHint"></div>
+  <ul id="onlineResults"></ul>
+  <div id="queueHead" style="display:none"><span id="queueCount"></span><button id="queueClear">清空佇列</button></div>
+  <ul id="queueList"></ul>
 </div>
 
 <ul id="list"></ul>
@@ -125,6 +148,10 @@
   let repeat = 'all';
   let history = [];      // 隨機模式下的「上一首」堆疊
   let errorStreak = 0;
+  let onlineCurrent = null; // 目前播放的線上歌曲（null＝音樂庫歌曲）
+  let onlineAvailable = false;
+  let playToken = 0;         // 避免連點時舊的 info 回應蓋掉新的選擇
+  const queue = [];          // 線上歌曲佇列（優先於音樂庫下一首，行為同 Bot 的佇列）
 
   try {
     const s = JSON.parse(localStorage.getItem('ml_prefs') || '{}');
@@ -187,6 +214,15 @@
     if (folders.includes(keep)) sel.value = keep;
     setStatus('');
     applyFilter();
+    loadCapabilities();
+  }
+
+  async function loadCapabilities() {
+    try {
+      const r = await fetch('/web/api/capabilities');
+      onlineAvailable = r.ok && !!(await r.json()).online;
+    } catch { onlineAvailable = false; }
+    $('onlineBtn').style.display = onlineAvailable ? '' : 'none';
   }
 
   function applyFilter() {
@@ -227,6 +263,8 @@
   function play(filename, { pushHistory = true } = {}) {
     const track = all.find(f => f.filename === filename); if (!track) return;
     if (pushHistory && currentFile && currentFile !== filename) history.push(currentFile);
+    playToken++;
+    onlineCurrent = null;
     currentFile = filename;
     audio.src = streamUrl(filename);
     audio.play().catch(() => {});
@@ -256,7 +294,15 @@
     return repeat === 'all' ? view[0].filename : null;
   }
   function next() { const n = pickNext(); if (n) play(n); }
+
+  // 「下一首」：線上佇列優先；線上歌曲播完且佇列空了就停（同 Bot：所有歌曲播放完畢）
+  function advance() {
+    if (queue.length) { const it = queue.shift(); renderQueue(); playOnline(it); return; }
+    if (onlineCurrent) { onlineCurrent = null; setStatus('✅ 佇列播放完畢'); return; }
+    next();
+  }
   function prev() {
+    if (onlineCurrent) { playOnline(onlineCurrent); return; }
     if (audio.currentTime > 3) { audio.currentTime = 0; return; }
     if (history.length) return play(history.pop(), { pushHistory: false });
     const i = view.findIndex(f => f.filename === currentFile);
@@ -266,12 +312,20 @@
 
   audio.addEventListener('ended', () => {
     errorStreak = 0;
-    if (repeat === 'one') { audio.currentTime = 0; audio.play().catch(() => {}); }
-    else next();
+    if (repeat === 'one') {
+      if (onlineCurrent) playOnline(onlineCurrent);
+      else { audio.currentTime = 0; audio.play().catch(() => {}); }
+    }
+    else advance();
   });
   audio.addEventListener('playing', () => { errorStreak = 0; setStatus(''); });
   audio.addEventListener('volumechange', savePrefs);
   audio.addEventListener('error', () => {
+    if (onlineCurrent) {
+      setStatus('線上串流失敗（可能被平台限制、影片不可用或伺服器忙碌）');
+      if (queue.length) setTimeout(advance, 800);
+      return;
+    }
     if (!currentFile) return;
     errorStreak += 1;
     if (audio.error && audio.error.code === 4 && errorStreak === 1) {
@@ -289,25 +343,121 @@
     $('repeatBtn').classList.toggle('on', repeat !== 'off');
   }
   $('prevBtn').onclick = prev;
-  $('nextBtn').onclick = next;
+  $('nextBtn').onclick = advance;
   $('shuffleBtn').onclick = () => { shuffle = !shuffle; syncButtons(); savePrefs(); };
   $('repeatBtn').onclick = () => { repeat = REPEATS[(REPEATS.indexOf(repeat) + 1) % REPEATS.length]; syncButtons(); savePrefs(); };
 
   if ('mediaSession' in navigator) {
     navigator.mediaSession.setActionHandler('previoustrack', prev);
-    navigator.mediaSession.setActionHandler('nexttrack', next);
+    navigator.mediaSession.setActionHandler('nexttrack', advance);
   }
 
   document.addEventListener('keydown', (e) => {
     if (/^(INPUT|SELECT|TEXTAREA)$/.test(e.target.tagName) || e.ctrlKey || e.metaKey || e.altKey) return;
     if (e.key === ' ') { e.preventDefault(); audio.paused ? audio.play().catch(() => {}) : audio.pause(); }
-    else if (e.key === 'n' || e.key === 'N') next();
+    else if (e.key === 'n' || e.key === 'N') advance();
     else if (e.key === 'p' || e.key === 'P') prev();
     else if (e.key === 's' || e.key === 'S') $('shuffleBtn').click();
     else if (e.key === 'r' || e.key === 'R') $('repeatBtn').click();
     else if (e.key === 'ArrowRight') audio.currentTime = Math.min(audio.duration || 0, audio.currentTime + 10);
     else if (e.key === 'ArrowLeft') audio.currentTime = Math.max(0, audio.currentTime - 10);
   });
+
+  // ── 線上搜尋／串流（YouTube + Bilibili，伺服器端 yt-dlp）────────
+  const enc = encodeURIComponent;
+  $('onlineBtn').onclick = () => {
+    $('online').classList.toggle('show');
+    $('onlineBtn').classList.toggle('on', $('online').classList.contains('show'));
+    if ($('online').classList.contains('show')) $('onlineQ').focus();
+  };
+
+  async function apiJson(url) {
+    const r = await fetch(url);
+    if (r.status === 401) { showLogin('登入已過期，請重新登入'); throw new Error('請先登入'); }
+    const j = await r.json().catch(() => ({}));
+    if (!r.ok) throw new Error(j.error || ('HTTP ' + r.status));
+    return j;
+  }
+
+  $('onlineForm').addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const q = $('onlineQ').value.trim();
+    if (!q) return;
+    if (/^https?:\/\//i.test(q)) {           // 貼網址：直接播放
+      $('onlineQ').value = '';
+      playOnline({ url: q, title: q });
+      return;
+    }
+    $('onlineHint').textContent = `🔍 正在搜尋「${q}」（YouTube + Bilibili，最多約 25 秒）…`;
+    $('onlineResults').textContent = '';
+    try {
+      const { results } = await apiJson('/web/api/search?q=' + enc(q));
+      $('onlineHint').textContent = results.length ? `找到 ${results.length} 筆，點一下立即播放，＋ 加入佇列` : '找不到相關結果';
+      renderResults(results);
+    } catch (err) { $('onlineHint').textContent = '❌ ' + err.message; }
+  });
+
+  function renderResults(results) {
+    const ul = $('onlineResults'); ul.textContent = '';
+    for (const r of results) {
+      const li = document.createElement('li');
+      const meta = document.createElement('div'); meta.className = 'meta';
+      const t = document.createElement('div'); t.className = 't';
+      t.textContent = (r.platform === 'YouTube' ? '🎬 ' : '📺 ') + r.title;
+      const sub = document.createElement('div'); sub.className = 'sub';
+      sub.textContent = `${r.platform} · ${r.author} · ${r.duration}`;
+      meta.append(t, sub);
+      const add = document.createElement('button'); add.textContent = '＋'; add.title = '加入佇列';
+      add.onclick = (ev) => { ev.stopPropagation(); queue.push(r); renderQueue(); };
+      li.append(meta, add);
+      li.onclick = () => { history = []; playOnline(r); };
+      ul.appendChild(li);
+    }
+  }
+
+  function renderQueue() {
+    $('queueHead').style.display = queue.length ? '' : 'none';
+    $('queueCount').textContent = `📋 佇列 ${queue.length} 首`;
+    const ul = $('queueList'); ul.textContent = '';
+    queue.forEach((r, i) => {
+      const li = document.createElement('li');
+      const t = document.createElement('div'); t.className = 't'; t.style.flex = '1';
+      t.textContent = `${i + 1}. ${r.title}`;
+      const rm = document.createElement('button'); rm.textContent = '✕';
+      rm.onclick = () => { queue.splice(i, 1); renderQueue(); };
+      li.append(t, rm); ul.appendChild(li);
+    });
+  }
+  $('queueClear').onclick = () => { queue.length = 0; renderQueue(); };
+
+  // 流程同 Bot：先取得影片資訊（伺服器需要時長判斷要不要下載快取）→ 再開始播放
+  async function playOnline(item) {
+    const token = ++playToken;
+    currentFile = null;
+    onlineCurrent = item;
+    for (const li of $('list').children) li.classList.remove('current');
+    $('nowPlaying').textContent = item.title;
+    setStatus('🔍 正在獲取影片資訊…');
+    audio.pause();
+    let info;
+    try { info = await apiJson('/web/api/info?url=' + enc(item.url)); }
+    catch (err) {
+      if (token !== playToken) return;
+      setStatus('❌ ' + err.message);
+      if (queue.length) setTimeout(advance, 1200); else onlineCurrent = null;
+      return;
+    }
+    if (token !== playToken) return;
+    onlineCurrent = { ...item, ...info };
+    $('nowPlaying').textContent = info.title;
+    document.title = info.title + ' · 音樂庫';
+    audio.src = '/web/play?url=' + enc(info.url);
+    audio.play().catch(() => {});
+    setStatus('⏳ 載入中（未快取的歌曲需要伺服器先取得串流，可能要幾秒；下次播放會有快取並可拖曳進度）');
+    if ('mediaSession' in navigator) {
+      navigator.mediaSession.metadata = new MediaMetadata({ title: info.title, artist: info.author || '線上' });
+    }
+  }
 
   syncButtons();
   loadList();
