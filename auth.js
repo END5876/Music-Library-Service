@@ -2,8 +2,8 @@
 // auth.js
 // 音樂庫服務的簡單金鑰驗證。
 //
-// 這個服務預期只透過 Zeabur 的 Private Networking（同一個 Project 內的
-// xxx.zeabur.internal）被各個 Bot 服務呼叫，本來就不會曝露在公網上，
+// 這個服務預期只透過Private Networking（同一個 Project 內的
+// xxx.internal）被各個 Bot 服務呼叫，本來就不會曝露在公網上，
 // 但仍建議設定 MUSIC_LIB_SECRET，避免同專案內其他服務、或設定失誤時
 // 被誤用。
 function createLibraryKeyMiddleware(secret) {

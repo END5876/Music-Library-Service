@@ -82,7 +82,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends ffmpeg ca-certi
 
 YouTube 需要的環境變數（`WARP_PROXY_URL`、`YOUTUBE_PO_TOKEN`、cookies 檔等）和 Bot 相同，見 `.env.example`。
 
-> 瀏覽器需要連得到這個服務，所以要在 Zeabur 幫**這個服務**綁一個公開網域。
+> 瀏覽器需要連得到這個服務，所以要在幫**這個服務**綁一個公開網域。
 > Bot 之間的內部呼叫仍可走 Private Networking；公開之後請務必同時設定
 > `MUSIC_LIB_SECRET`，否則 `/api/music/*` 會對公網完全開放讀寫。
 
@@ -95,13 +95,13 @@ npm install
 npm start
 ```
 
-## 部署到 Zeabur
+## 部署 
 
-建議跟呼叫端 Bot 放在**同一個 Zeabur Project**，這樣 Bot 可以直接用
-Private Networking（`<服務名稱>.zeabur.internal`）呼叫這裡，不用把
+建議跟呼叫端 Bot 放在**同一個Project**，這樣 Bot 可以直接用
+Private Networking（`<服務名稱>.internal`）呼叫這裡，不用把
 這個服務曝露到公網。
 
-1. 在 Zeabur 建一個新服務，指向這個 repo。
+1. 建一個新服務，指向這個 repo。
 2. 掛一顆 Volume 到 `MUSIC_DIR`（環境變數不設的話預設是
    `/app/data/music`）。
 3. 設定環境變數 `MUSIC_LIB_SECRET`（自己挑一組長字串），視需要調整

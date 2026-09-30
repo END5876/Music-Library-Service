@@ -65,7 +65,7 @@ function mountWebPlayer(app, { store, libSecret }) {
   const SESSION_HOURS = Math.max(1, parseFloat(process.env.WEB_SESSION_HOURS || '168') || 168);
   const SESSION_MS = SESSION_HOURS * 3600 * 1000;
 
-  // 服務在 Zeabur 的反向代理後面：讓 req.ip / req.secure 取到真實值（只信任一層）
+  // 服務的反向代理後面：讓 req.ip / req.secure 取到真實值（只信任一層）
   app.set('trust proxy', 1);
 
   const sign = (payload) =>

@@ -8,7 +8,7 @@
 // repo、不同服務）都能讀取／寫入同一份音樂庫。
 //
 // 環境變數：
-//   PORT               監聽埠，Zeabur 會自動注入
+//   PORT               監聽埠，會自動注入
 //   MUSIC_DIR          音樂庫掛載路徑，預設 <repo root>/data/music
 //   MUSIC_LIB_SECRET   保護 API 的共用金鑰，呼叫端要帶相同的值
 //   MAX_CACHE_SIZE_MB  cache/ 子資料夾的容量上限，預設 2048
