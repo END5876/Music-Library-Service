@@ -13,8 +13,7 @@ const fs = require('fs');
 const path = require('path');
 
 const MUSIC_DIR = process.env.MUSIC_DIR || path.join(__dirname, 'data', 'music');
-const CACHE_SUBDIR = 'cache';
-const CACHE_DIR = path.join(MUSIC_DIR, CACHE_SUBDIR);
+const CACHE_DIR = MUSIC_DIR;
 const MAX_CACHE_SIZE_MB = parseInt(process.env.MAX_CACHE_SIZE_MB || '2048', 10);
 
 const SUPPORTED_EXTENSIONS = ['.mp3', '.wav', '.ogg', '.flac', '.m4a', '.aac'];
