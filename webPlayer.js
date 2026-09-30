@@ -112,7 +112,7 @@ function mountWebPlayer(app, { store, libSecret }) {
   if (ONLINE_ENABLED) online.init().catch((err) => console.error('❌ [OnlineMusic] 初始化失敗:', err));
 
   app.get('/', (req, res) => res.redirect('/player'));
-
+  app.use('/player-assets', express.static(path.join(__dirname, 'public'), { index: false, maxAge: 0 }));
   app.get('/player', (req, res) => {
     res.set('Cache-Control', 'no-cache');
     res.sendFile(path.join(__dirname, 'public', 'player.html'));
