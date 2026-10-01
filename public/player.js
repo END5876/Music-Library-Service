@@ -5,6 +5,15 @@
   const REPEATS = ['all', 'one', 'off'];
   const REPEAT_LABEL = { all: '循環:全部', one: '循環:單曲', off: '不循環' };
 
+  // 除錯:在 DevTools 執行 localStorage.ml_debug='1' 後重新整理即可開啟
+  let DEBUG = false;
+  try { DEBUG = localStorage.getItem('ml_debug') === '1'; } catch {}
+  const t0 = Date.now();
+  const dbg = (...a) => { if (DEBUG) console.log('[player +' + ((Date.now() - t0) / 1000).toFixed(1) + 's]', ...a); };
+
+  // 預載下一首(預設關閉;只抓開頭小段 / 預熱線上 info,效果不保證,請自行實測)
+  const PREFETCH = false;
+
   // 拖曳排序的提示線(CSS 檔不用再改)
   const st = document.createElement('style');
   st.textContent = '.row.drop-before{box-shadow:0 -2px 0 var(--accent)}.row.drop-after{box-shadow:0 2px 0 var(--accent)}.row.dragging{pointer-events:none}';
@@ -21,6 +30,8 @@
   let repeat = 'all';
   let history = [];
   let errorStreak = 0;
+  let pendingPlay = false; // 程式已要求播放、但還沒真的開始(載入中)
+  let endHandled = false;  // 這次 ended 是否已處理過
   let mode = 'library';
   let folder = '';
   let libQuery = '', onlineQuery = '';
@@ -57,6 +68,28 @@
     if (!sticky) toastTimer = setTimeout(() => el.classList.remove('show'), 6000);
   }
 
+  // ── 背景播放穩定性 helper ──
+  function setSession(state) {
+    if ('mediaSession' in navigator) { try { navigator.mediaSession.playbackState = state; } catch {} }
+  }
+  // 載入空檔也維持「播放中」;失敗最多重試 retries 次,之後放棄(避免 recover 無限重試)
+  function tryPlay(retries = 3) {
+    pendingPlay = true;
+    setSession('playing');
+    const p = audio.play();
+    if (p && p.catch) p.catch((err) => {
+      dbg('play() 被拒絕', err && err.name, '剩餘重試', retries);
+      if (err && err.name === 'AbortError') return; // 被新的 load 取代,正常
+      if (retries > 0 && pendingPlay) { setTimeout(() => tryPlay(retries - 1), 600); return; }
+      pendingPlay = false;
+      setSession('paused');
+      setStatus('無法自動播放,請按播放鍵');
+    });
+  }
+  // 背景分頁的 timer 會被節流甚至凍結:hidden 時直接同步執行
+  // (error / ended 都是非同步觸發的事件,同步呼叫不會造成遞迴)
+  const later = (fn) => { if (document.hidden) fn(); else setTimeout(fn, 800); };
+
   // ── 登入 ──
   function showLogin(msg) {
     $('login').classList.add('show');
@@ -77,7 +110,9 @@
     } catch { $('loginErr').textContent = '連線失敗'; }
   });
   $('logoutBtn').addEventListener('click', async () => {
+    pendingPlay = false;
     audio.pause();
+    setSession('none');
     await fetch('/web/logout', { method: 'POST' }).catch(() => {});
     all = []; view = []; queue = []; history = [];
     currentFile = null; onlineCurrent = null; playToken++;
@@ -315,11 +350,13 @@
   function play(filename, { pushHistory = true } = {}) {
     const track = all.find(f => f.filename === filename); if (!track) return false;
     if (pushHistory && currentFile && currentFile !== filename) history.push(currentFile);
+    dbg('play', filename);
     playToken++;
     onlineCurrent = null;
     currentFile = filename;
+    endHandled = false;
     audio.src = streamUrl(filename);
-    audio.play().catch(() => {});
+    tryPlay();
     setStatus('');
     setNow({ title: track.name, sub: libSub(track) });
     return true;
@@ -345,6 +382,7 @@
   }
 
   function advance() {
+    dbg('advance, queue=', queue.length);
     if (queue.length) { playEntry(queue.shift()); return; }
     if (onlineCurrent) { onlineCurrent = null; markPlaying(); renderNext(); setStatus('✅ 佇列播放完畢'); return; }
     if (shuffle) {
@@ -352,7 +390,7 @@
       if (repeat === 'off' && currentFile) { setStatus('✅ 隨機清單播放完畢'); return; }
       buildShuffle(); // 一輪播完:重新排出下一輪不重複的順序
       if (queue.length) playEntry(queue.shift());
-      else if (currentFile) { audio.currentTime = 0; audio.play().catch(() => {}); }
+      else if (currentFile) { audio.currentTime = 0; tryPlay(); }
       return;
     }
     const n = pickNext();
@@ -380,7 +418,7 @@
       start(shuffle ? view[Math.floor(Math.random() * view.length)].filename : view[0].filename);
       return;
     }
-    if (audio.paused) audio.play().catch(() => {}); else audio.pause();
+    if (audio.paused) tryPlay(); else { pendingPlay = false; audio.pause(); }
   }
 
   // ── audio 事件 ──
@@ -410,23 +448,44 @@
   for (const ev of ['timeupdate', 'durationchange', 'loadedmetadata', 'emptied', 'seeked']) audio.addEventListener(ev, updateProgress);
   for (const ev of ['play', 'pause', 'ended', 'emptied']) audio.addEventListener(ev, updatePlayIcons);
 
-  audio.addEventListener('ended', () => {
+  // ended 可重入:事件漏掉時 recover() 也能安全補呼叫,且同一次結束只處理一次
+  function onEnded() {
+    if (endHandled) return;
+    endHandled = true;
+    dbg('ended');
     errorStreak = 0;
     if (repeat === 'one') {
       if (onlineCurrent) playOnline(onlineCurrent);
-      else { audio.currentTime = 0; audio.play().catch(() => {}); }
+      else { audio.currentTime = 0; tryPlay(); }
     } else advance();
+  }
+  audio.addEventListener('ended', onEnded);
+  audio.addEventListener('emptied', () => { endHandled = false; });
+  audio.addEventListener('pause', () => {
+    // 真正發生 pause(使用者、來電、系統中斷):不要讓 recover() 自動恢復
+    // 播放自然結束時也會先觸發 pause,那種情況不算
+    if (audio.ended) return;
+    pendingPlay = false;
+    setSession('paused');
+    dbg('pause');
   });
-  audio.addEventListener('playing', () => { errorStreak = 0; setStatus(''); });
+  audio.addEventListener('playing', () => {
+    errorStreak = 0; pendingPlay = false; endHandled = false;
+    setSession('playing'); setStatus('');
+    dbg('playing');
+    prefetchNext();
+  });
   audio.addEventListener('volumechange', () => {
     $('vol').value = Math.round(audio.volume * 100);
     $('vol').style.setProperty('--p', Math.round(audio.volume * 100) + '%');
     savePrefs();
   });
   audio.addEventListener('error', () => {
+    pendingPlay = false;
+    dbg('error', audio.error && audio.error.code);
     if (onlineCurrent) {
       setStatus('線上串流失敗(可能被平台限制、影片不可用或伺服器忙碌)');
-      if (queue.length) setTimeout(advance, 800);
+      if (queue.length) later(advance);
       return;
     }
     if (!currentFile) return;
@@ -435,9 +494,39 @@
       fetch('/web/api/list').then(r => { if (r.status === 401) showLogin('登入已過期,請重新登入'); });
     }
     setStatus('這首無法播放,已略過');
-    if (errorStreak < Math.min(view.length, 5)) setTimeout(advance, 800);
+    if (errorStreak < Math.min(view.length, 5)) later(advance);
     else setStatus('連續多首無法播放,已停止');
   });
+
+  // ── 補救機制(頁面醒來 / 事件漏掉)──
+  function recover() {
+    if (!currentFile && !onlineCurrent) return;
+    if (audio.ended && !endHandled) { dbg('recover: 補呼叫 ended'); onEnded(); return; }
+    if (pendingPlay && audio.paused) { dbg('recover: 補打 play'); tryPlay(1); }
+  }
+  // interval 在背景會被節流,只在前景有用;真正的補救靠下面三個「醒來」事件
+  setInterval(recover, 3000);
+  document.addEventListener('visibilitychange', () => { dbg('visibility', document.visibilityState); recover(); });
+  window.addEventListener('pageshow', recover);
+  window.addEventListener('online', recover);
+
+  // ── 預載下一首(PREFETCH 開啟時才啟用;不下載整首)──
+  let prefetched = '';
+  function prefetchNext() {
+    if (!PREFETCH) return;
+    if (!currentFile && !onlineCurrent) return;
+    const e = queue[0];
+    if (e && e.kind === 'online') {
+      const u = e.item.srcUrl || e.item.url;
+      if (u !== prefetched) { prefetched = u; fetch('/web/api/info?url=' + enc(u)).catch(() => {}); }
+      return;
+    }
+    const next = e ? e.filename : (shuffle || onlineCurrent ? null : pickNext());
+    if (!next || next === prefetched || next === currentFile) return;
+    prefetched = next;
+    // 只抓開頭 256KB,是否命中 audio 的快取不保證
+    fetch(streamUrl(next), { headers: { Range: 'bytes=0-262143' } }).then(r => r.arrayBuffer()).catch(() => {});
+  }
 
   // ── 控制項 ──
   function syncButtons() {
@@ -490,10 +579,11 @@
   });
 
   if ('mediaSession' in navigator) {
-    try {
-      navigator.mediaSession.setActionHandler('previoustrack', prev);
-      navigator.mediaSession.setActionHandler('nexttrack', advance);
-    } catch {}
+    const setHandler = (name, fn) => { try { navigator.mediaSession.setActionHandler(name, fn); } catch {} };
+    setHandler('previoustrack', prev);
+    setHandler('nexttrack', advance);
+    setHandler('play', () => tryPlay());
+    setHandler('pause', () => { pendingPlay = false; audio.pause(); setSession('paused'); });
   }
 
   // 全螢幕播放頁
@@ -603,12 +693,14 @@
 
   // 播放線上歌曲(交給伺服器的 /web/play 處理)
   function playOnline(item) {
+    dbg('playOnline', item.title);
     playToken++;
     if (currentFile) history.push(currentFile);
     currentFile = null;
     onlineCurrent = item;
+    endHandled = false;
     audio.src = '/web/play?url=' + enc(item.srcUrl || item.url);
-    audio.play().catch(() => {});
+    tryPlay();
     setStatus('線上串流準備中…', true);
     setNow({ title: item.title, sub: onlineSub(item) });
   }
