@@ -3,18 +3,20 @@
 // 職責：音樂庫服務對「實體磁碟」的唯一存取層 —— 這個服務是共用音樂庫
 // 的唯一擁有者（掛著 Volume），所有跨 Bot 共用的音樂檔案都經過這裡讀寫。
 //
-// filename 慣例：一律是相對於 MUSIC_DIR 的路徑，使用 '/' 分隔（不論平台），
-// 跟 Mousebot 過去 localMusicHandler.js 的 walkFiles() 產生的 filename 是
-// 同一套慣例，所以既有「已存在的本地音樂庫」搬過來後，filename 完全不會變。
-// 例如：cache 資料夾內自動下載＋正規化過的曲目 → 'cache/歌名 [BVxxxx].mp3'
-//       原本手動放的分類子資料夾           → 'favorites/歌名.mp3'
+// filename 慣例：一律是相對於 MUSIC_DIR 的路徑，使用 '/' 分隔（不論平台）。
+// ★ 本版本：自動下載／正規化的快取檔案「直接放在 MUSIC_DIR 根目錄」（沒有 cache 子資料夾）。
+// 例如：自動下載＋正規化過的曲目 → '歌名 [BVxxxx].mp3'
+//       手動放的分類子資料夾       → 'favorites/歌名.mp3'
+//
+// ⚠️ 注意：根目錄第一層的音訊檔都會被視為「快取」，超過 MAX_CACHE_SIZE_MB 時
+//    會依修改時間由舊到新刪除。要長期保存的歌，請放進子資料夾（子資料夾不會被清理）。
 
 const fs = require('fs');
 const path = require('path');
 
-const MUSIC_DIR = process.env.MUSIC_DIR || path.join(__dirname, 'data', 'music');
-const CACHE_SUBDIR = 'cache';                       // 自動下載／正規化的快取放在這個子資料夾
-const CACHE_DIR = path.join(MUSIC_DIR, CACHE_SUBDIR);
+const MUSIC_DIR = process.env.MUSIC_DIR || '/data/music';
+const CACHE_SUBDIR = '';                 // 空字串 = 不使用子資料夾，快取直接放根目錄
+const CACHE_DIR = CACHE_SUBDIR ? path.join(MUSIC_DIR, CACHE_SUBDIR) : MUSIC_DIR;
 const MAX_CACHE_SIZE_MB = parseInt(process.env.MAX_CACHE_SIZE_MB || '2048', 10);
 
 const SUPPORTED_EXTENSIONS = ['.mp3', '.wav', '.ogg', '.flac', '.m4a', '.aac'];
@@ -29,6 +31,15 @@ function ensureDirs() {
 
 function normalizeSlashes(p) {
   return String(p || '').replace(/\\/g, '/');
+}
+
+// 判斷某個相對路徑是否屬於「快取範圍」
+//   有 CACHE_SUBDIR：位於該子資料夾內
+//   無 CACHE_SUBDIR：位於根目錄第一層（不含子資料夾）
+function isCachePath(relPath) {
+  return CACHE_SUBDIR
+    ? relPath.startsWith(`${CACHE_SUBDIR}/`)
+    : !relPath.includes('/');
 }
 
 // ── 路徑安全檢查：拒絕任何跳出 MUSIC_DIR 範圍的相對路徑 ──────
@@ -172,7 +183,7 @@ function writeFileFromStream(rawRelPath, readableStream) {
         return reject(err);
       }
       console.log(`✅ [MusicLibrary] 已寫入音樂庫: ${relPath}`);
-      if (relPath.startsWith(`${CACHE_SUBDIR}/`)) {
+      if (isCachePath(relPath)) {
         evictCacheIfNeeded();
       }
       resolve({ relPath, absPath });
@@ -183,17 +194,19 @@ function writeFileFromStream(rawRelPath, readableStream) {
 }
 
 // ════════════════════════════════════════════════════════
-//  快取容量控制 —— 只清 cache/ 子資料夾，絕不動到手動放進去的
-//  「策展音樂庫」檔案（例如 favorites/ 這類使用者自行分類的資料夾）。
+//  快取容量控制
+//  - 不遞迴：只處理 CACHE_DIR 第一層的檔案，子資料夾（例如 favorites/）完全不碰
+//  - 只處理音訊副檔名：.gitkeep、說明文件、.part 殘留檔等不會被刪
+//  - 排除暫存檔：避免把正在下載／正規化／上傳的檔案當成舊檔刪掉
 // ════════════════════════════════════════════════════════
 function evictCacheIfNeeded() {
   try {
     if (!fs.existsSync(CACHE_DIR)) return;
 
-    // 只算「檔案」且排除暫存檔（xxx.tmp.mp3 / xxx.norm_123.tmp.mp3 / xxx.upload_*.tmp），
-    // 避免把正在下載／正規化／上傳的檔案當成舊檔刪掉
     const files = fs.readdirSync(CACHE_DIR, { withFileTypes: true })
-      .filter(d => d.isFile() && !isTempName(d.name))
+      .filter(d => d.isFile()
+                && !isTempName(d.name)
+                && SUPPORTED_EXTENSIONS.includes(path.extname(d.name).toLowerCase()))
       .map(d => {
         const fp = path.join(CACHE_DIR, d.name);
         const stat = fs.statSync(fp);
