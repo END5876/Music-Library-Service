@@ -12,7 +12,7 @@
 const fs = require('fs');
 const path = require('path');
 
-const MUSIC_DIR = process.env.MUSIC_DIR || '/data/music';
+const MUSIC_DIR = process.env.MUSIC_DIR || path.join(__dirname, 'data', 'music');
 const CACHE_SUBDIR = 'cache';                       // 自動下載／正規化的快取放在這個子資料夾
 const CACHE_DIR = path.join(MUSIC_DIR, CACHE_SUBDIR);
 const MAX_CACHE_SIZE_MB = parseInt(process.env.MAX_CACHE_SIZE_MB || '2048', 10);
