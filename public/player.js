@@ -25,7 +25,11 @@
   let currentFile = null;  // 目前播放的音樂庫 filename
   let onlineCurrent = null;
   let onlineAvailable = false;
-  let playToken = 0;
+  let byFile = new Map();  // filename -> 曲目(O(1) 查詢,取代 all.find)
+  let nextDirty = true;    // 佇列畫面是否需要重畫(全螢幕頁沒開時不畫)
+  const LIB_PAGE = 300;    // 音樂庫清單一次最多畫幾列
+  const QUEUE_MAX_ROWS = 100; // 佇列畫面一次最多畫幾列
+  let libLimit = LIB_PAGE;
   let shuffle = false;
   let repeat = 'all';
   let history = [];
@@ -104,7 +108,11 @@
         method: 'POST', headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ password: $('pw').value }),
       });
-      if (r.ok) { $('pw').value = ''; $('login').classList.remove('show'); loadList(); return; }
+      if (r.ok) {
+        $('pw').value = ''; $('login').classList.remove('show'); loadList();
+        if ((currentFile || onlineCurrent) && audio.error) { audio.load(); tryPlay(); } // 播到一半登入過期:登入後接著重播
+        return;
+      }
       const j = await r.json().catch(() => ({}));
       $('loginErr').textContent = j.error || '登入失敗';
     } catch { $('loginErr').textContent = '連線失敗'; }
@@ -114,8 +122,9 @@
     audio.pause();
     setSession('none');
     await fetch('/web/logout', { method: 'POST' }).catch(() => {});
-    all = []; view = []; queue = []; history = [];
-    currentFile = null; onlineCurrent = null; playToken++;
+    all = []; view = []; queue = []; history = []; byFile = new Map();
+    currentFile = null; onlineCurrent = null;
+    $('onlineResults').textContent = '';
     audio.removeAttribute('src'); audio.load();
     setNow(null); render();
     $('logoutBtn').hidden = true;
@@ -124,11 +133,12 @@
 
   // ── 列表元件 ──
   // opts:key / title / sub / dur / btn / grip / qid / onClick
-  function makeRow({ key, title, sub, dur, btn, grip, qid: rowQid, onClick }) {
+  function makeRow({ key, title, sub, dur, btn, grip, qid: rowQid, pv, onClick }) {
     const li = document.createElement('li');
     li.className = 'row';
     if (key) li.dataset.key = key;
     if (rowQid != null) li.dataset.qid = rowQid;
+    if (pv) li.dataset.pv = pv; // 尚未進入佇列的「接下來」預覽列:拖曳時才轉成佇列項目
     const cv = document.createElement('div'); cv.className = 'cover';
     const info = document.createElement('div'); info.className = 'info';
     const t = document.createElement('div'); t.className = 't'; t.textContent = title; t.title = title;
@@ -169,21 +179,29 @@
     key: 'lib:' + f.filename, title: f.name, sub: libSub(f), dur: fmtSize(f.size),
     onClick: () => start(f.filename),
   });
+  // 非隨機模式下佇列畫面裡「接下來播什麼」的預覽列:可以拖曳
+  const previewRow = (f) => makeRow({
+    key: 'lib:' + f.filename, title: f.name, sub: libSub(f), dur: fmtSize(f.size),
+    grip: true, pv: f.filename, onClick: () => start(f.filename),
+  });
 
   function nowKey() {
     if (currentFile) return 'lib:' + currentFile;
     if (onlineCurrent) return 'on:' + (onlineCurrent.srcUrl || onlineCurrent.url);
     return null;
   }
-  function markPlaying() {
+  // 不再逐列 toggle:只清掉舊的 .playing,再用屬性選擇器找出目前這首
+  // scroll=true 才捲動(只有換歌時需要,搜尋輸入／重畫清單時不該一直把畫面拉回去)
+  function markPlaying(scroll = false) {
     const k = nowKey();
+    document.querySelectorAll('.row.playing').forEach((r) => { if (r.dataset.key !== k) r.classList.remove('playing'); });
+    if (!k) return;
     let firstMatch = null;
-    document.querySelectorAll('.row[data-key]').forEach((r) => {
-      const on = r.dataset.key === k;
-      r.classList.toggle('playing', on);
-      if (on && !firstMatch && r.closest('#list')) firstMatch = r;
+    document.querySelectorAll(`.row[data-key="${CSS.escape(k)}"]`).forEach((r) => {
+      r.classList.add('playing');
+      if (!firstMatch && r.closest('#list')) firstMatch = r;
     });
-    if (firstMatch && !$('viewLibrary').hidden) firstMatch.scrollIntoView({ block: 'nearest' });
+    if (scroll && firstMatch && !$('viewLibrary').hidden) firstMatch.scrollIntoView({ block: 'nearest' });
   }
 
   // ── 音樂庫清單 ──
@@ -194,6 +212,8 @@
     if (r.status === 401) { setStatus(''); return showLogin(); }
     if (!r.ok) return setStatus('讀取清單失敗');
     all = (await r.json()).files || [];
+    byFile = new Map(all.map(f => [f.filename, f]));
+    queue = queue.filter(e => e.kind !== 'lib' || byFile.has(e.filename)); // 已被刪除的檔案移出佇列
     $('logoutBtn').hidden = false;
     setStatus('');
     renderChips();
@@ -220,6 +240,8 @@
     view = all.filter(f =>
       (!folder || f.filename.startsWith(folder + '/')) &&
       (!q || f.name.toLowerCase().includes(q) || f.filename.toLowerCase().includes(q)));
+    libLimit = LIB_PAGE;
+    if (shuffle) syncShuffleQueue(); // 篩選條件變了,隨機佇列要跟著畫面上的清單走(重新開頁時也靠這裡排好)
     render();
   }
 
@@ -228,7 +250,15 @@
     const ul = $('list'); ul.textContent = '';
     $('empty').hidden = view.length > 0 || !all.length;
     const frag = document.createDocumentFragment();
-    for (const f of view) frag.appendChild(libRow(f));
+    for (const f of view.slice(0, libLimit)) frag.appendChild(libRow(f));
+    if (view.length > libLimit) {
+      const more = document.createElement('li');
+      more.className = 'row';
+      more.style.justifyContent = 'center';
+      more.textContent = `顯示更多(還有 ${view.length - libLimit} 首)`;
+      more.addEventListener('click', () => { libLimit += LIB_PAGE; render(); });
+      frag.appendChild(more);
+    }
     ul.appendChild(frag);
     markPlaying();
     renderNext();
@@ -246,7 +276,7 @@
         navigator.mediaSession.metadata = n ? new MediaMetadata({ title: n.title, artist: n.sub.replace(/^📁 /, '') }) : null;
       } catch {}
     }
-    markPlaying();
+    markPlaying(true);
     renderNext();
   }
 
@@ -259,12 +289,28 @@
     }
     return a;
   }
-  // 立刻把目前清單排成一份不重複的隨機順序(排除正在播放的那首);手動加入的線上歌曲保留在最前面
-  function buildShuffle() {
+  // 立刻把目前清單排成一份不重複的隨機順序;手動加入的線上歌曲保留在最前面
+  // includeCurrent:新一輪開始時要把剛播完的那首也排進去(否則每一輪都會少一首)
+  function buildShuffle({ includeCurrent = false, render = true } = {}) {
     const online = queue.filter(e => e.kind === 'online');
-    const files = view.map(f => f.filename).filter(f => f !== currentFile);
-    queue = online.concat(shuffled(files).map(mkLib));
-    renderNext();
+    let files = view.map(f => f.filename);
+    if (!includeCurrent) files = files.filter(f => f !== currentFile);
+    const order = shuffled(files);
+    // 新一輪的第一首不要正好是剛播完的那首(清單只有一首時除外)
+    if (includeCurrent && order.length > 1 && order[0] === currentFile) {
+      const j = 1 + Math.floor(Math.random() * (order.length - 1));
+      [order[0], order[j]] = [order[j], order[0]];
+    }
+    queue = online.concat(order.map(mkLib));
+    if (render) renderNext();
+  }
+  // 篩選變動時:只有「清單內容」真的變了才重排,避免打字搜尋時每個字都洗牌、也保留使用者拖曳過的順序
+  function syncShuffleQueue() {
+    const want = new Set(view.map(f => f.filename));
+    want.delete(currentFile);
+    const have = queue.filter(e => e.kind === 'lib');
+    const same = have.length === want.size && have.every(e => want.has(e.filename));
+    if (!same) buildShuffle({ render: false });
   }
 
   // ── 佇列畫面(全螢幕播放頁)──
@@ -272,7 +318,7 @@
     const drag = { grip: true, qid: e.id };
     const remove = { icon: 'close', title: '移出佇列', onClick: () => { queue = queue.filter(x => x.id !== e.id); renderNext(); } };
     if (e.kind === 'lib') {
-      const f = all.find(x => x.filename === e.filename);
+      const f = byFile.get(e.filename);
       if (!f) return null;
       return makeRow({ ...drag, title: f.name, sub: libSub(f), btn: remove, onClick: () => playFromQueue(e.id) });
     }
@@ -284,14 +330,35 @@
     });
   }
 
+  // 佇列只存在於全螢幕播放頁:頁面沒開時只標記「需要重畫」,打開時才真的畫(換歌不再重建整份清單)
+  const isFullOpen = () => $('full').classList.contains('open');
   function renderNext() {
+    nextDirty = true;
+    if (isFullOpen()) flushNext();
+  }
+  function flushNext() {
+    nextDirty = false;
+    queue = queue.filter(e => e.kind !== 'lib' || byFile.has(e.filename)); // 數量與畫面列數保持一致
     const ul = $('nextList'); ul.textContent = '';
     const frag = document.createDocumentFragment();
     let count = 0;
-    for (const e of queue) { const li = queueRow(e); if (li) { frag.appendChild(li); count++; } }
-    if (!shuffle && !onlineCurrent && currentFile) {
-      const i = view.findIndex(f => f.filename === currentFile);
-      if (i >= 0) for (const f of view.slice(i + 1, i + 31)) { frag.appendChild(libRow(f)); count++; }
+    // 隨機模式的佇列可能有上千首,只畫前 100 列;非隨機模式的佇列只含使用者手動排的項目,全部畫出來
+    const cap = shuffle ? QUEUE_MAX_ROWS : Infinity;
+    for (const e of queue.slice(0, cap)) { const li = queueRow(e); if (li) { frag.appendChild(li); count++; } }
+    if (queue.length > cap) {
+      const li = document.createElement('li'); li.className = 'note';
+      li.textContent = `…還有 ${queue.length - QUEUE_MAX_ROWS} 首`;
+      frag.appendChild(li);
+    }
+    // 非隨機模式:佇列用完之後會接著播「最後一首」的下一首,預覽就從那裡開始(與 pickNext 的行為一致)
+    let anchor = null;
+    if (!shuffle) {
+      for (let k = queue.length - 1; k >= 0; k--) if (queue[k].kind === 'lib') { anchor = queue[k].filename; break; }
+      if (!anchor && !onlineCurrent && currentFile) anchor = currentFile;
+    }
+    if (anchor) {
+      const i = view.findIndex(f => f.filename === anchor);
+      if (i >= 0) for (const f of view.slice(i + 1, i + 31)) { frag.appendChild(previewRow(f)); count++; }
     }
     if (!count) {
       const li = document.createElement('li'); li.className = 'note';
@@ -311,7 +378,7 @@
     ev.preventDefault(); ev.stopPropagation();
     const ul = $('nextList');
     const sc = ul.closest('.queue');
-    const rows = [...ul.querySelectorAll('.row[data-qid]')].filter(r => r !== li);
+    const rows = [...ul.querySelectorAll('.row[data-qid], .row[data-pv]')].filter(r => r !== li);
     const startY = ev.clientY, startScroll = sc.scrollTop;
     let y = startY, pos = 0;
     li.classList.add('dragging');
@@ -334,9 +401,18 @@
       window.removeEventListener('pointerup', end);
       window.removeEventListener('pointercancel', end);
       if (e.type === 'pointerup') {
-        const id = Number(li.dataset.qid);
-        const from = queue.findIndex(x => x.id === id);
-        if (from >= 0) { const [item] = queue.splice(from, 1); queue.splice(Math.min(pos, queue.length), 0, item); }
+        // 依畫面上的列順序重建佇列;預覽列(data-pv)在這一刻才轉成真正的佇列項目,
+        // 所以非隨機模式的「接下來」也能拖曳。沒畫出來的(隨機模式超過 100 列的)項目維持在後面。
+        const toEntry = (r) => r.dataset.qid != null
+          ? queue.find(x => x.id === Number(r.dataset.qid))
+          : (byFile.has(r.dataset.pv) ? mkLib(r.dataset.pv) : null);
+        const moved = toEntry(li);
+        if (moved) {
+          const shown = rows.map(toEntry).filter(Boolean);
+          shown.splice(Math.min(pos, shown.length), 0, moved);
+          const used = new Set(shown.map(x => x.id));
+          queue = shown.concat(queue.filter(x => !used.has(x.id)));
+        }
       }
       renderNext();
     };
@@ -347,11 +423,23 @@
   }
 
   // ── 播放 ──
-  function play(filename, { pushHistory = true } = {}) {
-    const track = all.find(f => f.filename === filename); if (!track) return false;
-    if (pushHistory && currentFile && currentFile !== filename) history.push(currentFile);
+  // 歷史與佇列使用同一種項目格式({kind:'lib',filename} / {kind:'online',item}),「上一首」才能回到線上歌曲
+  const entryKey = (e) => e.kind === 'lib' ? 'lib:' + e.filename : 'on:' + (e.item.srcUrl || e.item.url);
+  function currentEntry() {
+    if (currentFile) return { kind: 'lib', filename: currentFile };
+    if (onlineCurrent) return { kind: 'online', item: onlineCurrent };
+    return null;
+  }
+  function pushHistory() {
+    const c = currentEntry(); if (!c) return;
+    history.push(c);
+    if (history.length > 200) history.shift();
+  }
+
+  function play(filename, { pushHistory: ph = true } = {}) {
+    const track = byFile.get(filename); if (!track) return false;
+    if (ph && currentFile !== filename) pushHistory();
     dbg('play', filename);
-    playToken++;
     onlineCurrent = null;
     currentFile = filename;
     endHandled = false;
@@ -362,9 +450,9 @@
     return true;
   }
 
-  function playEntry(e) {
-    if (e.kind === 'online') return playOnline(e.item);
-    if (!play(e.filename)) advance(); // 檔案已不存在就跳過
+  function playEntry(e, opts) {
+    if (e.kind === 'online') return playOnline(e.item, opts);
+    if (!play(e.filename, opts)) advance(); // 檔案已不存在就跳過
   }
   function playFromQueue(id) {
     const i = queue.findIndex(x => x.id === id);
@@ -388,7 +476,7 @@
     if (shuffle) {
       if (!view.length) return;
       if (repeat === 'off' && currentFile) { setStatus('✅ 隨機清單播放完畢'); return; }
-      buildShuffle(); // 一輪播完:重新排出下一輪不重複的順序
+      buildShuffle({ includeCurrent: true }); // 一輪播完:排出下一輪(剛播完的那首也要在裡面)
       if (queue.length) playEntry(queue.shift());
       else if (currentFile) { audio.currentTime = 0; tryPlay(); }
       return;
@@ -398,14 +486,26 @@
   }
 
   function prev() {
-    if (onlineCurrent) { playOnline(onlineCurrent); return; }
-    if (audio.currentTime > 3) { audio.currentTime = 0; return; }
-    if (history.length) {
-      if (shuffle && currentFile) queue.unshift(mkLib(currentFile)); // 按「下一首」還能回來
-      play(history.pop(), { pushHistory: false });
+    // 已播放超過 3 秒:回到開頭(線上串流不能拖曳,就重新串流)
+    if ((currentFile || onlineCurrent) && audio.currentTime > 3) {
+      if (seekable()) audio.currentTime = 0;
+      else if (onlineCurrent) playOnline(onlineCurrent, { pushHistory: false });
+      return;
+    }
+    while (history.length) {
+      const e = history.pop();
+      if (e.kind === 'lib' && !byFile.has(e.filename)) continue; // 檔案已不存在:再往前找
+      const cur = currentEntry();
+      // 隨機模式或目前是線上歌曲:把目前這首放回佇列最前面,按「下一首」還能回來(先去重,避免連按「上一首」出現重複項)
+      if (cur && (shuffle || cur.kind === 'online')) {
+        queue = queue.filter(x => entryKey(x) !== entryKey(cur));
+        queue.unshift(cur.kind === 'lib' ? mkLib(cur.filename) : mkOnline(cur.item));
+      }
+      playEntry(e, { pushHistory: false });
       renderNext();
       return;
     }
+    if (onlineCurrent) { playOnline(onlineCurrent, { pushHistory: false }); return; }
     if (shuffle) return;
     const i = view.findIndex(f => f.filename === currentFile);
     if (i > 0) play(view[i - 1].filename, { pushHistory: false });
@@ -414,6 +514,7 @@
 
   function toggle() {
     if (!currentFile && !onlineCurrent) {
+      if (queue.length) { advance(); return; } // 佇列(含重開頁面時排好的隨機佇列、手動加入的線上歌曲)優先
       if (!view.length) return;
       start(shuffle ? view[Math.floor(Math.random() * view.length)].filename : view[0].filename);
       return;
@@ -480,21 +581,29 @@
     $('vol').style.setProperty('--p', Math.round(audio.volume * 100) + '%');
     savePrefs();
   });
-  audio.addEventListener('error', () => {
+  // 任何播放錯誤都先確認登入還有效(用輕量的 capabilities,不用抓整份清單)。
+  // 過期就停下來要求重新登入,而不是一路「無法播放、已略過」下去。
+  async function stillLoggedIn() {
+    try {
+      const r = await fetch('/web/api/capabilities');
+      if (r.status === 401) { pendingPlay = false; audio.pause(); showLogin('登入已過期,請重新登入'); return false; }
+    } catch {}
+    return true;
+  }
+  audio.addEventListener('error', async () => {
     pendingPlay = false;
     dbg('error', audio.error && audio.error.code);
+    if (!currentFile && !onlineCurrent) return;
+    const key = nowKey();
+    if (!(await stillLoggedIn())) return;
+    if (nowKey() !== key) return; // 等待期間已經換歌了
     if (onlineCurrent) {
       setStatus('線上串流失敗(可能被平台限制、影片不可用或伺服器忙碌)');
       if (queue.length) later(advance);
       return;
     }
-    if (!currentFile) return;
     errorStreak += 1;
-    if (audio.error && audio.error.code === 4 && errorStreak === 1) {
-      fetch('/web/api/list').then(r => { if (r.status === 401) showLogin('登入已過期,請重新登入'); });
-    }
-    setStatus('這首無法播放,已略過');
-    if (errorStreak < Math.min(view.length, 5)) later(advance);
+    if (errorStreak < Math.min(view.length, 5)) { setStatus('這首無法播放,已略過'); later(advance); }
     else setStatus('連續多首無法播放,已停止');
   });
 
@@ -587,7 +696,7 @@
   }
 
   // 全螢幕播放頁
-  const openFull = () => $('full').classList.add('open');
+  const openFull = () => { $('full').classList.add('open'); if (nextDirty) flushNext(); };
   const closeFull = () => $('full').classList.remove('open');
   $('nowOpen').addEventListener('click', openFull);
   $('expand').addEventListener('click', openFull);
@@ -598,16 +707,20 @@
     $('full').dataset.tab = t.dataset.tab;
   }));
 
+  const skipKey = (e) => (e.target.matches && e.target.matches('input:not([type=range]), select, textarea')) || e.ctrlKey || e.metaKey || e.altKey;
+  // 空白鍵在按鈕上會在 keyup 觸發 click,與上面的全域播放／暫停疊加成「按了沒反應」
+  document.addEventListener('keyup', (e) => { if (e.key === ' ' && !skipKey(e)) e.preventDefault(); });
   document.addEventListener('keydown', (e) => {
-    if ((e.target.matches && e.target.matches('input:not([type=range]), select, textarea')) || e.ctrlKey || e.metaKey || e.altKey) return;
+    if (skipKey(e)) return;
     if (e.key === ' ') { e.preventDefault(); toggle(); }
     else if (e.key === 'n' || e.key === 'N') advance();
     else if (e.key === 'p' || e.key === 'P') prev();
     else if (e.key === 's' || e.key === 'S') toggleShuffle();
     else if (e.key === 'r' || e.key === 'R') cycleRepeat();
     else if (e.key === 'Escape') closeFull();
-    else if (e.key === 'ArrowRight' && seekable()) audio.currentTime = Math.min(audio.duration, audio.currentTime + 10);
-    else if (e.key === 'ArrowLeft' && seekable()) audio.currentTime = Math.max(0, audio.currentTime - 10);
+    // 焦點在進度條時瀏覽器本身也會處理方向鍵(±0.1%),要 preventDefault 才不會蓋掉 ±10 秒;音量條則保留原生行為
+    else if (e.key === 'ArrowRight' && seekable() && e.target.id !== 'vol') { e.preventDefault(); audio.currentTime = Math.min(audio.duration, audio.currentTime + 10); }
+    else if (e.key === 'ArrowLeft' && seekable() && e.target.id !== 'vol') { e.preventDefault(); audio.currentTime = Math.max(0, audio.currentTime - 10); }
   });
 
   // ── 頁籤切換 ──
@@ -692,10 +805,10 @@
   });
 
   // 播放線上歌曲(交給伺服器的 /web/play 處理)
-  function playOnline(item) {
+  function playOnline(item, { pushHistory: ph = true } = {}) {
     dbg('playOnline', item.title);
-    playToken++;
-    if (currentFile) history.push(currentFile);
+    const same = onlineCurrent && entryKey({ kind: 'online', item: onlineCurrent }) === entryKey({ kind: 'online', item });
+    if (ph && !same) pushHistory(); // 線上歌曲也進歷史,「上一首」才回得去
     currentFile = null;
     onlineCurrent = item;
     endHandled = false;

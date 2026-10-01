@@ -12,7 +12,7 @@ const { spawn } = require('child_process');
 const fs   = require('fs');
 const path = require('path');
 const logger = require('../logger');
-const { CACHE_DIR, MAX_CACHE_SIZE_MB } = require('../musicStore');
+const { CACHE_DIR, MAX_CACHE_SIZE_MB, evictCacheIfNeeded } = require('../musicStore');
 
 const ytdlpPath = 'yt-dlp';
 
@@ -53,29 +53,7 @@ async function getCachedPath(url, title) {
   return null;
 }
 
-// 快取大小管理：超過上限時刪除最舊的檔案
-function evictCacheIfNeeded() {
-  try {
-    const files = fs.readdirSync(CACHE_DIR)
-      .map(f => {
-        const fp   = path.join(CACHE_DIR, f);
-        const stat = fs.statSync(fp);
-        return { fp, mtime: stat.mtimeMs, size: stat.size };
-      })
-      .sort((a, b) => a.mtime - b.mtime); // 最舊排前面
-
-    let totalMB = files.reduce((sum, f) => sum + f.size, 0) / 1024 / 1024;
-
-    while (totalMB > MAX_CACHE_SIZE_MB && files.length > 0) {
-      const oldest = files.shift();
-      fs.unlinkSync(oldest.fp);
-      totalMB -= oldest.size / 1024 / 1024;
-      console.log(`🗑️ [Cache] 快取已滿，刪除舊檔: ${path.basename(oldest.fp)}`);
-    }
-  } catch (err) {
-    console.error('❌ [Cache] 快取清理失敗:', err);
-  }
-}
+// 快取大小管理：與 musicStore 共用同一份實作（只清 cache/、不碰暫存檔與策展資料夾）
 
 // 下載並儲存到快取
 function downloadAndCache(url, title, ytdlpArgs, onProgress) {

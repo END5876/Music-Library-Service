@@ -13,7 +13,8 @@ const fs = require('fs');
 const path = require('path');
 
 const MUSIC_DIR = process.env.MUSIC_DIR || path.join(__dirname, 'data', 'music');
-const CACHE_DIR = MUSIC_DIR;
+const CACHE_SUBDIR = 'cache';                       // 自動下載／正規化的快取放在這個子資料夾
+const CACHE_DIR = path.join(MUSIC_DIR, CACHE_SUBDIR);
 const MAX_CACHE_SIZE_MB = parseInt(process.env.MAX_CACHE_SIZE_MB || '2048', 10);
 
 const SUPPORTED_EXTENSIONS = ['.mp3', '.wav', '.ogg', '.flac', '.m4a', '.aac'];
@@ -189,10 +190,12 @@ function evictCacheIfNeeded() {
   try {
     if (!fs.existsSync(CACHE_DIR)) return;
 
-    const files = fs.readdirSync(CACHE_DIR)
-      .filter(f => !f.endsWith('.tmp'))
-      .map(f => {
-        const fp = path.join(CACHE_DIR, f);
+    // 只算「檔案」且排除暫存檔（xxx.tmp.mp3 / xxx.norm_123.tmp.mp3 / xxx.upload_*.tmp），
+    // 避免把正在下載／正規化／上傳的檔案當成舊檔刪掉
+    const files = fs.readdirSync(CACHE_DIR, { withFileTypes: true })
+      .filter(d => d.isFile() && !isTempName(d.name))
+      .map(d => {
+        const fp = path.join(CACHE_DIR, d.name);
         const stat = fs.statSync(fp);
         return { fp, mtime: stat.mtimeMs, size: stat.size };
       })
@@ -213,8 +216,10 @@ function evictCacheIfNeeded() {
 
 module.exports = {
   MUSIC_DIR,
+  CACHE_SUBDIR,
   CACHE_DIR,
   MAX_CACHE_SIZE_MB,
+  evictCacheIfNeeded,
   listAll,
   exists,
   resolveForRead,
