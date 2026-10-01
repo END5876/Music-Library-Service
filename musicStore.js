@@ -14,7 +14,7 @@
 const fs = require('fs');
 const path = require('path');
 
-const MUSIC_DIR = process.env.MUSIC_DIR || '/data/music';
+const MUSIC_DIR = process.env.MUSIC_DIR || path.join(__dirname, 'data', 'music');
 const CACHE_SUBDIR = '';                 // 空字串 = 不使用子資料夾，快取直接放根目錄
 const CACHE_DIR = CACHE_SUBDIR ? path.join(MUSIC_DIR, CACHE_SUBDIR) : MUSIC_DIR;
 const MAX_CACHE_SIZE_MB = parseInt(process.env.MAX_CACHE_SIZE_MB || '2048', 10);
