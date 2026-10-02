@@ -160,3 +160,114 @@ input[type=range]:not(:disabled):hover::-moz-range-thumb,.full input[type=range]
   .meta .t{font-size:20px}
 }
 @media (min-width:701px){.tabs{display:none}}
+
+/* ── 播放清單 / 離線下載 ── */
+.pl-actions{display:flex;flex-wrap:wrap;gap:8px;margin-bottom:14px}
+.pl-actions .more{border:1px solid #444;border-radius:16px;padding:8px 14px;font-size:13px;white-space:nowrap}
+.pl-actions .more:hover{background:var(--surface2)}
+.pl-actions .more.danger{color:#ff6b81;border-color:#5a2a33}
+.quick.single{grid-template-columns:minmax(0,1fr)}
+.row.offline .t::before{content:"✓ ";color:var(--accent)}
+.row.missing{opacity:.5}
+.rbtn.done{color:var(--accent);opacity:1}
+#plLists + .empty{padding:24px 0}
+.offline-box{margin-top:24px;display:flex;align-items:center;gap:12px;flex-wrap:wrap}
+.offline-box .hint{padding:0}
+.offline-box .more{border:1px solid #444;border-radius:16px;padding:6px 14px;font-size:13px;white-space:nowrap}
+.pick-list{max-height:40vh;overflow-y:auto;display:flex;flex-direction:column;gap:2px;list-style:none}
+.pick-list .note{color:var(--muted);font-size:13px;text-align:center;padding:12px}
+.login .go.ghost{background:var(--surface2)}
+.login .go.alt{background:var(--surface2);border:1px solid var(--accent)}
+.login .box > p.ttl{color:#fff;font-size:16px;font-weight:600}
+
+/* ── 歌曲列「⋮」選單 ── */
+.row .a:empty{display:none}
+.rbtn[data-dlmenu]{opacity:.8}
+.row-menu{position:fixed;z-index:70;min-width:210px;max-width:min(300px,calc(100vw - 16px));background:#2a2a2a;border:1px solid #3a3a3a;border-radius:12px;box-shadow:0 10px 36px rgba(0,0,0,.6);padding:6px;display:flex;flex-direction:column}
+.menu-item{display:flex;align-items:center;gap:12px;width:100%;padding:11px 12px;border-radius:8px;font-size:14px;justify-content:flex-start;text-align:left}
+.menu-item:hover{background:#383838}
+.menu-item svg{width:20px;height:20px}
+.menu-item.done{color:var(--accent)}
+.menu-sep{height:1px;background:#3a3a3a;margin:6px 4px}
+.menu-info{padding:6px 12px 8px;font-size:12px;color:var(--muted);line-height:1.8;overflow-wrap:anywhere}
+.menu-info b{color:#ddd;font-weight:500;margin-right:4px}
+
+/* ── 播放清單內頁(設計稿版) ── */
+body.pl-detail header .search{visibility:hidden}
+#plDetailPane{max-width:720px}
+.pl-top{display:flex;align-items:center;gap:12px;height:48px}
+.pl-icon{width:40px;height:40px;border-radius:50%;color:#ddd;flex-shrink:0}
+.pl-icon:hover{background:#222}
+.pl-search{flex:1;display:flex;align-items:center;gap:8px;background:#1c1c1c;border-radius:12px;padding:0 14px;height:40px;color:#888;min-width:0}
+.pl-search svg{width:20px;height:20px}
+.pl-search input{flex:1;background:none;border:0;outline:0;color:#fff;font:inherit;font-size:14px;min-width:0;-webkit-appearance:none;appearance:none}
+.pl-search input::-webkit-search-cancel-button{-webkit-appearance:none}
+.pl-header{display:flex;gap:16px;align-items:center;margin:20px 0 18px}
+.pl-cover{width:96px;font-size:40px;border-radius:12px;box-shadow:0 8px 24px rgba(0,0,0,.5);flex-shrink:0;background:linear-gradient(135deg,#4b3f8f,#1d1a3a)}
+.pl-meta{min-width:0}
+.pl-meta h1{font-size:24px;margin-bottom:4px;overflow-wrap:anywhere;display:-webkit-box;-webkit-line-clamp:2;line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}
+.pl-meta p{font-size:13px;color:#888}
+.pl-actions{display:flex;align-items:center;gap:10px;margin-bottom:12px;position:relative;flex-wrap:nowrap}
+.pl-play{flex:1;height:46px;border-radius:23px;background:#fff;color:#000;font-size:15px;font-weight:700;gap:6px}
+.pl-play:hover{background:#e6e6e6}
+.pl-play svg{width:22px;height:22px}
+.pl-circle{width:46px;height:46px;border-radius:50%;border:1px solid #333;background:#141414;color:#fff;flex-shrink:0}
+.pl-circle:hover{background:#222}
+.pl-circle.done{color:var(--accent)}
+.pl-menu{position:absolute;right:0;top:54px;background:#1c1c1c;border:1px solid #2e2e2e;border-radius:12px;padding:6px;min-width:180px;display:none;z-index:10;box-shadow:0 10px 30px rgba(0,0,0,.6)}
+.pl-menu.show{display:block}
+.pl-menu button{width:100%;justify-content:flex-start;text-align:left;gap:10px;color:#eee;padding:11px 12px;border-radius:8px;font-size:14px}
+.pl-menu button:hover{background:#2a2a2a}
+.pl-menu .danger{color:#ff6b6b}
+.pl-menu hr{border:0;border-top:1px solid #2e2e2e;margin:4px 0}
+#plItems{margin-top:8px}
+#plItems .row{padding:8px;border-radius:12px;gap:12px}
+#plItems .cover{width:48px;border-radius:8px;background:linear-gradient(135deg,#3a3560,#1a1a2e)}
+#plItems .cover::before{content:"♪";font-size:20px;color:#8b7fd8}
+#plItems .t{font-weight:600}
+#plItems .a{font-size:12px;color:#777;margin-top:3px}
+#plItems .grip{color:#555}
+.menu-item.danger{color:#ff6b6b}
+
+/* ── 播放清單:總覽卡片 + 電腦版內頁雙欄 ── */
+#plNew{background:#fff;color:#000;border:0;font-weight:700;padding:9px 18px;font-size:14px}
+#plNew:hover{background:#e6e6e6}
+#plLists{grid-template-columns:minmax(0,1fr);gap:4px}
+.pl-card{display:flex;align-items:center;gap:12px;padding:8px;border-radius:12px;cursor:pointer;position:relative;min-width:0}
+.pl-card:hover{background:var(--surface)}
+.pl-card-art{position:relative;flex-shrink:0;width:48px}
+.pl-card .cover{width:100%;border-radius:8px;background:linear-gradient(135deg,#3a3560,#1a1a2e)}
+.pl-card .cover::before{content:"♪";font-size:20px;color:#8b7fd8}
+.pl-card-info{flex:1;min-width:0}
+.pl-card .t{font-weight:600}
+.pl-card .a{font-size:12px;color:#777;margin-top:3px}
+.pl-card-play{display:none}
+.pl-card-pm{width:40px;height:40px;border-radius:50%;color:#ccc;flex-shrink:0}
+.pl-card-pm:hover{background:#2a2a2a;color:#fff}
+
+@media (min-width:701px){
+  #plLists{grid-template-columns:repeat(auto-fill,minmax(180px,1fr));gap:20px 18px}
+  .pl-card{flex-direction:column;align-items:stretch;gap:12px;padding:12px;background:var(--surface)}
+  .pl-card:hover{background:var(--surface2)}
+  .pl-card-art{width:100%}
+  .pl-card .cover{border-radius:10px;box-shadow:0 8px 24px rgba(0,0,0,.45)}
+  .pl-card .cover::before{font-size:44px}
+  .pl-card-pm{display:none}
+  .pl-card-play{display:grid;place-items:center;position:absolute;right:10px;bottom:10px;width:44px;height:44px;border-radius:50%;background:var(--accent);color:#fff;box-shadow:0 6px 16px rgba(0,0,0,.5);opacity:0;transform:translateY(6px);transition:.15s}
+  .pl-card:hover .pl-card-play,.pl-card-play:focus-visible{opacity:1;transform:none}
+}
+@media (min-width:701px) and (hover:none){
+  .pl-card-play{opacity:1;transform:none}
+}
+
+.pl-search{max-width:460px}
+@media (min-width:760px){
+  #plDetailPane{max-width:1100px;display:grid;grid-template-columns:300px minmax(0,1fr);grid-template-areas:"top top" "side list";column-gap:40px;align-items:start}
+  .pl-top{grid-area:top}
+  .pl-side{grid-area:side;position:sticky;top:8px}
+  .pl-header{flex-direction:column;align-items:flex-start;gap:18px;margin:12px 0 18px}
+  .pl-cover{width:240px;font-size:84px;border-radius:14px}
+  .pl-meta h1{font-size:30px}
+  #plItems{grid-area:list;margin-top:0}
+  #plItemsEmpty{grid-area:list}
+}

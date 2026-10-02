@@ -86,6 +86,25 @@ YouTube 需要的環境變數（`WARP_PROXY_URL`、`YOUTUBE_PO_TOKEN`、cookies 
 > Bot 之間的內部呼叫仍可走 Private Networking；公開之後請務必同時設定
 > `MUSIC_LIB_SECRET`，否則 `/api/music/*` 會對公網完全開放讀寫。
 
+### 播放清單與離線下載
+
+網頁播放器的 **播放清單** 分頁（登入後可用）：
+
+- 建立／重新命名／刪除播放清單；音樂庫與線上搜尋的每首歌旁有「加入播放清單」圖示（全螢幕播放頁右上角也有，加入目前這首）。
+- 清單內可移除歌曲、拖曳排序、▶ 播放／🔀 隨機播放（會依「隨機」「循環」按鈕的設定續播）。
+- 播放清單存在伺服器（`PLAYLISTS_FILE`，預設 `<MUSIC_DIR>/.web/playlists.json`），所有裝置共用；音樂庫與線上歌曲都可以放進同一份清單。
+- **離線下載**：每首歌旁的 ⬇ 可單曲下載，清單頁的「⬇ 下載離線」一鍵下載整份清單（同時最多 2 首，可取消）。檔案存在這個瀏覽器的 IndexedDB，不經過伺服器；已下載的歌曲前面會有 ✓，播放時優先使用離線檔（可拖曳進度）。Service Worker 會快取頁面與清單，所以沒網路時也能開啟播放器、播離線歌曲。需要 HTTPS。
+- 線上（YouTube / Bilibili）歌曲的離線下載走 `/web/play`：已快取就是直接傳檔案，未快取則是 ffmpeg 即時轉出的 mp3。
+
+| 方法 | 路徑 | 說明 |
+|---|---|---|
+| GET / POST | `/web/api/playlists` | 全部清單／建立 `{ name, items? }` |
+| PATCH / DELETE | `/web/api/playlists/:id` | 重新命名 `{ name }`／刪除 |
+| POST | `/web/api/playlists/:id/items` | 加入歌曲 `{ items:[{kind:'lib',filename}\|{kind:'online',url,...}] }`（重複的略過） |
+| DELETE | `/web/api/playlists/:id/items/:itemId` | 移除歌曲 |
+| PUT | `/web/api/playlists/:id/order` | 排序 `{ order:[itemId...] }` |
+| GET | `/player-sw.js` | Service Worker |
+
 ## 本機開發
 
 ```bash

@@ -28,6 +28,12 @@
   <symbol id="i-close" viewBox="0 0 24 24"><path d="M19 6.41L17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"/></symbol>
   <symbol id="i-logout" viewBox="0 0 24 24"><path d="M17 7l-1.41 1.41L18.17 11H8v2h10.17l-2.58 2.58L17 17l5-5zM4 5h8V3H4c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h8v-2H4V5z"/></symbol>
   <symbol id="i-grip" viewBox="0 0 24 24"><path d="M9 6a1.5 1.5 0 110-3 1.5 1.5 0 010 3zm6 0a1.5 1.5 0 110-3 1.5 1.5 0 010 3zM9 13.5a1.5 1.5 0 110-3 1.5 1.5 0 010 3zm6 0a1.5 1.5 0 110-3 1.5 1.5 0 010 3zM9 21a1.5 1.5 0 110-3 1.5 1.5 0 010 3zm6 0a1.5 1.5 0 110-3 1.5 1.5 0 010 3z"/></symbol>
+  <symbol id="i-playlist-add" viewBox="0 0 24 24"><path d="M14 10H2v2h12v-2zm0-4H2v2h12V6zm4 8v-4h-2v4h-4v2h4v4h2v-4h4v-2h-4zM2 16h8v-2H2v2z"/></symbol>
+  <symbol id="i-playlist" viewBox="0 0 24 24"><path d="M15 6H3v2h12V6zm0 4H3v2h12v-2zM3 16h8v-2H3v2zM17 6v8.18c-.31-.11-.65-.18-1-.18-1.66 0-3 1.34-3 3s1.34 3 3 3 3-1.34 3-3V8h3V6h-5z"/></symbol>
+  <symbol id="i-download" viewBox="0 0 24 24"><path d="M19 9h-4V3H9v6H5l7 7 7-7zM5 18v2h14v-2H5z"/></symbol>
+  <symbol id="i-check" viewBox="0 0 24 24"><path d="M12 2a10 10 0 100 20 10 10 0 000-20zm-2 15l-5-5 1.41-1.41L10 14.17l7.59-7.59L19 8l-9 9z"/></symbol>
+  <symbol id="i-more" viewBox="0 0 24 24"><path d="M12 8c1.1 0 2-.9 2-2s-.9-2-2-2-2 .9-2 2 .9 2 2 2zm0 2c-1.1 0-2 .9-2 2s.9 2 2 2 2-.9 2-2-.9-2-2-2zm0 6c-1.1 0-2 .9-2 2s.9 2 2 2 2-.9 2-2-.9-2-2-2z"/></symbol>
+  <symbol id="i-back" viewBox="0 0 24 24"><path d="M20 11H7.83l5.59-5.59L12 4l-8 8 8 8 1.41-1.41L7.83 13H20v-2z"/></symbol>
 </svg>
 
 <audio id="audio" preload="none"></audio>
@@ -43,6 +49,7 @@
 
 <aside>
   <button class="navitem active" data-view="library"><svg><use href="#i-lib"/></svg>音樂庫</button>
+  <button class="navitem" data-view="playlists"><svg><use href="#i-playlist"/></svg>播放清單</button>
   <button class="navitem needs-online" data-view="online" hidden><svg><use href="#i-explore"/></svg>線上搜尋</button>
   <div class="side-sep"></div>
   <div class="side-note">快捷鍵<br>空白：播放／暫停<br>N／P：下一首／上一首<br>S：隨機　R：循環<br>←／→：快退／快進 10 秒</div>
@@ -67,6 +74,42 @@
       <div class="hint" id="onlineHint">在上方搜尋列輸入關鍵字後按 Enter，或直接貼上影片網址。點一下立即播放，「＋」加入佇列。</div>
       <ul class="quick" id="onlineResults"></ul>
     </section>
+  </div>
+
+  <div id="viewPlaylists" hidden>
+    <div id="plListPane">
+      <section style="margin-top:0">
+        <div class="sec-head"><div><small id="plCount">&nbsp;</small><h2>播放清單</h2></div><button class="more" id="plNew">＋ 新增</button></div>
+        <ul class="quick" id="plLists"></ul>
+        <div class="empty" id="plEmpty" hidden></div>
+        <div class="offline-box"><div class="hint" id="offlineInfo"></div><button class="more" id="offlineClear" hidden>清除全部離線檔案</button></div>
+      </section>
+    </div>
+    <div id="plDetailPane" hidden>
+      <div class="pl-top">
+        <button class="pl-icon" id="plBack" aria-label="返回" title="返回"><svg><use href="#i-back"/></svg></button>
+        <div class="pl-search"><svg><use href="#i-search"/></svg><input type="search" id="plSearch" placeholder="搜尋播放清單..." autocomplete="off" enterkeyhint="search"></div>
+      </div>
+      <div class="pl-side">
+      <div class="pl-header">
+        <div class="cover pl-cover"></div>
+        <div class="pl-meta"><h1 id="plTitle"></h1><p id="plMeta">&nbsp;</p></div>
+      </div>
+      <div class="pl-actions">
+        <button class="pl-play" id="plPlay"><svg><use href="#i-play"/></svg>播放</button>
+        <button class="pl-circle" id="plShuffle" title="隨機播放" aria-label="隨機播放"><svg><use href="#i-shuffle"/></svg></button>
+        <button class="pl-circle" id="plDownloadAll" title="下載離線" aria-label="下載離線"><svg><use href="#i-download"/></svg></button>
+        <button class="pl-circle" id="plMoreBtn" title="更多" aria-label="更多"><svg><use href="#i-more"/></svg></button>
+        <div class="pl-menu" id="plMenu">
+          <button id="plRename">✎ 重新命名</button>
+          <hr>
+          <button class="danger" id="plDelete">🗑 刪除播放清單</button>
+        </div>
+      </div>
+      </div>
+      <ul class="quick single" id="plItems"></ul>
+      <div class="empty" id="plItemsEmpty" hidden>這個播放清單還是空的。在音樂庫歌曲旁的「⋮」選單選擇「加入播放清單」就能加入。</div>
+    </div>
   </div>
 </main>
 
@@ -104,6 +147,7 @@
 
 <nav class="bottom-nav">
   <button class="active" data-view="library"><svg><use href="#i-lib"/></svg>音樂庫</button>
+  <button data-view="playlists"><svg><use href="#i-playlist"/></svg>播放清單</button>
   <button class="needs-online" data-view="online" hidden><svg><use href="#i-explore"/></svg>線上搜尋</button>
 </nav>
 
@@ -114,7 +158,7 @@
       <button class="tab active" data-tab="player">歌曲</button>
       <button class="tab" data-tab="queue">佇列</button>
     </div>
-    <span style="width:44px;flex-shrink:0"></span>
+    <button id="fAddPl" aria-label="加入播放清單" title="加入播放清單"><svg><use href="#i-playlist-add"/></svg></button>
   </div>
   <div class="full-body">
     <div class="left-pane">
@@ -137,6 +181,24 @@
       <ul id="nextList"></ul>
     </div>
   </div>
+</div>
+
+<div class="login" id="pickPl">
+  <div class="box">
+    <p class="ttl">加入播放清單</p>
+    <ul class="pick-list" id="pickList"></ul>
+    <button class="go alt" id="pickNew" type="button">＋ 新增播放清單</button>
+    <button class="go ghost" id="pickClose" type="button">取消</button>
+  </div>
+</div>
+
+<div class="login" id="nameDlg">
+  <form class="box" id="nameForm">
+    <p class="ttl" id="nameTitle"></p>
+    <input type="text" id="nameInput" maxlength="50" autocomplete="off" placeholder="名稱" required>
+    <button class="go" type="submit">確定</button>
+    <button class="go ghost" type="button" id="nameCancel">取消</button>
+  </form>
 </div>
 
 <div class="login" id="login">

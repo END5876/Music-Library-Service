@@ -43,8 +43,17 @@
   // 項目:{ id, kind:'lib', filename } 或 { id, kind:'online', item }
   let queue = [];
   let qid = 0;
-  const mkLib = (filename) => ({ id: ++qid, kind: 'lib', filename });
+  const mkLib = (filename, title) => ({ id: ++qid, kind: 'lib', filename, title });
   const mkOnline = (item) => ({ id: ++qid, kind: 'online', item });
+  // 播放清單(存在伺服器,跨裝置共用)
+  let playlists = [];
+  let plOpen = null;        // 目前打開的播放清單 id
+  let plQuery = '';
+  let playlistCtx = null;   // 目前正在播放的播放清單:{ id, items }
+  // 離線下載(IndexedDB)
+  const offlineKeys = new Set();  // 已下載的 key('lib:<filename>' / 'on:<url>')
+  const dlState = new Map();      // key -> { pct, active }(排隊中／下載中)
+  const libAvailable = (fn) => byFile.has(fn) || offlineKeys.has('lib:' + fn);
 
   try {
     const s = JSON.parse(localStorage.getItem('ml_prefs') || '{}');
@@ -123,6 +132,7 @@
     setSession('none');
     await fetch('/web/logout', { method: 'POST' }).catch(() => {});
     all = []; view = []; queue = []; history = []; byFile = new Map();
+    playlists = []; plOpen = null; playlistCtx = null; clearDataCaches();
     currentFile = null; onlineCurrent = null;
     $('onlineResults').textContent = '';
     audio.removeAttribute('src'); audio.load();
@@ -133,12 +143,15 @@
 
   // ── 列表元件 ──
   // opts:key / title / sub / dur / btn / grip / qid / onClick
-  function makeRow({ key, title, sub, dur, btn, grip, qid: rowQid, pv, onClick }) {
+  function makeRow({ key, title, sub, dur, btn, grip, qid: rowQid, pv, iid, missing, onClick }) {
     const li = document.createElement('li');
     li.className = 'row';
     if (key) li.dataset.key = key;
     if (rowQid != null) li.dataset.qid = rowQid;
     if (pv) li.dataset.pv = pv; // 尚未進入佇列的「接下來」預覽列:拖曳時才轉成佇列項目
+    if (iid) li.dataset.iid = iid;
+    if (key && offlineKeys.has(key)) li.classList.add('offline');
+    if (missing) li.classList.add('missing');
     const cv = document.createElement('div'); cv.className = 'cover';
     const info = document.createElement('div'); info.className = 'info';
     const t = document.createElement('div'); t.className = 't'; t.textContent = title; t.title = title;
@@ -151,14 +164,16 @@
       g.className = 'grip'; g.title = '拖曳排序'; g.setAttribute('aria-label', '拖曳排序');
       g.innerHTML = '<svg><use href="#i-grip"/></svg>';
       g.addEventListener('click', (ev) => ev.stopPropagation());
-      g.addEventListener('pointerdown', (ev) => startDrag(ev, li));
+      g.addEventListener('pointerdown', (ev) => (typeof grip === 'function' ? grip : startDrag)(ev, li));
       li.appendChild(g);
     }
-    if (btn) {
+    for (const bt of (Array.isArray(btn) ? btn : btn ? [btn] : [])) {
       const b = document.createElement('button');
-      b.className = 'rbtn'; b.title = btn.title; b.setAttribute('aria-label', btn.title);
-      b.innerHTML = `<svg><use href="#i-${btn.icon}"/></svg>`;
-      b.addEventListener('click', (ev) => { ev.stopPropagation(); btn.onClick(); });
+      b.className = 'rbtn'; b.title = bt.title; b.setAttribute('aria-label', bt.title);
+      b.innerHTML = `<svg><use href="#i-${bt.icon}"/></svg>`;
+      if (bt.dlkey) { b.dataset.dlkey = bt.dlkey; applyDlButton(b); }
+      if (bt.dlmenu) { b.dataset.dlmenu = bt.dlmenu; applyMoreButton(b); }
+      b.addEventListener('click', (ev) => { ev.stopPropagation(); bt.onClick(b); });
       li.appendChild(b);
     }
     if (onClick) li.addEventListener('click', onClick);
@@ -171,12 +186,14 @@
 
   // 使用者主動點選一首歌:重置歷史;若隨機開啟,立刻重新排出不重複的隨機佇列
   function start(filename) {
+    playlistCtx = null;
     history = [];
     play(filename);
     if (shuffle) buildShuffle();
   }
   const libRow = (f) => makeRow({
-    key: 'lib:' + f.filename, title: f.name, sub: libSub(f), dur: fmtSize(f.size),
+    key: 'lib:' + f.filename, title: f.name, sub: '',
+    btn: { icon: 'more', title: '更多', dlmenu: 'lib:' + f.filename, onClick: (b) => openRowMenu(b, f) },
     onClick: () => start(f.filename),
   });
   // 非隨機模式下佇列畫面裡「接下來播什麼」的預覽列:可以拖曳
@@ -213,12 +230,13 @@
     if (!r.ok) return setStatus('讀取清單失敗');
     all = (await r.json()).files || [];
     byFile = new Map(all.map(f => [f.filename, f]));
-    queue = queue.filter(e => e.kind !== 'lib' || byFile.has(e.filename)); // 已被刪除的檔案移出佇列
+    queue = queue.filter(e => e.kind !== 'lib' || libAvailable(e.filename)); // 已被刪除(且沒有離線檔)的檔案移出佇列
     $('logoutBtn').hidden = false;
     setStatus('');
     renderChips();
     applyFilter();
     loadCapabilities();
+    loadPlaylists();
   }
 
   function renderChips() {
@@ -306,6 +324,7 @@
   }
   // 篩選變動時:只有「清單內容」真的變了才重排,避免打字搜尋時每個字都洗牌、也保留使用者拖曳過的順序
   function syncShuffleQueue() {
+    if (playlistCtx) return; // 播放清單有自己的隨機佇列
     const want = new Set(view.map(f => f.filename));
     want.delete(currentFile);
     const have = queue.filter(e => e.kind === 'lib');
@@ -318,7 +337,7 @@
     const drag = { grip: true, qid: e.id };
     const remove = { icon: 'close', title: '移出佇列', onClick: () => { queue = queue.filter(x => x.id !== e.id); renderNext(); } };
     if (e.kind === 'lib') {
-      const f = byFile.get(e.filename);
+      const f = byFile.get(e.filename) || (e.title ? { filename: e.filename, name: e.title, size: 0 } : null);
       if (!f) return null;
       return makeRow({ ...drag, title: f.name, sub: libSub(f), btn: remove, onClick: () => playFromQueue(e.id) });
     }
@@ -338,7 +357,7 @@
   }
   function flushNext() {
     nextDirty = false;
-    queue = queue.filter(e => e.kind !== 'lib' || byFile.has(e.filename)); // 數量與畫面列數保持一致
+    queue = queue.filter(e => e.kind !== 'lib' || libAvailable(e.filename)); // 數量與畫面列數保持一致
     const ul = $('nextList'); ul.textContent = '';
     const frag = document.createDocumentFragment();
     let count = 0;
@@ -436,15 +455,16 @@
     if (history.length > 200) history.shift();
   }
 
-  function play(filename, { pushHistory: ph = true } = {}) {
-    const track = byFile.get(filename); if (!track) return false;
+  function play(filename, { pushHistory: ph = true, title } = {}) {
+    const track = byFile.get(filename)
+      || (offlineKeys.has('lib:' + filename) ? { filename, name: title || filename.split('/').pop(), size: 0 } : null);
+    if (!track) return false;
     if (ph && currentFile !== filename) pushHistory();
     dbg('play', filename);
     onlineCurrent = null;
     currentFile = filename;
     endHandled = false;
-    audio.src = streamUrl(filename);
-    tryPlay();
+    loadSource('lib:' + filename, streamUrl(filename));
     setStatus('');
     setNow({ title: track.name, sub: libSub(track) });
     return true;
@@ -452,7 +472,7 @@
 
   function playEntry(e, opts) {
     if (e.kind === 'online') return playOnline(e.item, opts);
-    if (!play(e.filename, opts)) advance(); // 檔案已不存在就跳過
+    if (!play(e.filename, { ...opts, title: e.title })) advance(); // 檔案已不存在就跳過
   }
   function playFromQueue(id) {
     const i = queue.findIndex(x => x.id === id);
@@ -472,6 +492,12 @@
   function advance() {
     dbg('advance, queue=', queue.length);
     if (queue.length) { playEntry(queue.shift()); return; }
+    if (playlistCtx) {
+      if (repeat === 'off') { setStatus('✅ 播放清單播放完畢'); return; }
+      refillFromCtx(true); // 循環:新一輪
+      if (queue.length) { playEntry(queue.shift()); return; }
+      playlistCtx = null;
+    }
     if (onlineCurrent) { onlineCurrent = null; markPlaying(); renderNext(); setStatus('✅ 佇列播放完畢'); return; }
     if (shuffle) {
       if (!view.length) return;
@@ -650,7 +676,7 @@
   const cycleRepeat = () => { repeat = REPEATS[(REPEATS.indexOf(repeat) + 1) % REPEATS.length]; syncButtons(); savePrefs(); setStatus(REPEAT_LABEL[repeat]); };
   function toggleShuffle() {
     shuffle = !shuffle;
-    if (shuffle) buildShuffle();                       // 點下去的當下就排好
+    if (playlistCtx) refillFromCtx(); else if (shuffle) buildShuffle();                       // 點下去的當下就排好
     else queue = queue.filter(e => e.kind === 'online'); // 關閉:回到依清單順序,保留手動加入的線上歌曲
     syncButtons(); savePrefs();
     setStatus(shuffle ? '🔀 隨機播放:開(已排好佇列,可在「佇列」拖曳調整)' : '隨機播放:關');
@@ -680,6 +706,7 @@
   $('shuffleAll').addEventListener('click', () => {
     if (!view.length) return;
     shuffle = true;
+    playlistCtx = null;
     history = [];
     play(view[Math.floor(Math.random() * view.length)].filename);
     buildShuffle();
@@ -729,9 +756,12 @@
     mode = m;
     $('viewLibrary').hidden = m !== 'library';
     $('viewOnline').hidden = m !== 'online';
+    $('viewPlaylists').hidden = m !== 'playlists';
+    document.body.classList.toggle('pl-detail', m === 'playlists' && !!plOpen && !!plById(plOpen));
     document.querySelectorAll('[data-view]').forEach(b => b.classList.toggle('active', b.dataset.view === m));
     const s = $('search');
     if (m === 'online') { s.placeholder = '搜尋 YouTube / Bilibili,或貼上影片網址,按 Enter'; s.value = onlineQuery; }
+    else if (m === 'playlists') { s.placeholder = '搜尋播放清單…'; s.value = plQuery; renderPlaylists(); }
     else { s.placeholder = '搜尋歌名…'; s.value = libQuery; markPlaying(); }
     $('main').scrollTop = 0;
   }
@@ -739,6 +769,7 @@
 
   $('search').addEventListener('input', () => {
     if (mode === 'library') { libQuery = $('search').value; applyFilter(); }
+    else if (mode === 'playlists') { plQuery = $('search').value; renderPlaylists(); }
     else onlineQuery = $('search').value;
   });
 
@@ -793,8 +824,11 @@
       const frag = document.createDocumentFragment();
       for (const r of list) {
         frag.appendChild(onlineRow(r, {
-          onClick: () => { history = []; playOnline(r); },
-          btn: { icon: 'plus', title: '加入佇列', onClick: () => addToQueue(r) },
+          onClick: () => { playlistCtx = null; history = []; playOnline(r); },
+          btn: [
+            { icon: 'plus', title: '加入佇列', onClick: () => addToQueue(r) },
+            { icon: 'playlist-add', title: '加入播放清單', onClick: () => pickPlaylist([onlineItem(r)]) },
+          ],
         }));
       }
       box.appendChild(frag);
@@ -812,10 +846,740 @@
     currentFile = null;
     onlineCurrent = item;
     endHandled = false;
-    audio.src = '/web/play?url=' + enc(item.srcUrl || item.url);
-    tryPlay();
-    setStatus('線上串流準備中…', true);
+    const okey = 'on:' + (item.srcUrl || item.url);
+    loadSource(okey, '/web/play?url=' + enc(item.srcUrl || item.url));
+    if (!offlineKeys.has(okey)) setStatus('線上串流準備中…', true);
     setNow({ title: item.title, sub: onlineSub(item) });
+  }
+
+  // ════════════════════════════════════════════════════════
+  //  播放清單 + 離線下載
+  //  (狀態變數 playlists / plOpen / playlistCtx / offlineKeys / dlState 宣告在檔案上方)
+  // ════════════════════════════════════════════════════════
+  const PL_API = '/web/api/playlists';
+  const itemKey = (it) => it.kind === 'lib' ? 'lib:' + it.filename : 'on:' + (it.srcUrl || it.url);
+  const onlineItem = (r) => ({
+    kind: 'online', url: r.srcUrl || r.url, title: r.title, author: r.author, platform: r.platform, duration: r.duration,
+  });
+  const itemTitle = (it) => it.kind === 'lib'
+    ? ((byFile.get(it.filename) || {}).name || it.title || it.filename.split('/').pop())
+    : (it.title || '未知標題');
+  const plById = (id) => playlists.find((p) => p.id === id);
+  function upsertPlaylist(p) {
+    const i = playlists.findIndex((x) => x.id === p.id);
+    if (i >= 0) playlists[i] = p; else playlists.push(p);
+  }
+
+  // ── 離線儲存(IndexedDB)──────────────────────────────
+  const IDB_NAME = 'ml_offline', IDB_STORE = 'tracks';
+  const offlineSizes = new Map(); // key -> bytes
+  let idbPromise = null;
+  function idb() {
+    if (idbPromise) return idbPromise;
+    idbPromise = new Promise((resolve, reject) => {
+      if (!window.indexedDB) return reject(new Error('此瀏覽器不支援離線儲存'));
+      const rq = indexedDB.open(IDB_NAME, 1);
+      rq.onupgradeneeded = () => rq.result.createObjectStore(IDB_STORE, { keyPath: 'key' });
+      rq.onsuccess = () => resolve(rq.result);
+      rq.onerror = () => reject(rq.error);
+    });
+    idbPromise.catch(() => { idbPromise = null; });
+    return idbPromise;
+  }
+  function idbTx(mode, fn) {
+    return idb().then((db) => new Promise((resolve, reject) => {
+      const tx = db.transaction(IDB_STORE, mode);
+      const rq = fn(tx.objectStore(IDB_STORE));
+      tx.oncomplete = () => resolve(rq && rq.result);
+      tx.onerror = () => reject(tx.error);
+      tx.onabort = () => reject(tx.error || new Error('寫入中止'));
+    }));
+  }
+  const offlineGet = (key) => idbTx('readonly', (s) => s.get(key)).then((r) => (r ? r.blob : null));
+  const offlinePut = (rec) => idbTx('readwrite', (s) => s.put(rec));
+  const offlineDel = (key) => idbTx('readwrite', (s) => s.delete(key));
+  const offlineClearAll = () => idbTx('readwrite', (s) => s.clear());
+  // 只掃描 key / size,不把音檔內容讀進記憶體
+  function offlineScan() {
+    return idb().then((db) => new Promise((resolve, reject) => {
+      const out = [];
+      const rq = db.transaction(IDB_STORE, 'readonly').objectStore(IDB_STORE).openCursor();
+      rq.onsuccess = () => {
+        const c = rq.result;
+        if (c) { out.push({ key: c.value.key, size: c.value.size || 0 }); c.continue(); } else resolve(out);
+      };
+      rq.onerror = () => reject(rq.error);
+    }));
+  }
+  function offlineInit() {
+    return offlineScan()
+      .then((list) => { for (const r of list) { offlineKeys.add(r.key); offlineSizes.set(r.key, r.size); } })
+      .catch(() => {});
+  }
+
+  // 載入音源:有離線檔就播離線的(blob URL,可拖曳),沒有才走網路
+  let srcTok = 0, blobUrl = null;
+  function loadSource(key, url) {
+    const tok = ++srcTok;
+    if (blobUrl) { URL.revokeObjectURL(blobUrl); blobUrl = null; }
+    if (!offlineKeys.has(key)) { audio.src = url; tryPlay(); return; }
+    audio.removeAttribute('src'); audio.load(); // 等 blob 讀出來之前不要讓舊的音源繼續播
+    pendingPlay = true; setSession('playing');
+    offlineGet(key).then((blob) => {
+      if (tok !== srcTok) return;
+      if (blob) { blobUrl = URL.createObjectURL(blob); audio.src = blobUrl; } else audio.src = url;
+      tryPlay();
+    }).catch(() => { if (tok === srcTok) { audio.src = url; tryPlay(); } });
+  }
+
+  // ── 下載(最多同時 2 個,可整批取消)──────────────────
+  const DL_CONCURRENCY = 2;
+  const dlQueue = [];
+  let dlActive = 0, dlAbort = null, dlFailMsg = '';
+  let dlBatch = { total: 0, done: 0, failed: 0 };
+  const dlBusy = () => dlActive > 0 || dlQueue.length > 0;
+
+  function enqueueDownloads(items) {
+    const fresh = items.filter((it) => { const k = itemKey(it); return !offlineKeys.has(k) && !dlState.has(k); });
+    if (!fresh.length) { setStatus('這些歌曲已經下載過(或正在下載)'); return; }
+    if (!dlAbort) dlAbort = new AbortController();
+    for (const it of fresh) { dlState.set(itemKey(it), { pct: 0, active: false }); dlQueue.push(it); }
+    dlBatch.total += fresh.length;
+    if (navigator.storage && navigator.storage.persist) navigator.storage.persist().catch(() => {});
+    setStatus(`開始下載 ${fresh.length} 首…`);
+    refreshDl();
+    pumpDownloads();
+  }
+
+  function pumpDownloads() {
+    while (dlAbort && dlActive < DL_CONCURRENCY && dlQueue.length) {
+      const it = dlQueue.shift();
+      dlActive++;
+      downloadOne(it, dlAbort.signal)
+        .then(() => { dlBatch.done++; })
+        .catch((err) => {
+          if (err && err.name === 'AbortError') return;
+          dlBatch.failed++;
+          const name = err && (err.name || (err.target && err.target.error && err.target.error.name));
+          dlFailMsg = name === 'QuotaExceededError' ? '儲存空間不足' : (err && err.message) || '下載失敗';
+          if (name === 'QuotaExceededError') cancelDownloads(dlFailMsg);
+        })
+        .finally(() => {
+          dlActive--;
+          if (!dlBusy()) finishBatch(); else pumpDownloads();
+          refreshDl();
+        });
+    }
+  }
+
+  async function downloadOne(it, signal) {
+    const key = itemKey(it);
+    const st = dlState.get(key);
+    if (st) st.active = true;
+    try {
+      const url = it.kind === 'lib' ? streamUrl(it.filename) : '/web/play?url=' + enc(it.srcUrl || it.url);
+      const r = await fetch(url, { signal });
+      if (r.status === 401) { showLogin('登入已過期,請重新登入'); throw new Error('登入已過期'); }
+      if (!r.ok) { const j = await r.json().catch(() => ({})); throw new Error(j.error || 'HTTP ' + r.status); }
+      const total = Number(r.headers.get('Content-Length')) || 0;
+      const reader = r.body.getReader();
+      const chunks = []; let got = 0, lastUi = 0;
+      for (;;) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        chunks.push(value); got += value.length;
+        if (st && total) st.pct = Math.min(99, Math.floor(got / total * 100));
+        const t = Date.now();
+        if (t - lastUi > 300) { lastUi = t; refreshDl(); }
+      }
+      if (!got) throw new Error('下載到空檔案');
+      const blob = new Blob(chunks, { type: r.headers.get('Content-Type') || 'audio/mpeg' });
+      await offlinePut({ key, blob, size: blob.size, title: it.title || '', at: Date.now() });
+      offlineKeys.add(key); offlineSizes.set(key, blob.size);
+    } finally {
+      dlState.delete(key);
+    }
+  }
+
+  function finishBatch() {
+    if (!dlBatch.total) return; // 已被取消
+    const { done, failed } = dlBatch;
+    setStatus(`⬇ 下載完成:${done} 首` + (failed ? `,失敗 ${failed} 首(${dlFailMsg})` : ''));
+    dlBatch = { total: 0, done: 0, failed: 0 };
+    dlAbort = null; dlFailMsg = '';
+  }
+
+  function cancelDownloads(msg) {
+    if (dlAbort) dlAbort.abort();
+    for (const it of dlQueue) dlState.delete(itemKey(it));
+    dlQueue.length = 0;
+    dlBatch = { total: 0, done: 0, failed: 0 };
+    dlAbort = null;
+    setStatus(msg || '已取消下載');
+    refreshDl();
+  }
+
+  async function removeOffline(items) {
+    for (const it of items) {
+      const k = itemKey(it);
+      if (!offlineKeys.has(k)) continue;
+      try { await offlineDel(k); offlineKeys.delete(k); offlineSizes.delete(k); } catch {}
+    }
+    refreshDl();
+  }
+
+  function toggleOffline(it) {
+    const k = itemKey(it);
+    if (offlineKeys.has(k)) { removeOffline([it]); setStatus('已移除離線檔案'); }
+    else if (dlState.has(k)) setStatus('下載中,請稍候');
+    else enqueueDownloads([it]);
+  }
+
+  // ── 下載狀態的畫面更新(合併成每個 frame 最多一次)──────
+  let dlRaf = 0;
+  function refreshDl() {
+    if (dlRaf) return;
+    dlRaf = requestAnimationFrame(() => { dlRaf = 0; paintDl(); });
+  }
+  function applyDlButton(b) {
+    const k = b.dataset.dlkey, st = dlState.get(k);
+    const off = offlineKeys.has(k);
+    b.classList.toggle('done', off);
+    b.style.fontSize = '';
+    if (off) { b.innerHTML = '<svg><use href="#i-check"/></svg>'; b.title = '已下載(點擊移除)'; }
+    else if (st) {
+      b.textContent = st.active && st.pct > 0 ? st.pct + '%' : '…';
+      b.style.fontSize = '11px';
+      b.title = st.active ? '下載中' : '等待下載';
+    } else { b.innerHTML = '<svg><use href="#i-download"/></svg>'; b.title = '下載離線'; }
+  }
+  function updateOfflineInfo() {
+    const n = offlineKeys.size;
+    let bytes = 0; offlineSizes.forEach((v) => { bytes += v; });
+    $('offlineInfo').textContent = n ? `離線檔案:${n} 首,約 ${fmtSize(bytes)}` : '尚未下載任何離線歌曲。進入播放清單可一鍵下載。';
+    $('offlineClear').hidden = n === 0;
+  }
+  function updatePlDetailButtons() {
+    const p = plOpen && plById(plOpen);
+    if (!p) return;
+    const nOff = p.items.filter((it) => offlineKeys.has(itemKey(it))).length;
+    $('plMeta').textContent = `${p.items.length} 首歌曲` + (nOff ? ` · 已下載 ${nOff} 首` : '');
+    const b = $('plDownloadAll');
+    const dls = p.items.filter(plDownloadable);
+    const busy = dlBusy(), allOff = dls.length > 0 && dls.every((it) => offlineKeys.has(itemKey(it)));
+    b.classList.toggle('done', !busy && allOff);
+    b.style.fontSize = '';
+    if (busy) { b.textContent = `${dlBatch.done + dlBatch.failed}/${dlBatch.total}`; b.style.fontSize = '12px'; b.title = '取消下載'; }
+    else { b.innerHTML = `<svg><use href="#i-${allOff ? 'check' : 'download'}"/></svg>`; b.title = allOff ? '已下載(點擊移除)' : '下載離線'; }
+  }
+  function paintDl() {
+    document.querySelectorAll('.row[data-key]').forEach((r) => r.classList.toggle('offline', offlineKeys.has(r.dataset.key)));
+    document.querySelectorAll('[data-dlkey]').forEach(applyDlButton);
+    document.querySelectorAll('[data-dlmenu]').forEach(applyMoreButton);
+    updatePlDetailButtons();
+    updateOfflineInfo();
+  }
+
+  function registerSW() {
+    if (!('serviceWorker' in navigator)) return;
+    navigator.serviceWorker.register('/player-sw.js', { scope: '/' }).catch((err) => dbg('SW 註冊失敗', err && err.message));
+  }
+  function clearDataCaches() {
+    if (!window.caches) return;
+    caches.keys().then((ks) => ks.filter((k) => k.startsWith('ml-data-')).forEach((k) => caches.delete(k))).catch(() => {});
+  }
+
+  // ── 播放清單 API ───────────────────────────────────────
+  async function plApi(method, url, body) {
+    let r;
+    try {
+      r = await fetch(url, {
+        method,
+        headers: body ? { 'Content-Type': 'application/json' } : undefined,
+        body: body ? JSON.stringify(body) : undefined,
+      });
+    } catch { throw new Error('連線失敗(離線時無法編輯播放清單)'); }
+    if (r.status === 401) { showLogin('登入已過期,請重新登入'); throw new Error('請先登入'); }
+    const j = await r.json().catch(() => ({}));
+    if (!r.ok) throw new Error(j.error || 'HTTP ' + r.status);
+    if (method !== 'GET') fetch(PL_API).catch(() => {}); // 順便刷新 Service Worker 的離線快取
+    return j;
+  }
+
+  async function loadPlaylists() {
+    try { playlists = (await plApi('GET', PL_API)).playlists || []; } catch { return; }
+    if (plOpen && !plById(plOpen)) plOpen = null;
+    if (playlistCtx && plById(playlistCtx.id)) playlistCtx.items = plById(playlistCtx.id).items;
+    renderPlaylists();
+  }
+
+  // ── 播放清單 → 佇列 ───────────────────────────────────
+  const ctxEntry = (it) => {
+    const e = it.kind === 'lib' ? mkLib(it.filename, it.title) : mkOnline(it);
+    e.src = it.id;
+    return e;
+  };
+  const ctxPlayable = (it) => it.kind === 'online' || libAvailable(it.filename);
+  // 依目前的隨機/循環設定,把播放清單剩下的歌排進佇列
+  // full=true:新一輪(包含目前這首)
+  function refillFromCtx(full = false) {
+    if (!playlistCtx) return;
+    const cur = currentEntry(), ck = cur ? entryKey(cur) : null;
+    let list = playlistCtx.items.filter(ctxPlayable).map(ctxEntry);
+    if (shuffle) {
+      if (!full && ck) list = list.filter((e) => entryKey(e) !== ck);
+      list = shuffled(list);
+      if (full && ck && list.length > 1 && entryKey(list[0]) === ck) {
+        const j = 1 + Math.floor(Math.random() * (list.length - 1));
+        [list[0], list[j]] = [list[j], list[0]];
+      }
+    } else if (!full && ck) {
+      const i = list.findIndex((e) => entryKey(e) === ck);
+      if (i >= 0) list = list.slice(i + 1);
+    }
+    queue = list;
+    renderNext();
+  }
+  // 播放清單內容變動(加入/移除/排序)時,讓進行中的播放跟著更新
+  function syncCtx(pid, { added = [], removedId = null, reordered = false } = {}) {
+    if (!playlistCtx || playlistCtx.id !== pid) return;
+    const p = plById(pid);
+    playlistCtx.items = p ? p.items : [];
+    if (removedId) queue = queue.filter((e) => e.src !== removedId);
+    for (const it of added) {
+      if (!ctxPlayable(it)) continue;
+      const e = ctxEntry(it);
+      if (shuffle) queue.splice(Math.floor(Math.random() * (queue.length + 1)), 0, e); else queue.push(e);
+    }
+    if (reordered && !shuffle) refillFromCtx();
+    renderNext();
+  }
+
+  function playPlaylist(pid, startId, { shuffleStart = false } = {}) {
+    const p = plById(pid); if (!p) return;
+    const items = p.items.filter(ctxPlayable);
+    if (!items.length) return setStatus('這個播放清單沒有可播放的歌曲');
+    if (shuffleStart) { shuffle = true; syncButtons(); savePrefs(); }
+    let first;
+    if (startId) first = items.find((it) => it.id === startId) || items[0];
+    else if (shuffleStart) first = items[Math.floor(Math.random() * items.length)];
+    else first = items[0]; // ▶ 一律從第一首開始(隨機開啟時,後面的順序才會打亂)
+    playlistCtx = { id: pid, items: p.items };
+    history = [];
+    queue = [];
+    playEntry(first.kind === 'lib' ? { kind: 'lib', filename: first.filename, title: first.title } : { kind: 'online', item: first });
+    refillFromCtx();
+    if (shuffleStart) setStatus('🔀 隨機播放「' + p.name + '」');
+  }
+
+  // ── 文字輸入對話框 ────────────────────────────────────
+  function askText(title, initial = '') {
+    return new Promise((resolve) => {
+      $('nameTitle').textContent = title;
+      const inp = $('nameInput'), dlg = $('nameDlg'), form = $('nameForm'), cancel = $('nameCancel');
+      inp.value = initial;
+      dlg.classList.add('show');
+      setTimeout(() => { inp.focus(); inp.select(); }, 50);
+      const done = (v) => {
+        dlg.classList.remove('show');
+        form.removeEventListener('submit', onSubmit); cancel.removeEventListener('click', onCancel);
+        resolve(v);
+      };
+      const onSubmit = (e) => { e.preventDefault(); done(inp.value.trim() || null); };
+      const onCancel = () => done(null);
+      form.addEventListener('submit', onSubmit); cancel.addEventListener('click', onCancel);
+    });
+  }
+
+  // ── 播放清單操作 ──────────────────────────────────────
+  async function createPlaylist(name, items) {
+    const j = await plApi('POST', PL_API, { name, items });
+    upsertPlaylist(j.playlist);
+    return j.playlist;
+  }
+  async function addToPlaylist(pid, items) {
+    const before = new Set((plById(pid) || { items: [] }).items.map((x) => x.id));
+    const j = await plApi('POST', `${PL_API}/${pid}/items`, { items });
+    upsertPlaylist(j.playlist);
+    syncCtx(pid, { added: j.playlist.items.filter((x) => !before.has(x.id)) });
+    renderPlaylists();
+    return j;
+  }
+  async function removeFromPlaylist(pid, iid) {
+    try {
+      const j = await plApi('DELETE', `${PL_API}/${pid}/items/${iid}`);
+      upsertPlaylist(j.playlist);
+    } catch (err) { return setStatus(err.message); }
+    syncCtx(pid, { removedId: iid });
+    renderPlaylists();
+  }
+  async function reorderPlaylist(pid, ids) {
+    const p = plById(pid); if (!p) return;
+    const map = new Map(p.items.map((it) => [it.id, it]));
+    const old = p.items;
+    p.items = ids.map((i) => map.get(i)).filter(Boolean);
+    syncCtx(pid, { reordered: true });
+    renderPlaylists();
+    try {
+      const j = await plApi('PUT', `${PL_API}/${pid}/order`, { order: ids });
+      upsertPlaylist(j.playlist);
+      syncCtx(pid); renderPlaylists();
+    } catch (err) {
+      p.items = old; syncCtx(pid);
+      setStatus(err.message); loadPlaylists();
+    }
+  }
+
+  function openPlaylist(id) {
+    plOpen = id; plQuery = ''; $('search').value = '';
+    renderPlaylists();
+    $('main').scrollTop = 0;
+  }
+
+  // ── 畫面 ──────────────────────────────────────────────
+  function renderPlaylists() {
+    const detail = plOpen && plById(plOpen);
+    $('plListPane').hidden = !!detail;
+    $('plDetailPane').hidden = !detail;
+    document.body.classList.toggle('pl-detail', mode === 'playlists' && !!detail);
+    if (detail) renderPlDetail(detail); else renderPlList();
+    updateOfflineInfo();
+  }
+
+  function renderPlList() {
+    const q = plQuery.trim().toLowerCase();
+    const list = playlists.filter((p) => !q || p.name.toLowerCase().includes(q));
+    $('plCount').textContent = playlists.length ? `${playlists.length} 個播放清單` : '\u00a0';
+    $('plEmpty').hidden = list.length > 0;
+    $('plEmpty').textContent = playlists.length ? '沒有符合的播放清單' : '還沒有播放清單,點「＋ 新增」建立一個';
+    const ul = $('plLists'); ul.textContent = '';
+    const frag = document.createDocumentFragment();
+    for (const p of list) frag.appendChild(plCard(p));
+    ul.appendChild(frag);
+  }
+
+  function plItemRow(p, it, canDrag) {
+    const key = itemKey(it), isLib = it.kind === 'lib';
+    const f = isLib ? byFile.get(it.filename) : null;
+    const missing = isLib && byFile.size > 0 && !f && !offlineKeys.has(key);
+    return makeRow({
+      key, iid: it.id, missing,
+      title: itemTitle(it),
+      sub: isLib ? (f ? libSub(f) : (missing ? '檔案已不存在' : '音樂庫'))
+        : [onlineSub(it), it.duration && it.duration !== '未知' ? it.duration : ''].filter(Boolean).join(' · '),
+      grip: canDrag ? (ev, li) => startPlDrag(ev, li, p.id) : false,
+      btn: { icon: 'more', title: '更多', dlmenu: key, onClick: (b) => openItemMenu(b, p, it) },
+      onClick: () => playPlaylist(p.id, it.id),
+    });
+  }
+
+  function renderPlDetail(p) {
+    $('plTitle').textContent = p.name;
+    if (!plQuery && $('plSearch').value) $('plSearch').value = '';
+    const q = plQuery.trim().toLowerCase();
+    const ul = $('plItems'); ul.textContent = '';
+    $('plItemsEmpty').hidden = p.items.length > 0;
+    const frag = document.createDocumentFragment();
+    for (const it of p.items) {
+      if (q && !itemTitle(it).toLowerCase().includes(q)) continue;
+      frag.appendChild(plItemRow(p, it, !q)); // 搜尋篩選時不能拖曳排序
+    }
+    ul.appendChild(frag);
+    updatePlDetailButtons();
+    markPlaying();
+  }
+
+  // 拖曳排序(播放清單版;邏輯同佇列的 startDrag)
+  function startPlDrag(ev, li, pid) {
+    if (ev.button > 0) return;
+    ev.preventDefault(); ev.stopPropagation();
+    const ul = $('plItems'), sc = $('main');
+    const rows = [...ul.querySelectorAll('.row[data-iid]')].filter((r) => r !== li);
+    const startY = ev.clientY, startScroll = sc.scrollTop;
+    let y = startY, pos = 0;
+    li.classList.add('dragging');
+    const tick = () => {
+      const box = sc.getBoundingClientRect();
+      if (y < box.top + 50) sc.scrollTop -= 12;
+      else if (y > box.bottom - 50) sc.scrollTop += 12;
+      li.style.transform = `translateY(${y - startY + sc.scrollTop - startScroll}px)`;
+      pos = rows.filter((r) => { const b = r.getBoundingClientRect(); return b.top + b.height / 2 < y; }).length;
+      rows.forEach((r) => r.classList.remove('drop-before', 'drop-after'));
+      if (pos < rows.length) rows[pos].classList.add('drop-before');
+      else if (rows.length) rows[rows.length - 1].classList.add('drop-after');
+    };
+    const timer = setInterval(tick, 30);
+    const move = (e) => { y = e.clientY; };
+    const end = (e) => {
+      clearInterval(timer);
+      window.removeEventListener('pointermove', move);
+      window.removeEventListener('pointerup', end);
+      window.removeEventListener('pointercancel', end);
+      if (e.type === 'pointerup') {
+        const ids = rows.map((r) => r.dataset.iid);
+        ids.splice(Math.min(pos, ids.length), 0, li.dataset.iid);
+        reorderPlaylist(pid, ids);
+      } else renderPlaylists();
+    };
+    window.addEventListener('pointermove', move);
+    window.addEventListener('pointerup', end);
+    window.addEventListener('pointercancel', end);
+    tick();
+  }
+
+  // ── 「加入播放清單」選單 ──────────────────────────────
+  let pickItems = null;
+  const closePick = () => $('pickPl').classList.remove('show');
+  function pickPlaylist(items) {
+    if (!items || !items.length) return;
+    pickItems = items;
+    const ul = $('pickList'); ul.textContent = '';
+    if (!playlists.length) {
+      const li = document.createElement('li'); li.className = 'note';
+      li.textContent = '還沒有播放清單,先建立一個吧'; ul.appendChild(li);
+    }
+    for (const p of playlists) {
+      ul.appendChild(makeRow({
+        title: p.name, sub: `${p.items.length} 首`,
+        onClick: async () => {
+          const its = pickItems; closePick();
+          try {
+            const j = await addToPlaylist(p.id, its);
+            setStatus(j.added ? `已加入「${p.name}」` + (its.length > 1 ? `(${j.added} 首)` : '') : `「${p.name}」已經有這首歌了`);
+          } catch (err) { setStatus(err.message); }
+        },
+      }));
+    }
+    $('pickPl').classList.add('show');
+  }
+  $('pickClose').addEventListener('click', closePick);
+  $('pickNew').addEventListener('click', async () => {
+    const its = pickItems; closePick();
+    const name = await askText('新增播放清單');
+    if (!name) return;
+    try {
+      const p = await createPlaylist(name, its);
+      renderPlaylists();
+      setStatus(`已建立「${p.name}」並加入 ${p.items.length} 首`);
+    } catch (err) { setStatus(err.message); }
+  });
+  $('fAddPl').addEventListener('click', () => {
+    const c = currentEntry();
+    if (!c) return setStatus('目前沒有播放中的歌曲');
+    pickPlaylist([c.kind === 'lib'
+      ? { kind: 'lib', filename: c.filename, title: (byFile.get(c.filename) || {}).name }
+      : onlineItem(c.item)]);
+  });
+
+  // ── 播放清單頁面的按鈕 ────────────────────────────────
+  $('plNew').addEventListener('click', async () => {
+    const name = await askText('新增播放清單');
+    if (!name) return;
+    try { const p = await createPlaylist(name); openPlaylist(p.id); } catch (err) { setStatus(err.message); }
+  });
+  $('plBack').addEventListener('click', () => {
+    plOpen = null; plQuery = ''; $('search').value = '';
+    renderPlaylists(); $('main').scrollTop = 0;
+  });
+  $('plPlay').addEventListener('click', () => { if (plOpen) playPlaylist(plOpen); });
+  $('plShuffle').addEventListener('click', () => { if (plOpen) playPlaylist(plOpen, null, { shuffleStart: true }); });
+  $('plRename').addEventListener('click', async () => {
+    const p = plOpen && plById(plOpen); if (!p) return;
+    const name = await askText('重新命名', p.name);
+    if (!name || name === p.name) return;
+    try { upsertPlaylist((await plApi('PATCH', `${PL_API}/${p.id}`, { name })).playlist); renderPlaylists(); }
+    catch (err) { setStatus(err.message); }
+  });
+  $('plDelete').addEventListener('click', async () => {
+    const p = plOpen && plById(plOpen); if (!p) return;
+    if (!confirm(`刪除播放清單「${p.name}」?\n(歌曲本身不會被刪除)`)) return;
+    try { await plApi('DELETE', `${PL_API}/${p.id}`); } catch (err) { return setStatus(err.message); }
+    playlists = playlists.filter((x) => x.id !== p.id);
+    if (playlistCtx && playlistCtx.id === p.id) playlistCtx = null;
+    plOpen = null; renderPlaylists();
+    setStatus('已刪除播放清單');
+  });
+  $('plDownloadAll').addEventListener('click', () => {
+    const p = plOpen && plById(plOpen); if (!p) return;
+    if (dlBusy()) { cancelDownloads(); return; }
+    const dls = p.items.filter(plDownloadable);
+    if (!dls.length) return setStatus('沒有可下載的歌曲');
+    // 全部都已下載:再按一次就是移除
+    if (dls.every((it) => offlineKeys.has(itemKey(it)))) {
+      if (!confirm('移除這個播放清單的所有離線檔案?')) return;
+      removeOffline(p.items).then(() => setStatus('已移除離線檔案'));
+      return;
+    }
+    enqueueDownloads(dls);
+  });
+  $('offlineClear').addEventListener('click', async () => {
+    if (!confirm('清除這個裝置上全部的離線檔案?')) return;
+    try { await offlineClearAll(); offlineKeys.clear(); offlineSizes.clear(); setStatus('已清除全部離線檔案'); }
+    catch (err) { setStatus('清除失敗:' + err.message); }
+    refreshDl();
+  });
+
+  // ── 歌曲列的「⋮」選單(下載離線 / 加入播放清單 / 歌曲資訊)──────
+  const menuEl = document.createElement('div');
+  menuEl.className = 'row-menu'; menuEl.hidden = true;
+  document.body.appendChild(menuEl);
+  let menuAnchor = null;
+
+  function closeRowMenu() { menuEl.hidden = true; menuAnchor = null; }
+
+  // 下載中時,⋮ 按鈕顯示百分比;平常顯示三點圖示
+  function applyMoreButton(b) {
+    const st = dlState.get(b.dataset.dlmenu);
+    if (st) {
+      b.textContent = st.active && st.pct > 0 ? st.pct + '%' : '…';
+      b.style.fontSize = '11px';
+    } else {
+      b.innerHTML = '<svg><use href="#i-more"/></svg>';
+      b.style.fontSize = '';
+    }
+  }
+
+  function openRowMenu(anchor, f) {
+    if (menuAnchor === anchor) return closeRowMenu();
+    menuAnchor = anchor;
+    const key = 'lib:' + f.filename;
+    const item = { kind: 'lib', filename: f.filename, title: f.name };
+    const isOff = offlineKeys.has(key);
+    menuEl.textContent = '';
+
+    const mk = (icon, text, fn, cls) => {
+      const b = document.createElement('button');
+      b.className = 'menu-item' + (cls ? ' ' + cls : '');
+      b.innerHTML = `<svg><use href="#i-${icon}"/></svg>`;
+      const s = document.createElement('span'); s.textContent = text; b.appendChild(s);
+      b.addEventListener('click', (ev) => { ev.stopPropagation(); closeRowMenu(); fn(); });
+      menuEl.appendChild(b);
+    };
+    mk(isOff ? 'close' : 'download',
+      isOff ? '移除離線檔案' : (dlState.has(key) ? '下載中…' : '下載離線'),
+      () => toggleOffline(item));
+    mk('playlist-add', '加入播放清單', () => pickPlaylist([item]));
+
+    const sep = document.createElement('div'); sep.className = 'menu-sep'; menuEl.appendChild(sep);
+    const info = document.createElement('div'); info.className = 'menu-info';
+    const line = (label, value) => {
+      const d = document.createElement('div');
+      const b = document.createElement('b'); b.textContent = label;
+      d.append(b, document.createTextNode(value));
+      info.appendChild(d);
+    };
+    line('資料夾:', folderOf(f) || '(音樂庫根目錄)');
+    line('檔案大小:', fmtSize(f.size));
+    line('離線狀態:', isOff ? '已下載到此裝置' : (dlState.has(key) ? '下載中' : '未下載'));
+    menuEl.appendChild(info);
+
+    menuEl.hidden = false;
+    const r = anchor.getBoundingClientRect();
+    const mw = menuEl.offsetWidth, mh = menuEl.offsetHeight;
+    const left = Math.min(Math.max(8, r.right - mw), window.innerWidth - mw - 8);
+    let top = r.bottom + 4;
+    if (top + mh > window.innerHeight - 8) top = Math.max(8, r.top - mh - 4);
+    menuEl.style.left = left + 'px';
+    menuEl.style.top = top + 'px';
+  }
+
+
+  document.addEventListener('pointerdown', (e) => {
+    if (menuEl.hidden) return;
+    if (menuEl.contains(e.target) || (menuAnchor && menuAnchor.contains(e.target))) return; // 按鈕自己的 click 負責開關
+    closeRowMenu();
+  }, true);
+  window.addEventListener('scroll', () => { if (!menuEl.hidden) closeRowMenu(); }, true);
+  window.addEventListener('resize', closeRowMenu);
+  document.addEventListener('keydown', (e) => { if (e.key === 'Escape') closeRowMenu(); });
+  $('search').addEventListener('input', closeRowMenu);
+
+  // ── 播放清單內頁(依設計稿重做):頂部搜尋、⋯ 下拉選單、每首歌的 ⋯ 選單 ──────
+  function menuItem(icon, text, fn, cls) {
+    const b = document.createElement('button');
+    b.className = 'menu-item' + (cls ? ' ' + cls : '');
+    b.innerHTML = `<svg><use href="#i-${icon}"/></svg>`;
+    const s = document.createElement('span'); s.textContent = text; b.appendChild(s);
+    b.addEventListener('click', (ev) => { ev.stopPropagation(); closeRowMenu(); fn(); });
+    menuEl.appendChild(b);
+  }
+  function menuInfo(lines) {
+    const sep = document.createElement('div'); sep.className = 'menu-sep'; menuEl.appendChild(sep);
+    const info = document.createElement('div'); info.className = 'menu-info';
+    for (const [label, value] of lines) {
+      const d = document.createElement('div');
+      const b = document.createElement('b'); b.textContent = label;
+      d.append(b, document.createTextNode(value));
+      info.appendChild(d);
+    }
+    menuEl.appendChild(info);
+  }
+  function placeMenu(anchor) {
+    menuEl.hidden = false;
+    const r = anchor.getBoundingClientRect();
+    const mw = menuEl.offsetWidth, mh = menuEl.offsetHeight;
+    const left = Math.min(Math.max(8, r.right - mw), window.innerWidth - mw - 8);
+    let top = r.bottom + 4;
+    if (top + mh > window.innerHeight - 8) top = Math.max(8, r.top - mh - 4);
+    menuEl.style.left = left + 'px';
+    menuEl.style.top = top + 'px';
+  }
+
+  // 播放清單內每首歌的 ⋯ 選單:下載離線 / 移出播放清單 / 歌曲資訊
+  function openItemMenu(anchor, p, it) {
+    if (menuAnchor === anchor) return closeRowMenu();
+    menuAnchor = anchor;
+    const key = itemKey(it), isOff = offlineKeys.has(key);
+    menuEl.textContent = '';
+    menuItem(isOff ? 'close' : 'download',
+      isOff ? '移除離線檔案' : (dlState.has(key) ? '下載中…' : '下載離線'),
+      () => toggleOffline(it));
+    menuItem('close', '移出播放清單', () => removeFromPlaylist(p.id, it.id), 'danger');
+    const lines = [];
+    if (it.kind === 'lib') {
+      const f = byFile.get(it.filename);
+      lines.push(['資料夾:', it.filename.includes('/') ? it.filename.split('/')[0] : '(音樂庫根目錄)']);
+      if (f) lines.push(['檔案大小:', fmtSize(f.size)]);
+    } else {
+      lines.push(['來源:', it.platform || '線上']);
+      if (it.author) lines.push(['作者:', it.author]);
+      if (it.duration && it.duration !== '未知') lines.push(['長度:', it.duration]);
+    }
+    lines.push(['離線狀態:', isOff ? '已下載到此裝置' : (dlState.has(key) ? '下載中' : '未下載')]);
+    menuInfo(lines);
+    placeMenu(anchor);
+  }
+
+  // 頁面上方 ⋯ 下拉選單(重新命名 / 移除離線 / 刪除)
+  $('plMoreBtn').addEventListener('click', (e) => { e.stopPropagation(); $('plMenu').classList.toggle('show'); });
+  document.addEventListener('click', () => $('plMenu').classList.remove('show'));
+  $('plSearch').addEventListener('input', () => { plQuery = $('plSearch').value; renderPlaylists(); });
+
+  // ── 播放清單總覽:卡片(電腦版為封面網格,手機版為列表)+ 下載按鈕判斷 ──────
+  const plDownloadable = (it) => it.kind === 'online' || byFile.has(it.filename);
+
+  function plCard(p) {
+    const nOff = p.items.filter((it) => offlineKeys.has(itemKey(it))).length;
+    const li = document.createElement('li');
+    li.className = 'pl-card';
+    const mkPlay = (cls) => {
+      const b = document.createElement('button');
+      b.className = cls; b.title = '播放'; b.setAttribute('aria-label', '播放 ' + p.name);
+      b.innerHTML = '<svg><use href="#i-play"/></svg>';
+      b.addEventListener('click', (ev) => { ev.stopPropagation(); playPlaylist(p.id); });
+      return b;
+    };
+    const art = document.createElement('div'); art.className = 'pl-card-art';
+    const cv = document.createElement('div'); cv.className = 'cover';
+    art.append(cv, mkPlay('pl-card-play'));
+    const info = document.createElement('div'); info.className = 'pl-card-info';
+    const t = document.createElement('div'); t.className = 't'; t.textContent = p.name; t.title = p.name;
+    const a = document.createElement('div'); a.className = 'a';
+    a.textContent = `${p.items.length} 首歌曲` + (nOff ? ` · 已下載 ${nOff} 首` : '');
+    info.append(t, a);
+    li.append(art, info, mkPlay('pl-card-pm'));
+    li.addEventListener('click', () => openPlaylist(p.id));
+    return li;
   }
 
   // ── 初始化 ──
@@ -823,5 +1587,6 @@
   setNow(null);
   updateProgress();
   updatePlayIcons();
-  loadList();
+  offlineInit().finally(() => loadList()); // 先讀出離線清單,畫面才能正確標示
+  registerSW();
 })();
