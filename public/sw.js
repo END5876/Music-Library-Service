@@ -1,10 +1,18 @@
 'use strict';
 // sw.js — 讓播放器頁面與清單在離線時仍能開啟（離線音檔本身存在 IndexedDB，由 player.js 處理）
 // 由 /player-sw.js 提供（scope 為 /），改版時把 VERSION 加一即可讓舊快取失效。
-const VERSION = 'v1';
+const VERSION = 'v2';
 const SHELL = `ml-shell-${VERSION}`;
 const DATA = `ml-data-${VERSION}`;
-const SHELL_URLS = ['/player', '/player-assets/player.css', '/player-assets/player.js'];
+const SHELL_URLS = [
+  '/player',
+  '/manifest.webmanifest',
+  '/player-assets/player.css',
+  '/player-assets/player.js',
+  '/player-assets/icons/icon-192.png',
+  '/player-assets/icons/icon-512.png',
+  '/player-assets/icons/icon-maskable-512.png',
+];
 const API_PATHS = ['/web/api/list', '/web/api/playlists', '/web/api/capabilities'];
 const TIMEOUT_MS = 6000;
 
@@ -47,7 +55,9 @@ self.addEventListener('fetch', (e) => {
   if (url.origin !== self.location.origin) return;
   const p = url.pathname;
 
-  if (p === '/player' || p.startsWith('/player-assets/')) {
+  if (req.mode === 'navigate' && (p === '/' || p === '/player')) {
+    e.respondWith(networkFirst(req, SHELL).then((res) => res.type === 'error' ? caches.match('/player', { cacheName: SHELL }) : res));
+  } else if (p.startsWith('/player-assets/') || p === '/manifest.webmanifest') {
     e.respondWith(networkFirst(req, SHELL));
   } else if (API_PATHS.includes(p)) {
     e.respondWith(networkFirst(req, DATA));

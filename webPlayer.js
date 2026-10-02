@@ -114,6 +114,11 @@ function mountWebPlayer(app, { store, libSecret }) {
 
   app.get('/', (req, res) => res.redirect('/player'));
   app.use('/player-assets', express.static(path.join(__dirname, 'public'), { index: false, maxAge: 0 }));
+  app.get('/manifest.webmanifest', (req, res) => {
+    res.type('application/manifest+json');
+    res.set('Cache-Control', 'no-cache');
+    res.sendFile(path.join(__dirname, 'public', 'manifest.webmanifest'));
+  });
   // Service Worker 必須由根路徑提供才能控制整個網站（離線開啟播放器頁面用）
   app.get('/player-sw.js', (req, res) => {
     res.set({ 'Cache-Control': 'no-cache', 'Service-Worker-Allowed': '/' });

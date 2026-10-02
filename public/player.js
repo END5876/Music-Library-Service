@@ -1082,7 +1082,17 @@
 
   function registerSW() {
     if (!('serviceWorker' in navigator)) return;
-    navigator.serviceWorker.register('/player-sw.js', { scope: '/' }).catch((err) => dbg('SW 註冊失敗', err && err.message));
+    navigator.serviceWorker.register('/player-sw.js', { scope: '/' })
+      .then((registration) => {
+        registration.addEventListener('updatefound', () => {
+          const worker = registration.installing;
+          if (!worker) return;
+          worker.addEventListener('statechange', () => {
+            if (worker.state === 'installed' && navigator.serviceWorker.controller) setStatus('播放器已有新版，重新整理後生效');
+          });
+        });
+      })
+      .catch((err) => dbg('SW 註冊失敗', err && err.message));
   }
   function clearDataCaches() {
     if (!window.caches) return;
