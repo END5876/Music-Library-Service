@@ -1,0 +1,11 @@
+/* base.css — 變數、重設、全域 */
+:root{--bg:#0b0b0b;--surface:#181818;--surface2:#242424;--muted:#aaa;--accent:#ff2d55;--header-h:64px;--player-h:72px;--nav-h:56px;--cover-a:#3b3b52;--cover-b:#1c1c28;--safe-top:env(safe-area-inset-top,0px);--safe-bottom:env(safe-area-inset-bottom,0px)}
+*{box-sizing:border-box;margin:0;padding:0;-webkit-tap-highlight-color:transparent}
+[hidden]{display:none!important}
+html{color-scheme:dark;overflow-x:hidden;max-width:100%}
+body{background:var(--bg);color:#fff;font-family:-apple-system,"Segoe UI","Noto Sans TC","PingFang TC","Microsoft JhengHei",Roboto,sans-serif;overflow:hidden;max-width:100%;height:100vh;height:100dvh}
+button{background:none;border:0;color:inherit;cursor:pointer;font:inherit;display:inline-flex;align-items:center;justify-content:center}
+button:disabled{cursor:default;opacity:.4}
+svg{width:24px;height:24px;fill:currentColor;flex-shrink:0}
+ul{list-style:none}
+audio{display:none}

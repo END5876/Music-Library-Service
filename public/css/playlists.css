@@ -1,0 +1,19 @@
+/* playlists.css — 播放清單基本樣式與離線下載、選取清單 */
+/* ── 播放清單 / 離線下載 ── */
+.pl-actions{display:flex;flex-wrap:wrap;gap:8px;margin-bottom:14px}
+.pl-actions .more{border:1px solid #444;border-radius:16px;padding:8px 14px;font-size:13px;white-space:nowrap}
+.pl-actions .more:hover{background:var(--surface2)}
+.pl-actions .more.danger{color:#ff6b81;border-color:#5a2a33}
+.quick.single{grid-template-columns:minmax(0,1fr)}
+.row.offline .t::before{content:"✓ ";color:var(--accent)}
+.row.missing{opacity:.5}
+.rbtn.done{color:var(--accent);opacity:1}
+#plLists + .empty{padding:24px 0}
+.offline-box{margin-top:24px;display:flex;align-items:center;gap:12px;flex-wrap:wrap}
+.offline-box .hint{padding:0}
+.offline-box .more{border:1px solid #444;border-radius:16px;padding:6px 14px;font-size:13px;white-space:nowrap}
+.pick-list{max-height:40vh;overflow-y:auto;display:flex;flex-direction:column;gap:2px;list-style:none}
+.pick-list .note{color:var(--muted);font-size:13px;text-align:center;padding:12px}
+.login .go.ghost{background:var(--surface2)}
+.login .go.alt{background:var(--surface2);border:1px solid var(--accent)}
+.login .box > p.ttl{color:#fff;font-size:16px;font-weight:600}

@@ -4,7 +4,8 @@
   "description": "共用音樂庫服務：讓多個 Discord Bot（Mousebot 等）共用同一份已下載/處理好的音樂庫",
   "main": "server.js",
   "scripts": {
-    "start": "node server.js"
+    "start": "node server.js",
+    "check:sw": "node scripts/check-sw-shell.js"
   },
   "license": "ISC",
   "dependencies": {

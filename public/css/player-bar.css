@@ -1,0 +1,24 @@
+/* player-bar.css — 桌面版底部播放列 */
+.player{position:fixed;left:0;right:0;bottom:0;height:var(--player-h);background:#181818;z-index:40;display:grid;grid-template-columns:1fr 2fr 1fr;align-items:center;padding:0 16px;gap:16px}
+.bar-progress{position:absolute;top:-8px;left:0;right:0;height:16px}
+input[type=range]{-webkit-appearance:none;appearance:none;width:100%;height:4px;border-radius:2px;background:linear-gradient(to right,var(--accent) var(--p,0%),#4a4a4a var(--p,0%));outline:0;cursor:pointer}
+input[type=range]:disabled{cursor:default;opacity:1}
+input[type=range]::-webkit-slider-thumb{-webkit-appearance:none;width:0;height:0;border-radius:50%;background:#fff;transition:.15s}
+input[type=range]:not(:disabled):hover::-webkit-slider-thumb,.full input[type=range]:not(:disabled)::-webkit-slider-thumb{width:13px;height:13px}
+input[type=range]::-moz-range-thumb{width:0;height:0;border:0}
+input[type=range]:not(:disabled):hover::-moz-range-thumb,.full input[type=range]:not(:disabled)::-moz-range-thumb{width:13px;height:13px;border:0;background:#fff;border-radius:50%}
+.bar-progress input{position:absolute;top:6px;height:3px;border-radius:0}
+.ctrls{display:flex;align-items:center;gap:6px;justify-self:start}
+.ctrls button{width:44px;height:44px;border-radius:50%}
+.ctrls button:hover{background:#2a2a2a}
+.ctrls .big{width:48px;height:48px}
+.ctrls .big svg{width:36px;height:36px}
+.time{font-size:12px;color:var(--muted);margin-left:10px;white-space:nowrap}
+.now{display:flex;align-items:center;gap:12px;min-width:0;justify-self:center;width:100%;max-width:520px;cursor:pointer}
+.now .cover{width:48px;font-size:20px;border-radius:4px;flex-shrink:0}
+.now .info{min-width:0;flex:1}
+.right{display:flex;align-items:center;gap:4px;justify-self:end}
+.right button{width:40px;height:40px;border-radius:50%;color:#ccc}
+.right button:hover{background:#2a2a2a;color:#fff}
+.right button.on{color:var(--accent)}
+.vol{display:flex;align-items:center;width:130px}

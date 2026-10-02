@@ -1,0 +1,43 @@
+/* playlist-cards.css — 播放清單總覽卡片與電腦版雙欄 */
+/* ── 播放清單:總覽卡片 + 電腦版內頁雙欄 ── */
+#plNew{background:#fff;color:#000;border:0;font-weight:700;padding:9px 18px;font-size:14px}
+#plNew:hover{background:#e6e6e6}
+#plLists{grid-template-columns:minmax(0,1fr);gap:4px}
+.pl-card{display:flex;align-items:center;gap:12px;padding:8px;border-radius:12px;cursor:pointer;position:relative;min-width:0}
+.pl-card:hover{background:var(--surface)}
+.pl-card-art{position:relative;flex-shrink:0;width:48px}
+.pl-card .cover{width:100%;border-radius:8px;background:linear-gradient(135deg,#3a3560,#1a1a2e)}
+.pl-card .cover::before{content:"♪";font-size:20px;color:#8b7fd8}
+.pl-card-info{flex:1;min-width:0}
+.pl-card .t{font-weight:600}
+.pl-card .a{font-size:12px;color:#777;margin-top:3px}
+.pl-card-play{display:none}
+.pl-card-pm{width:40px;height:40px;border-radius:50%;color:#ccc;flex-shrink:0}
+.pl-card-pm:hover{background:#2a2a2a;color:#fff}
+
+@media (min-width:701px){
+  #plLists{grid-template-columns:repeat(auto-fill,minmax(180px,1fr));gap:20px 18px}
+  .pl-card{flex-direction:column;align-items:stretch;gap:12px;padding:12px;background:var(--surface)}
+  .pl-card:hover{background:var(--surface2)}
+  .pl-card-art{width:100%}
+  .pl-card .cover{border-radius:10px;box-shadow:0 8px 24px rgba(0,0,0,.45)}
+  .pl-card .cover::before{font-size:44px}
+  .pl-card-pm{display:none}
+  .pl-card-play{display:grid;place-items:center;position:absolute;right:10px;bottom:10px;width:44px;height:44px;border-radius:50%;background:var(--accent);color:#fff;box-shadow:0 6px 16px rgba(0,0,0,.5);opacity:0;transform:translateY(6px);transition:.15s}
+  .pl-card:hover .pl-card-play,.pl-card-play:focus-visible{opacity:1;transform:none}
+}
+@media (min-width:701px) and (hover:none){
+  .pl-card-play{opacity:1;transform:none}
+}
+
+.pl-search{max-width:460px}
+@media (min-width:760px){
+  #plDetailPane{max-width:1100px;display:grid;grid-template-columns:300px minmax(0,1fr);grid-template-areas:"top top" "side list";column-gap:40px;align-items:start}
+  .pl-top{grid-area:top}
+  .pl-side{grid-area:side;position:sticky;top:8px}
+  .pl-header{flex-direction:column;align-items:flex-start;gap:18px;margin:12px 0 18px}
+  .pl-cover{width:240px;font-size:84px;border-radius:14px}
+  .pl-meta h1{font-size:30px}
+  #plItems{grid-area:list;margin-top:0}
+  #plItemsEmpty{grid-area:list}
+}
