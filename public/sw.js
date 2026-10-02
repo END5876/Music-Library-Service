@@ -1,65 +1,10 @@
 'use strict';
 // sw.js — 讓播放器頁面與清單在離線時仍能開啟（離線音檔本身存在 IndexedDB，由 player.js 處理）
 // 由 /player-sw.js 提供（scope 為 /），改版時把 VERSION 加一即可讓舊快取失效。
-const VERSION = 'v2'; // 檔案結構變動（CSS／JS 拆分）：舊快取全部失效
+const VERSION = 'v1';
 const SHELL = `ml-shell-${VERSION}`;
 const DATA = `ml-data-${VERSION}`;
-// 預快取的頁面外殼。新增／刪除 public/css、public/js 的檔案後，執行 npm run check:sw 確認這份清單沒有漏
-const SHELL_URLS = [
-  '/player',
-  '/player-assets/css/base.css',
-  '/player-assets/css/layout.css',
-  '/player-assets/css/rows.css',
-  '/player-assets/css/player-bar.css',
-  '/player-assets/css/overlays.css',
-  '/player-assets/css/fullscreen.css',
-  '/player-assets/css/dialogs.css',
-  '/player-assets/css/responsive.css',
-  '/player-assets/css/playlists.css',
-  '/player-assets/css/menus.css',
-  '/player-assets/css/playlist-detail.css',
-  '/player-assets/css/playlist-cards.css',
-  '/player-assets/js/main.js',
-  '/player-assets/js/audio/controls.js',
-  '/player-assets/js/audio/events.js',
-  '/player-assets/js/audio/helpers.js',
-  '/player-assets/js/audio/mediaSession.js',
-  '/player-assets/js/audio/prefetch.js',
-  '/player-assets/js/auth/auth.js',
-  '/player-assets/js/core/constants.js',
-  '/player-assets/js/core/debug.js',
-  '/player-assets/js/core/dom.js',
-  '/player-assets/js/core/prefs.js',
-  '/player-assets/js/core/serviceWorker.js',
-  '/player-assets/js/core/state.js',
-  '/player-assets/js/core/toast.js',
-  '/player-assets/js/core/util.js',
-  '/player-assets/js/library/library.js',
-  '/player-assets/js/offline/downloads.js',
-  '/player-assets/js/offline/idb.js',
-  '/player-assets/js/offline/paint.js',
-  '/player-assets/js/offline/source.js',
-  '/player-assets/js/online/online.js',
-  '/player-assets/js/playback/controller.js',
-  '/player-assets/js/playlists/actions.js',
-  '/player-assets/js/playlists/api.js',
-  '/player-assets/js/playlists/context.js',
-  '/player-assets/js/playlists/dialog.js',
-  '/player-assets/js/playlists/drag.js',
-  '/player-assets/js/playlists/model.js',
-  '/player-assets/js/playlists/page.js',
-  '/player-assets/js/playlists/picker.js',
-  '/player-assets/js/playlists/view.js',
-  '/player-assets/js/queue/drag.js',
-  '/player-assets/js/queue/model.js',
-  '/player-assets/js/queue/shuffle.js',
-  '/player-assets/js/queue/view.js',
-  '/player-assets/js/ui/fullscreen.js',
-  '/player-assets/js/ui/keyboard.js',
-  '/player-assets/js/ui/menus.js',
-  '/player-assets/js/ui/nav.js',
-  '/player-assets/js/ui/rows.js',
-];
+const SHELL_URLS = ['/player', '/player-assets/player.css', '/player-assets/player.js'];
 const API_PATHS = ['/web/api/list', '/web/api/playlists', '/web/api/capabilities'];
 const TIMEOUT_MS = 6000;
 

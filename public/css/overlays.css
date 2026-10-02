@@ -1,4 +1,0 @@
-/* overlays.css — Toast 與預設隱藏的手機元件 */
-.toast{position:fixed;left:50%;bottom:calc(var(--player-h) + 16px);transform:translate(-50%,8px);max-width:min(560px,calc(100vw - 32px));background:#2a2a2a;color:#fff;font-size:13px;line-height:1.5;padding:10px 16px;border-radius:12px;box-shadow:0 8px 30px rgba(0,0,0,.5);z-index:55;opacity:0;pointer-events:none;transition:.2s;overflow-wrap:anywhere}
-.toast.show{opacity:1;transform:translate(-50%,0)}
-.mini,.bottom-nav{display:none}

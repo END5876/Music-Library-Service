@@ -6,45 +6,12 @@
 內部 HTTP API 讓各個 Bot 讀取／寫入同一份檔案，取代每個 Bot 各自維護
 一份 `data/music`。
 
-## 專案結構
-
-```
-server.js                      入口：只負責組裝（middleware、routes、listen）
-src/
-  middleware/
-    libraryKey.js              /api/music/* 的 x-music-lib-key 驗證（Bot 用）
-    webAuth.js                 網頁播放器密碼登入、簽章 Cookie、登入限流
-  routes/
-    music.js                   /api/music/*（Bot 用）
-    webPlayer.js               網頁播放器路由組裝（未設 WEB_PLAYER_PASSWORD 則不掛載）
-    web.js                     /player、登入登出、曲目清單、音檔串流
-    online.js                  /web/api/capabilities|search|info、/web/play
-    playlists.js               /web/api/playlists/*
-  services/
-    musicStore/                音樂庫實體磁碟存取：paths / listing / writer / evict
-    playlistStore.js           播放清單 JSON 儲存
-    ytdlp/                     YouTube / Bilibili 線上搜尋與串流（移植自 Mousebot）
-      antiBot/                 config / cookies / clients / args / errors
-      env · info · search · stream · backgroundCache · request · cache · normalizer
-      state.js · constants.js  共用可變狀態與常數
-  utils/                       logger、urlUtils、rootDir
-public/
-  player.html  sw.js
-  css/                         依區塊拆分的樣式（載入順序即 player.html 內的順序，不可任意調換）
-  js/                          瀏覽器 ES modules（無需打包）；main.js 為進入點
-    core/                      dom、state（共用狀態物件 S）、常數、工具
-    audio/ playback/ queue/ library/ playlists/ offline/ online/ ui/ auth/
-scripts/check-sw-shell.js      檢查 sw.js 預快取清單與實際檔案一致（npm run check:sw）
-```
-
-> 新增或刪除 `public/css`、`public/js` 的檔案後，請執行 `npm run check:sw`，並把 `public/sw.js` 的 `VERSION` 加一。
-
 ## API
 
 所有 `/api/music/*` 路由都需要帶 `x-music-lib-key: <MUSIC_LIB_SECRET>`
 header（未設定 `MUSIC_LIB_SECRET` 時不驗證，僅建議在完全信任的內網
 環境這樣用）。`filename` 一律是相對於音樂庫根目錄的路徑，用 `/` 分隔
-（例如 `favorites/歌名.mp3`；自動下載的快取檔直接放在音樂庫根目錄）。
+（例如 `cache/歌名 [BVxxxx].mp3`）。
 
 | 方法 | 路徑 | 說明 |
 |---|---|---|
@@ -88,7 +55,7 @@ header（未設定 `MUSIC_LIB_SECRET` 時不驗證，僅建議在完全信任的
 
 播放流程移植自 Mousebot 的 `onlineMusicHandler.js`，邏輯與常數相同：
 
-1. 先查快取（`<MUSIC_DIR>` 根目錄，檔名格式與 Bot 相同，所以 Bot 與網頁的快取互相命中）。
+1. 先查快取（`<MUSIC_DIR>/cache`，檔名格式與 Bot 相同，所以 Bot 與網頁的快取互相命中）。
    命中 → 直接播放檔案（可拖曳進度）。
 2. 未命中 → yt-dlp 即時串流（YouTube 沿用 client 輪換策略：default → mweb+po → tv → tv_simply → web_embedded）。
 3. 影片 ≤ 7 分鐘 → 同時背景下載快取，完成後自動響度正規化（loudnorm，-16 LUFS）；
