@@ -69,6 +69,11 @@
   let errorStreak = 0;
   let pendingPlay = false; // 程式已要求播放、但還沒真的開始(載入中)
   let switchPending = false; // 已載入新音源、尚未真正開始播(tryPlay 放棄後仍保留,供 recover 補救)
+  let userPaused = false;    // 使用者(含鎖屏／耳機按鍵)明確按了暫停
+  let autoSwitchAt = 0;      // 最近一次「播完自動換歌」的時間
+  let lastPlayingAt = 0;     // 最近一次 playing 事件的時間
+  let autoResumes = 0;       // 自動換歌後被非使用者暫停,已自動恢復的次數
+  const inAutoWindow = () => autoSwitchAt > 0 && Date.now() - autoSwitchAt < 8000;
   let lastSrc = null;        // { key, url } 最近一次 loadSource,必要時重新載入
   let endHandled = false;  // 這次 ended 是否已處理過
   let mode = 'library';
@@ -175,7 +180,7 @@
     } catch { $('loginErr').textContent = '連線失敗'; }
   });
   $('logoutBtn').addEventListener('click', async () => {
-    pendingPlay = false; switchPending = false;
+    pendingPlay = false; switchPending = false; userPaused = true;
     audio.pause();
     setSession('none');
     await fetch('/web/logout', { method: 'POST' }).catch(() => {});
@@ -594,7 +599,7 @@
       start(shuffle ? view[Math.floor(Math.random() * view.length)].filename : view[0].filename);
       return;
     }
-    if (audio.paused) tryPlay(); else { pendingPlay = false; switchPending = false; audio.pause(); }
+    if (audio.paused) { userPaused = false; tryPlay(); } else { pendingPlay = false; switchPending = false; userPaused = true; audio.pause(); }
   }
 
   // ── audio 事件 ──
@@ -628,6 +633,7 @@
   function onEnded() {
     if (endHandled) return;
     endHandled = true;
+    autoSwitchAt = Date.now(); autoResumes = 0;
     dbg('ended', 'hidden=', document.hidden, 'time=', audio.currentTime);
     errorStreak = 0;
     if (repeat === 'one') {
@@ -650,11 +656,23 @@
     // 真正發生 pause(使用者、來電、系統中斷):不要讓 recover() 自動恢復
     // 播放自然結束時也會先觸發 pause,那種情況不算
     if (audio.ended) return;
+    // 自動換歌後數秒內、不是使用者按的暫停(多半是 Android 在背景換歌時把媒體暫停):
+    // 視為「換歌後沒播起來」,直接補打 play,並留著 switchPending 讓解鎖時 recover() 再補一次
+    const spurious = !userPaused && inAutoWindow() && (currentFile || onlineCurrent) && autoResumes < 3;
+    dbg('pause', 'hidden=', document.hidden, 'time=', audio.currentTime, 'userPaused=', userPaused,
+      spurious ? '→ 非使用者暫停,自動恢復 #' + (autoResumes + 1) : '');
+    if (spurious) {
+      autoResumes++;
+      switchPending = true; pendingPlay = true;
+      setSession('playing');
+      tryPlay(3);
+      return;
+    }
     pendingPlay = false;
     setSession('paused');
-    dbg('pause', 'hidden=', document.hidden, 'time=', audio.currentTime);
   });
   audio.addEventListener('playing', () => {
+    lastPlayingAt = Date.now();
     switchPending = false; errorStreak = 0; pendingPlay = false; endHandled = false;
     setSession('playing'); setStatus('');
     dbg('playing');
@@ -781,10 +799,16 @@
 
   if ('mediaSession' in navigator) {
     const setHandler = (name, fn) => { try { navigator.mediaSession.setActionHandler(name, fn); } catch {} };
-    setHandler('previoustrack', prev);
-    setHandler('nexttrack', advance);
-    setHandler('play', () => tryPlay());
-    setHandler('pause', () => { pendingPlay = false; switchPending = false; audio.pause(); setSession('paused'); });
+    setHandler('previoustrack', () => { dbg('mediaSession:previoustrack'); prev(); });
+    setHandler('nexttrack', () => { dbg('mediaSession:nexttrack'); advance(); });
+    setHandler('play', () => { dbg('mediaSession:play'); userPaused = false; tryPlay(); });
+    setHandler('pause', () => {
+      // 自動換歌剛開始播的 1.5 秒內、頁面在背景收到的 pause 動作:不是使用者按的,忽略
+      const spurious = document.hidden && inAutoWindow() && Date.now() - lastPlayingAt < 1500;
+      dbg('mediaSession:pause', spurious ? '(換歌後立即收到,忽略)' : '');
+      if (spurious) return;
+      pendingPlay = false; switchPending = false; userPaused = true; audio.pause(); setSession('paused');
+    });
   }
 
   // 全螢幕播放頁
@@ -949,7 +973,7 @@
   function loadSource(key, url) {
     const tok = ++srcTok;
     dbg('loadSource', key, offlineKeys.has(key) ? '(離線)' : '(網路)');
-    switchPending = true;
+    switchPending = true; userPaused = false;
     lastSrc = { key, url };
     if (blobUrl) { URL.revokeObjectURL(blobUrl); blobUrl = null; }
     if (!offlineKeys.has(key)) { audio.src = url; tryPlay(); return; }
