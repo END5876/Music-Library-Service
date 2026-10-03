@@ -699,6 +699,7 @@
     setSession('playing'); setStatus('');
     dbg('playing');
     prefetchNext();
+    preloadNext();
   });
   audio.addEventListener('volumechange', () => {
     $('vol').value = Math.round(audio.volume * 100);
@@ -735,6 +736,9 @@
   function recover() {
     if (!currentFile && !onlineCurrent) return;
     if (audio.ended && !endHandled) { dbg('recover: 補呼叫 ended'); onEnded(); return; }
+    if (switchPending && currentFile && audio.readyState === 0 && lastSrc && Date.now() - loadAt > 10000) {
+      dbg('recover: 載入逾時(>10s),重新載入'); loadSource(lastSrc.key, lastSrc.url); return;
+    }
     if (switchPending && audio.paused && !audio.ended) {
       // readyState 0 且沒在載入(networkState 2 = LOADING):請求已經死了,重新載入
       if (audio.readyState === 0 && audio.networkState !== 2 && lastSrc) {
@@ -991,13 +995,56 @@
   }
 
   // 載入音源:有離線檔就播離線的(blob URL,可拖曳),沒有才走網路
-  let srcTok = 0, blobUrl = null;
+  let srcTok = 0, blobUrl = null, loadAt = 0;
+
+  // ── 背景預載整首 ──
+  // 實測 Android 鎖屏時,換歌那一刻才由 <audio> 發出的網路請求可能卡住(stalled)。
+  // 頁面在背景時,趁目前這首正在播(系統不會限制網路),先把下一首整個抓成 blob,換歌時直接用 blob URL 播,
+  // 完全不碰網路。前景不預載(省流量);只預載音樂庫曲目(線上串流長度未知)。
+  let preload = null;          // { key, url }
+  let preloadingKey = '';
+  function dropPreload() { if (preload) { try { URL.revokeObjectURL(preload.url); } catch {} preload = null; } }
+  function nextLibFilename() {
+    const e = queue[0];
+    if (e) return e.kind === 'lib' ? e.filename : null;
+    if (shuffle || onlineCurrent || !currentFile) return null;
+    return pickNext();
+  }
+  async function preloadNext() {
+    if (!document.hidden || !currentFile) return;
+    const fn = nextLibFilename();
+    if (!fn || fn === currentFile) return;
+    const key = 'lib:' + fn;
+    if (offlineKeys.has(key) || (preload && preload.key === key) || preloadingKey) return;
+    const f = byFile.get(fn);
+    if (!f || f.size > 40 * 1048576) return;
+    preloadingKey = key;
+    const t = Date.now();
+    try {
+      const r = await fetch(streamUrl(fn));
+      if (!r.ok) throw new Error('HTTP ' + r.status);
+      const blob = await r.blob();
+      dropPreload();
+      preload = { key, url: URL.createObjectURL(blob) };
+      dbg('預載完成', key, fmtSize(blob.size), (Date.now() - t) + 'ms');
+    } catch (err) {
+      dbg('預載失敗', key, err);
+    } finally {
+      preloadingKey = '';
+    }
+  }
   function loadSource(key, url) {
     const tok = ++srcTok;
     dbg('loadSource', key, offlineKeys.has(key) ? '(離線)' : '(網路)');
-    switchPending = true; userPaused = false;
+    switchPending = true; userPaused = false; loadAt = Date.now();
     lastSrc = { key, url };
     if (blobUrl) { URL.revokeObjectURL(blobUrl); blobUrl = null; }
+    if (preload && preload.key === key) { // 背景預載好的整首:不用再靠背景網路,直接播
+      blobUrl = preload.url; preload = null;
+      dbg('使用預載的檔案', key);
+      audio.src = blobUrl; tryPlay(); return;
+    }
+    dropPreload();
     if (!offlineKeys.has(key)) { audio.src = url; tryPlay(); return; }
     if (!audio.ended) { audio.removeAttribute('src'); audio.load(); } // 等 blob 讀出來之前不要讓舊的音源繼續播(剛播完時保留,避免元素完全空窗)
     pendingPlay = true; setSession('playing');
@@ -1605,7 +1652,7 @@
   window.addEventListener('online', () => dbg('網路:online'));
   window.addEventListener('offline', () => dbg('網路:offline'));
   window.addEventListener('pagehide', () => { dbg('pagehide'); saveLog(); });
-  document.addEventListener('visibilitychange', () => { dbg('visibility', document.visibilityState); if (document.hidden) saveLog(); });
+  document.addEventListener('visibilitychange', () => { dbg('visibility', document.visibilityState); if (document.hidden) { saveLog(); preloadNext(); } });
   document.addEventListener('freeze', () => { dbg('頁面被凍結(freeze)'); saveLog(); });
   document.addEventListener('resume', () => dbg('頁面解除凍結(resume)'));
 
