@@ -72,6 +72,8 @@
   let userPaused = false;    // 使用者(含鎖屏／耳機按鍵)明確按了暫停
   let autoSwitchAt = 0;      // 最近一次「播完自動換歌」的時間
   let lastPlayingAt = 0;     // 最近一次 playing 事件的時間
+  const RESUME_DELAYS = [0, 100, 300, 800, 1500, 3000, 5000, 8000];
+  let resumeTimer = 0;
   let autoResumes = 0;       // 自動換歌後被非使用者暫停,已自動恢復的次數
   const inAutoWindow = () => autoSwitchAt > 0 && Date.now() - autoSwitchAt < 8000;
   let lastSrc = null;        // { key, url } 最近一次 loadSource,必要時重新載入
@@ -658,16 +660,25 @@
     if (audio.ended) return;
     // 自動換歌後數秒內、不是使用者按的暫停(多半是 Android 在背景換歌時把媒體暫停):
     // 視為「換歌後沒播起來」,直接補打 play,並留著 switchPending 讓解鎖時 recover() 再補一次
-    const spurious = !userPaused && inAutoWindow() && (currentFile || onlineCurrent) && autoResumes < 3;
+    // 實測系統會在剛換歌後連續暫停好幾次(間隔約 10~100ms,持續 ~0.3 秒),所以用遞增延遲重試,最多 8 次
+    const inWin = !userPaused && inAutoWindow() && (currentFile || onlineCurrent);
+    const spurious = inWin && autoResumes < RESUME_DELAYS.length;
     dbg('pause', 'hidden=', document.hidden, 'time=', audio.currentTime, 'userPaused=', userPaused,
-      spurious ? '→ 非使用者暫停,自動恢復 #' + (autoResumes + 1) : '');
+      spurious ? '→ 非使用者暫停,自動恢復 #' + (autoResumes + 1) + '(' + RESUME_DELAYS[autoResumes] + 'ms 後)' : (inWin ? '→ 恢復次數用完,留待解鎖／回前景補救' : ''));
     if (spurious) {
-      autoResumes++;
+      const delay = RESUME_DELAYS[autoResumes++];
       switchPending = true; pendingPlay = true;
       setSession('playing');
-      tryPlay(3);
+      const tok = srcTok;
+      clearTimeout(resumeTimer);
+      resumeTimer = setTimeout(() => {
+        if (tok !== srcTok || userPaused || !audio.paused) return;
+        dbg('自動恢復:play()');
+        tryPlay(3);
+      }, delay);
       return;
     }
+    if (inWin) switchPending = true; // 放棄自動恢復,但保留旗標:回到前景時 recover() 會再補打 play
     pendingPlay = false;
     setSession('paused');
   });
