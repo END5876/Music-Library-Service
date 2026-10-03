@@ -218,6 +218,10 @@
   </form>
 </div>
 
+<!-- 載入順序有依賴:offlineStore.js、downloader.js 必須早於 player.js(player.js 一開始就會取用 window.MLOfflineStore / window.MLDownloader);
+     新增或更名腳本時,sw.js 的 SHELL_URLS 也要同步 -->
+<script src="/player-assets/offlineStore.js"></script>
+<script src="/player-assets/downloader.js"></script>
 <script src="/player-assets/player.js"></script>
 </body>
 </html>

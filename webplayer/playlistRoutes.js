@@ -1,5 +1,5 @@
 'use strict';
-// playlistRoutes.js
+// webplayer/playlistRoutes.js
 // 播放清單 API，全部走網頁播放器的登入驗證（Cookie 或內部金鑰）。
 //
 //   GET    /web/api/playlists                       全部播放清單

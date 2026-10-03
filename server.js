@@ -21,7 +21,7 @@
 //   GET  /api/music/file/*                          下載檔案內容（* 是相對於音樂庫根目錄的路徑）
 //   PUT  /api/music/file/*                          上傳／覆寫檔案內容（原始位元組，不做任何解析）
 //
-// 網頁播放器（設定 WEB_PLAYER_PASSWORD 才啟用，細節見 webPlayer.js）：
+// 網頁播放器（設定 WEB_PLAYER_PASSWORD 才啟用，細節見 webplayer/webPlayer.js）：
 //   GET  /player                                   播放器頁面
 //   POST /web/login | /web/logout                  密碼登入／登出（Cookie）
 //   GET  /web/api/list                             曲目清單（需登入）
@@ -35,8 +35,8 @@
 require('dotenv').config();
 const express = require('express');
 const store = require('./musicStore');
-const { createLibraryKeyMiddleware } = require('./auth');
-const { mountWebPlayer } = require('./webPlayer');
+const { mountLibraryRoutes } = require('./libraryRoutes');
+const { mountWebPlayer } = require('./webplayer/webPlayer');
 
 const PORT = process.env.PORT || 4100;
 const SECRET = process.env.MUSIC_LIB_SECRET || '';
@@ -47,57 +47,11 @@ const app = express();
 // 這條路由本身也不洩漏任何音樂庫內容。
 app.get('/health', (req, res) => res.json({ ok: true }));
 
-app.use('/api/music', createLibraryKeyMiddleware(SECRET));
+// Bot 用的內部 API（/api/music/*，需帶 x-music-lib-key）
+mountLibraryRoutes(app, { store, secret: SECRET });
 
 // 網頁播放器：走自己的 Cookie 驗證，不影響上面 Bot 用的 /api/music/*
 const webPlayerEnabled = mountWebPlayer(app, { store, libSecret: SECRET });
-
-// ── 清單 ──────────────────────────────────────────────────
-app.get('/api/music/list', async (req, res) => {
-  try {
-    const files = await store.listAll();
-    res.json({ files });
-  } catch (err) {
-    console.error('❌ [MusicLibrary] /list 失敗:', err);
-    res.status(500).json({ error: '讀取音樂庫清單失敗' });
-  }
-});
-
-// ── 存在檢查 ──────────────────────────────────────────────
-app.get('/api/music/exists', async (req, res) => {
-  try {
-    const info = await store.exists(req.query.filename);
-    res.json(info);
-  } catch (err) {
-    res.status(400).json({ exists: false, error: err.message });
-  }
-});
-
-// ── 下載 ──────────────────────────────────────────────────
-app.get('/api/music/file/*', (req, res) => {
-  try {
-    const absPath = store.resolveForRead(req.params[0]);
-    if (!absPath) return res.status(404).json({ error: '找不到檔案' });
-    res.sendFile(absPath, (err) => {
-      if (err && !res.headersSent) {
-        console.error('❌ [MusicLibrary] 下載檔案失敗:', err.message);
-        res.status(500).json({ error: '下載檔案失敗' });
-      }
-    });
-  } catch (err) {
-    res.status(400).json({ error: err.message });
-  }
-});
-
-// ── 上傳（原始位元組 body，不用 body-parser，直接串流寫檔）────
-app.put('/api/music/file/*', (req, res) => {
-  store.writeFileFromStream(req.params[0], req)
-    .then(({ relPath }) => res.json({ ok: true, filename: relPath }))
-    .catch((err) => {
-      console.error('❌ [MusicLibrary] 寫入檔案失敗:', err.message);
-      if (!res.headersSent) res.status(400).json({ error: err.message });
-    });
-});
 
 app.listen(PORT, () => {
   console.log(`✅ [MusicLibrary] 共用音樂庫服務已啟動，監聽埠 ${PORT}（音樂庫路徑: ${store.MUSIC_DIR}）`);

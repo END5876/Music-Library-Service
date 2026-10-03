@@ -1,5 +1,5 @@
 'use strict';
-// playlistStore.js
+// webplayer/playlistStore.js
 // ─────────────────────────────────────────────────────────────
 // 網頁播放器的播放清單儲存（單一 JSON 檔，同步原子寫入）。
 //
@@ -14,7 +14,7 @@
 const fs = require('fs');
 const path = require('path');
 const crypto = require('crypto');
-const store = require('./musicStore');
+const store = require('../musicStore');
 
 const FILE = process.env.PLAYLISTS_FILE || path.join(store.MUSIC_DIR, '.web', 'playlists.json');
 const MAX_PLAYLISTS = 100;

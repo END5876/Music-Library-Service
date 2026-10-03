@@ -1,4 +1,10 @@
 'use strict';
+// player.js — 網頁播放器前端（單一 IIFE，所有區塊共用同一組閉包狀態，因此不再往下拆）
+// 區塊索引（依序，搜尋 "// ── " 或 "//  " 標題可跳轉）：
+//   狀態與偏好 → 背景播放 helper → 登入 → 列表元件(makeRow) → 音樂庫清單 → 目前播放資訊
+//   → 隨機佇列 → 佇列畫面 → 拖曳排序 → 播放(play/advance/prev) → audio 事件 → 補救機制 → 預載
+//   → 控制項 → 頁籤 → 線上搜尋/串流 → 播放清單 + 離線下載 → 初始化
+// 相依腳本（player.html 中需先載入）：offlineStore.js（IndexedDB）、downloader.js（下載引擎）
 (() => {
   const $ = (id) => document.getElementById(id);
   const audio = $('audio');
@@ -871,46 +877,8 @@
   }
 
   // ── 離線儲存(IndexedDB)──────────────────────────────
-  const IDB_NAME = 'ml_offline', IDB_STORE = 'tracks';
   const offlineSizes = new Map(); // key -> bytes
-  let idbPromise = null;
-  function idb() {
-    if (idbPromise) return idbPromise;
-    idbPromise = new Promise((resolve, reject) => {
-      if (!window.indexedDB) return reject(new Error('此瀏覽器不支援離線儲存'));
-      const rq = indexedDB.open(IDB_NAME, 1);
-      rq.onupgradeneeded = () => rq.result.createObjectStore(IDB_STORE, { keyPath: 'key' });
-      rq.onsuccess = () => resolve(rq.result);
-      rq.onerror = () => reject(rq.error);
-    });
-    idbPromise.catch(() => { idbPromise = null; });
-    return idbPromise;
-  }
-  function idbTx(mode, fn) {
-    return idb().then((db) => new Promise((resolve, reject) => {
-      const tx = db.transaction(IDB_STORE, mode);
-      const rq = fn(tx.objectStore(IDB_STORE));
-      tx.oncomplete = () => resolve(rq && rq.result);
-      tx.onerror = () => reject(tx.error);
-      tx.onabort = () => reject(tx.error || new Error('寫入中止'));
-    }));
-  }
-  const offlineGet = (key) => idbTx('readonly', (s) => s.get(key)).then((r) => (r ? r.blob : null));
-  const offlinePut = (rec) => idbTx('readwrite', (s) => s.put(rec));
-  const offlineDel = (key) => idbTx('readwrite', (s) => s.delete(key));
-  const offlineClearAll = () => idbTx('readwrite', (s) => s.clear());
-  // 只掃描 key / size,不把音檔內容讀進記憶體
-  function offlineScan() {
-    return idb().then((db) => new Promise((resolve, reject) => {
-      const out = [];
-      const rq = db.transaction(IDB_STORE, 'readonly').objectStore(IDB_STORE).openCursor();
-      rq.onsuccess = () => {
-        const c = rq.result;
-        if (c) { out.push({ key: c.value.key, size: c.value.size || 0 }); c.continue(); } else resolve(out);
-      };
-      rq.onerror = () => reject(rq.error);
-    }));
-  }
+  const { offlineGet, offlinePut, offlineDel, offlineClearAll, offlineScan } = window.MLOfflineStore; // 來自 offlineStore.js
   function offlineInit() {
     return offlineScan()
       .then((list) => { for (const r of list) { offlineKeys.add(r.key); offlineSizes.set(r.key, r.size); } })
@@ -932,92 +900,10 @@
     }).catch(() => { if (tok === srcTok) { audio.src = url; tryPlay(); } });
   }
 
-  // ── 下載(最多同時 2 個,可整批取消)──────────────────
-  const DL_CONCURRENCY = 2;
-  const dlQueue = [];
-  let dlActive = 0, dlAbort = null, dlFailMsg = '';
-  let dlBatch = { total: 0, done: 0, failed: 0 };
-  const dlBusy = () => dlActive > 0 || dlQueue.length > 0;
-
-  function enqueueDownloads(items) {
-    const fresh = items.filter((it) => { const k = itemKey(it); return !offlineKeys.has(k) && !dlState.has(k); });
-    if (!fresh.length) { setStatus('這些歌曲已經下載過(或正在下載)'); return; }
-    if (!dlAbort) dlAbort = new AbortController();
-    for (const it of fresh) { dlState.set(itemKey(it), { pct: 0, active: false }); dlQueue.push(it); }
-    dlBatch.total += fresh.length;
-    if (navigator.storage && navigator.storage.persist) navigator.storage.persist().catch(() => {});
-    setStatus(`開始下載 ${fresh.length} 首…`);
-    refreshDl();
-    pumpDownloads();
-  }
-
-  function pumpDownloads() {
-    while (dlAbort && dlActive < DL_CONCURRENCY && dlQueue.length) {
-      const it = dlQueue.shift();
-      dlActive++;
-      downloadOne(it, dlAbort.signal)
-        .then(() => { dlBatch.done++; })
-        .catch((err) => {
-          if (err && err.name === 'AbortError') return;
-          dlBatch.failed++;
-          const name = err && (err.name || (err.target && err.target.error && err.target.error.name));
-          dlFailMsg = name === 'QuotaExceededError' ? '儲存空間不足' : (err && err.message) || '下載失敗';
-          if (name === 'QuotaExceededError') cancelDownloads(dlFailMsg);
-        })
-        .finally(() => {
-          dlActive--;
-          if (!dlBusy()) finishBatch(); else pumpDownloads();
-          refreshDl();
-        });
-    }
-  }
-
-  async function downloadOne(it, signal) {
-    const key = itemKey(it);
-    const st = dlState.get(key);
-    if (st) st.active = true;
-    try {
-      const url = it.kind === 'lib' ? streamUrl(it.filename) : '/web/play?url=' + enc(it.srcUrl || it.url);
-      const r = await fetch(url, { signal });
-      if (r.status === 401) { showLogin('登入已過期,請重新登入'); throw new Error('登入已過期'); }
-      if (!r.ok) { const j = await r.json().catch(() => ({})); throw new Error(j.error || 'HTTP ' + r.status); }
-      const total = Number(r.headers.get('Content-Length')) || 0;
-      const reader = r.body.getReader();
-      const chunks = []; let got = 0, lastUi = 0;
-      for (;;) {
-        const { done, value } = await reader.read();
-        if (done) break;
-        chunks.push(value); got += value.length;
-        if (st && total) st.pct = Math.min(99, Math.floor(got / total * 100));
-        const t = Date.now();
-        if (t - lastUi > 300) { lastUi = t; refreshDl(); }
-      }
-      if (!got) throw new Error('下載到空檔案');
-      const blob = new Blob(chunks, { type: r.headers.get('Content-Type') || 'audio/mpeg' });
-      await offlinePut({ key, blob, size: blob.size, title: it.title || '', at: Date.now() });
-      offlineKeys.add(key); offlineSizes.set(key, blob.size);
-    } finally {
-      dlState.delete(key);
-    }
-  }
-
-  function finishBatch() {
-    if (!dlBatch.total) return; // 已被取消
-    const { done, failed } = dlBatch;
-    setStatus(`⬇ 下載完成:${done} 首` + (failed ? `,失敗 ${failed} 首(${dlFailMsg})` : ''));
-    dlBatch = { total: 0, done: 0, failed: 0 };
-    dlAbort = null; dlFailMsg = '';
-  }
-
-  function cancelDownloads(msg) {
-    if (dlAbort) dlAbort.abort();
-    for (const it of dlQueue) dlState.delete(itemKey(it));
-    dlQueue.length = 0;
-    dlBatch = { total: 0, done: 0, failed: 0 };
-    dlAbort = null;
-    setStatus(msg || '已取消下載');
-    refreshDl();
-  }
+  // ── 下載(引擎在 downloader.js;最多同時 2 首,可整批取消)──────
+  const { enqueueDownloads, cancelDownloads, dlBusy, getBatch } = window.MLDownloader.createDownloader({
+    offlineKeys, offlineSizes, dlState, itemKey, streamUrl, enc, offlinePut, setStatus, showLogin, refreshDl,
+  });
 
   async function removeOffline(items) {
     for (const it of items) {
@@ -1069,7 +955,7 @@
     const busy = dlBusy(), allOff = dls.length > 0 && dls.every((it) => offlineKeys.has(itemKey(it)));
     b.classList.toggle('done', !busy && allOff);
     b.style.fontSize = '';
-    if (busy) { b.textContent = `${dlBatch.done + dlBatch.failed}/${dlBatch.total}`; b.style.fontSize = '12px'; b.title = '取消下載'; }
+    if (busy) { b.textContent = `${getBatch().done + getBatch().failed}/${getBatch().total}`; b.style.fontSize = '12px'; b.title = '取消下載'; }
     else { b.innerHTML = `<svg><use href="#i-${allOff ? 'check' : 'download'}"/></svg>`; b.title = allOff ? '已下載(點擊移除)' : '下載離線'; }
   }
   function paintDl() {
