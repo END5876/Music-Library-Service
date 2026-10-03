@@ -15,7 +15,16 @@
   let DEBUG = false;
   try { DEBUG = localStorage.getItem('ml_debug') === '1'; } catch {}
   const t0 = Date.now();
-  const dbg = (...a) => { if (DEBUG) console.log('[player +' + ((Date.now() - t0) / 1000).toFixed(1) + 's]', ...a); };
+  const dbg = (...a) => {
+    if (!DEBUG) return;
+    const line = '+' + ((Date.now() - t0) / 1000).toFixed(1) + 's ' + a.join(' ');
+    console.log('[player]', line);
+    try {
+      const l = JSON.parse(localStorage.getItem('ml_log') || '[]');
+      l.push(line);
+      localStorage.setItem('ml_log', JSON.stringify(l.slice(-300)));
+    } catch {}
+  };
 
   // 預載下一首(預設關閉;只抓開頭小段 / 預熱線上 info,效果不保證,請自行實測)
   const PREFETCH = false;
@@ -41,6 +50,8 @@
   let history = [];
   let errorStreak = 0;
   let pendingPlay = false; // 程式已要求播放、但還沒真的開始(載入中)
+  let switchPending = false; // 已載入新音源、尚未真正開始播(tryPlay 放棄後仍保留,供 recover 補救)
+  let lastSrc = null;        // { key, url } 最近一次 loadSource,必要時重新載入
   let endHandled = false;  // 這次 ended 是否已處理過
   let mode = 'library';
   let folder = '';
@@ -145,7 +156,7 @@
     } catch { $('loginErr').textContent = '連線失敗'; }
   });
   $('logoutBtn').addEventListener('click', async () => {
-    pendingPlay = false;
+    pendingPlay = false; switchPending = false;
     audio.pause();
     setSession('none');
     await fetch('/web/logout', { method: 'POST' }).catch(() => {});
@@ -563,7 +574,7 @@
       start(shuffle ? view[Math.floor(Math.random() * view.length)].filename : view[0].filename);
       return;
     }
-    if (audio.paused) tryPlay(); else { pendingPlay = false; audio.pause(); }
+    if (audio.paused) tryPlay(); else { pendingPlay = false; switchPending = false; audio.pause(); }
   }
 
   // ── audio 事件 ──
@@ -608,6 +619,12 @@
       else { audio.currentTime = 0; tryPlay(); }
     } else advance();
   }
+  audio.addEventListener('canplay', () => {
+    if (switchPending && audio.paused && !audio.ended) { dbg('canplay: 補打 play'); tryPlay(1); }
+  });
+  for (const ev of ['loadstart', 'loadedmetadata', 'canplay', 'playing', 'waiting', 'stalled', 'suspend', 'abort', 'error', 'emptied']) {
+    audio.addEventListener(ev, () => dbg('audio:' + ev, 'rs=' + audio.readyState, 'ns=' + audio.networkState, 'paused=' + audio.paused, 'hidden=' + document.hidden));
+  }
   audio.addEventListener('ended', onEnded);
   audio.addEventListener('emptied', () => { endHandled = false; });
   audio.addEventListener('pause', () => {
@@ -619,7 +636,7 @@
     dbg('pause', 'hidden=', document.hidden, 'time=', audio.currentTime);
   });
   audio.addEventListener('playing', () => {
-    errorStreak = 0; pendingPlay = false; endHandled = false;
+    switchPending = false; errorStreak = 0; pendingPlay = false; endHandled = false;
     setSession('playing'); setStatus('');
     dbg('playing');
     prefetchNext();
@@ -659,6 +676,13 @@
   function recover() {
     if (!currentFile && !onlineCurrent) return;
     if (audio.ended && !endHandled) { dbg('recover: 補呼叫 ended'); onEnded(); return; }
+    if (switchPending && audio.paused && !audio.ended) {
+      // readyState 0 且沒在載入(networkState 2 = LOADING):請求已經死了,重新載入
+      if (audio.readyState === 0 && audio.networkState !== 2 && lastSrc) {
+        dbg('recover: 音源未載入,重新載入'); loadSource(lastSrc.key, lastSrc.url); return;
+      }
+      dbg('recover: 已換歌但未播放,補打 play'); tryPlay(1); return;
+    }
     if (pendingPlay && audio.paused) { dbg('recover: 補打 play'); tryPlay(1); }
   }
   // interval 在背景會被節流,只在前景有用;真正的補救靠下面三個「醒來」事件
@@ -741,7 +765,7 @@
     setHandler('previoustrack', prev);
     setHandler('nexttrack', advance);
     setHandler('play', () => tryPlay());
-    setHandler('pause', () => { pendingPlay = false; audio.pause(); setSession('paused'); });
+    setHandler('pause', () => { pendingPlay = false; switchPending = false; audio.pause(); setSession('paused'); });
   }
 
   // 全螢幕播放頁
@@ -905,9 +929,11 @@
   let srcTok = 0, blobUrl = null;
   function loadSource(key, url) {
     const tok = ++srcTok;
+    switchPending = true;
+    lastSrc = { key, url };
     if (blobUrl) { URL.revokeObjectURL(blobUrl); blobUrl = null; }
     if (!offlineKeys.has(key)) { audio.src = url; tryPlay(); return; }
-    audio.removeAttribute('src'); audio.load(); // 等 blob 讀出來之前不要讓舊的音源繼續播
+    if (!audio.ended) { audio.removeAttribute('src'); audio.load(); } // 等 blob 讀出來之前不要讓舊的音源繼續播(剛播完時保留,避免元素完全空窗)
     pendingPlay = true; setSession('playing');
     offlineGet(key).then((blob) => {
       if (tok !== srcTok) return;
