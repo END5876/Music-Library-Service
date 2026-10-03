@@ -91,8 +91,20 @@
   function setSession(state) {
     if ('mediaSession' in navigator) { try { navigator.mediaSession.playbackState = state; } catch {} }
   }
+  // 支援 Audio Session API 的瀏覽器（含新版 Safari）可據此把本頁視為音樂播放。
+  // 不支援時完全不影響既有播放流程；它不能繞過瀏覽器或系統的背景執行限制。
+  function configureAudioSession() {
+    if (!('audioSession' in navigator)) return;
+    try {
+      if (navigator.audioSession.type !== 'playback') navigator.audioSession.type = 'playback';
+      dbg('audioSession', navigator.audioSession.type);
+    } catch (err) {
+      dbg('audioSession 設定失敗', err && err.name);
+    }
+  }
   // 載入空檔也維持「播放中」;失敗最多重試 retries 次,之後放棄(避免 recover 無限重試)
   function tryPlay(retries = 3) {
+    configureAudioSession();
     pendingPlay = true;
     setSession('playing');
     const p = audio.play();
@@ -580,12 +592,16 @@
   }
   for (const ev of ['timeupdate', 'durationchange', 'loadedmetadata', 'emptied', 'seeked']) audio.addEventListener(ev, updateProgress);
   for (const ev of ['play', 'pause', 'ended', 'emptied']) audio.addEventListener(ev, updatePlayIcons);
+  // 只在 localStorage.ml_debug='1' 時輸出；用於判斷鎖屏時是否收到曲目結束或串流中斷事件。
+  for (const ev of ['waiting', 'stalled', 'suspend', 'abort']) {
+    audio.addEventListener(ev, () => dbg('audio:' + ev, 'hidden=', document.hidden, 'time=', audio.currentTime));
+  }
 
   // ended 可重入:事件漏掉時 recover() 也能安全補呼叫,且同一次結束只處理一次
   function onEnded() {
     if (endHandled) return;
     endHandled = true;
-    dbg('ended');
+    dbg('ended', 'hidden=', document.hidden, 'time=', audio.currentTime);
     errorStreak = 0;
     if (repeat === 'one') {
       if (onlineCurrent) playOnline(onlineCurrent);
@@ -600,7 +616,7 @@
     if (audio.ended) return;
     pendingPlay = false;
     setSession('paused');
-    dbg('pause');
+    dbg('pause', 'hidden=', document.hidden, 'time=', audio.currentTime);
   });
   audio.addEventListener('playing', () => {
     errorStreak = 0; pendingPlay = false; endHandled = false;
@@ -624,7 +640,7 @@
   }
   audio.addEventListener('error', async () => {
     pendingPlay = false;
-    dbg('error', audio.error && audio.error.code);
+    dbg('error', audio.error && audio.error.code, 'hidden=', document.hidden, 'time=', audio.currentTime);
     if (!currentFile && !onlineCurrent) return;
     const key = nowKey();
     if (!(await stillLoggedIn())) return;
