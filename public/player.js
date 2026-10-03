@@ -72,7 +72,7 @@
   let userPaused = false;    // 使用者(含鎖屏／耳機按鍵)明確按了暫停
   let autoSwitchAt = 0;      // 最近一次「播完自動換歌」的時間
   let lastPlayingAt = 0;     // 最近一次 playing 事件的時間
-  const RESUME_DELAYS = [0, 100, 300, 800, 1500, 3000, 5000, 8000];
+  const RESUME_DELAYS = [0, 600]; // 實測每次補打都只多播約 0.1 秒又被系統暫停,多試無益(還會聽到「滋」一聲),只留 2 次
   let resumeTimer = 0;
   let autoResumes = 0;       // 自動換歌後被非使用者暫停,已自動恢復的次數
   const inAutoWindow = () => autoSwitchAt > 0 && Date.now() - autoSwitchAt < 8000;
@@ -653,6 +653,17 @@
       ev === 'error' && audio.error ? 'code=' + audio.error.code + ' ' + (audio.error.message || '') : ''));
   }
   audio.addEventListener('ended', onEnded);
+  // 實驗:Android 鎖屏時,曲目「播完(ended)」後再 play() 新音源常被系統立刻暫停(連續第 2 次背景換歌就會)。
+  // 背景中在曲目最後 0.5 秒內直接換歌,讓媒體工作階段不經過 ended,看是否能避免被暫停。
+  // 只在頁面隱藏、音樂庫曲目(有總長度)、非單曲循環時啟用;前景不受影響。
+  let earlyTok = -1;
+  audio.addEventListener('timeupdate', () => {
+    if (!document.hidden || !currentFile || earlyTok === srcTok || repeat === 'one') return;
+    if (!seekable() || audio.duration - audio.currentTime > 0.5) return;
+    earlyTok = srcTok;
+    dbg('提前換歌(剩 ' + (audio.duration - audio.currentTime).toFixed(2) + 's)');
+    onEnded();
+  });
   audio.addEventListener('emptied', () => { endHandled = false; });
   audio.addEventListener('pause', () => {
     // 真正發生 pause(使用者、來電、系統中斷):不要讓 recover() 自動恢復
