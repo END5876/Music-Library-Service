@@ -1,8 +1,8 @@
 {
   "id": "/player",
-  "name": "音樂庫播放器",
-  "short_name": "音樂庫",
-  "description": "可安裝並支援離線播放已下載曲目的私人音樂庫播放器。",
+  "name": "裊器音樂",
+  "short_name": "裊器音樂",
+  "description": "可安裝並支援離線播放已下載曲目的私人音樂播放器。",
   "lang": "zh-Hant",
   "start_url": "/player",
   "scope": "/",

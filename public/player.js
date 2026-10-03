@@ -294,7 +294,7 @@
     const a = n ? n.sub : '從音樂庫或線上搜尋選一首歌';
     ['barTitle', 'miniTitle', 'fTitle'].forEach(id => { $(id).textContent = t; });
     ['barArtist', 'miniArtist', 'fArtist'].forEach(id => { $(id).textContent = a; });
-    document.title = n ? `${n.title} · 音樂庫` : '音樂庫播放器';
+    document.title = n ? `${n.title} · 裊器音樂` : '裊器音樂';
     if ('mediaSession' in navigator) {
       try {
         navigator.mediaSession.metadata = n ? new MediaMetadata({ title: n.title, artist: n.sub.replace(/^📁 /, '') }) : null;
