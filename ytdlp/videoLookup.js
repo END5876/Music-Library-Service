@@ -21,6 +21,7 @@ const INFO_CACHE_MAX        = 200;
 
 let activeQueries = 0;
 const infoCache = new Map();        // url -> { info, ts }
+const infoInflight = new Map();     // url -> Promise（同一網址同時多個請求只查一次）
 
 // ════════════════════════════════════════════════════════
 //  工具
@@ -101,16 +102,20 @@ async function getInfoCached(url) {
   const hit = infoCache.get(url);
   if (hit && Date.now() - hit.ts < INFO_CACHE_TTL_MS) return hit.info;
 
+  const pending = infoInflight.get(url);
+  if (pending) return pending;
+
   if (activeQueries >= MAX_WEB_QUERIES) throw new Error('伺服器忙碌中，請稍後再試');
   activeQueries++;
-  try {
-    const info = await getInfo(url);
-    if (infoCache.size >= INFO_CACHE_MAX) infoCache.delete(infoCache.keys().next().value);
-    infoCache.set(url, { info, ts: Date.now() });
-    return info;
-  } finally {
-    activeQueries--;
-  }
+  const p = getInfo(url)
+    .then((info) => {
+      if (infoCache.size >= INFO_CACHE_MAX) infoCache.delete(infoCache.keys().next().value);
+      infoCache.set(url, { info, ts: Date.now() });
+      return info;
+    })
+    .finally(() => { activeQueries--; infoInflight.delete(url); });
+  infoInflight.set(url, p);
+  return p;
 }
 
 // ════════════════════════════════════════════════════════

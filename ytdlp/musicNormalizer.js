@@ -8,6 +8,7 @@ const { spawn } = require('child_process');
 const fs   = require('fs');
 const path = require('path');
 const logger = require('../logger');
+const { invalidateList } = require('../musicStore');
 
 const TARGET_LUFS = -16;   // -t -16
 const TARGET_LRA  = 20;    // -lrt 20
@@ -57,6 +58,7 @@ function _normalizeOne(filePath) {
       .then((measured) => _applyLoudnorm(filePath, tmpPath, measured))
       .then(() => {
         fs.renameSync(tmpPath, filePath);
+        invalidateList(); // 檔案大小改變了
         logger.debug('MusicNormalizer', `✅ 響度正規化完成: ${path.basename(filePath)}`);
         resolve(filePath);
       })
@@ -81,13 +83,15 @@ function _analyzeLoudness(filePath) {
     const ff = spawn('ffmpeg', args);
     let stderr = '';
 
-    ff.stderr.on('data', (d) => { stderr += d.toString(); });
+    ff.stderr.on('data', (d) => { stderr = (stderr + d.toString()).slice(-20000); });
 
     ff.on('close', () => {
-      const match = stderr.match(/\{[\s\S]*\}/);
-      if (!match) return reject(new Error('無法解析 loudnorm 分析結果（可能是不支援的音訊格式）'));
+      // loudnorm 的 JSON 一定在輸出最後；用最後一個 '{' 起算，避免檔案標籤（標題含大括號）干擾
+      const start = stderr.lastIndexOf('{');
+      const end = stderr.lastIndexOf('}');
+      if (start < 0 || end < start) return reject(new Error('無法解析 loudnorm 分析結果（可能是不支援的音訊格式）'));
       try {
-        resolve(JSON.parse(match[0]));
+        resolve(JSON.parse(stderr.slice(start, end + 1)));
       } catch (e) {
         reject(new Error('loudnorm JSON 解析失敗: ' + e.message));
       }
@@ -106,7 +110,7 @@ function _applyLoudnorm(inputPath, outputPath, measured) {
       `offset=${measured.target_offset}:linear=true:print_format=summary`;
 
     const args = [
-      '-hide_banner', '-y',
+      '-hide_banner', '-nostats', '-y',
       '-i', inputPath,
       '-af', af,
       outputPath,
@@ -114,7 +118,7 @@ function _applyLoudnorm(inputPath, outputPath, measured) {
     const ff = spawn('ffmpeg', args);
     let stderr = '';
 
-    ff.stderr.on('data', (d) => { stderr += d.toString(); });
+    ff.stderr.on('data', (d) => { stderr = (stderr + d.toString()).slice(-2000); });
 
     ff.on('close', (code) => {
       if (code === 0) resolve();

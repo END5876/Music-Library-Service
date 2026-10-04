@@ -111,6 +111,7 @@ function mountWebAuth(app, { libSecret }) {
     const password = req.body && typeof req.body.password === 'string' ? req.body.password : '';
     if (!password || !safeEqual(password, PASSWORD)) {
       rec.count += 1;
+      if (!failures.has(req.ip) && failures.size >= 10000) failures.delete(failures.keys().next().value); // 上限，避免被大量不同 IP 灌爆記憶體
       failures.set(req.ip, rec);
       return res.status(401).json({ error: '密碼錯誤' });
     }

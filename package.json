@@ -7,6 +7,9 @@
     "start": "node server.js"
   },
   "license": "ISC",
+  "engines": {
+    "node": ">=20"
+  },
   "dependencies": {
     "dotenv": "^17.4.1",
     "express": "^4.22.2"

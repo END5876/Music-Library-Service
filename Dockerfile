@@ -1,5 +1,7 @@
 FROM node:22-slim
 
+ENV NODE_ENV=production
+
 # 安裝 ffmpeg、python3(yt-dlp 執行需要)、curl
 RUN apt-get update && \
     apt-get install -y --no-install-recommends \
@@ -12,7 +14,7 @@ RUN apt-get update && \
 WORKDIR /app
 
 COPY package.json package-lock.json* ./
-RUN npm install --omit=dev
+RUN npm ci --omit=dev
 
 COPY . .
 

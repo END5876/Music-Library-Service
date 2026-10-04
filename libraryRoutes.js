@@ -13,11 +13,17 @@
 //   GET  /api/music/file/*                          下載檔案內容
 //   PUT  /api/music/file/*                          上傳／覆寫檔案內容（原始位元組）
 
+const crypto = require('crypto');
+
+// 固定長度雜湊後再 timingSafeEqual，避免用回應時間逐字猜金鑰
+const sha = (v) => crypto.createHash('sha256').update(String(v)).digest();
+const keyEquals = (a, b) => crypto.timingSafeEqual(sha(a), sha(b));
+
 function createLibraryKeyMiddleware(secret) {
   return function libraryKeyMiddleware(req, res, next) {
     if (!secret) return next(); // 未設定金鑰時不驗證（僅建議在完全信任的內網環境這樣用）
     const provided = req.get('x-music-lib-key');
-    if (provided !== secret) {
+    if (!provided || !keyEquals(provided, secret)) {
       return res.status(401).json({ error: '缺少或錯誤的音樂庫金鑰' });
     }
     next();

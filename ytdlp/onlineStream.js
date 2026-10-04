@@ -112,6 +112,10 @@ async function handlePlayRequest(req, res, rawUrl) {
     return res.status(502).json({ error: `無法獲取影片資訊：${err.message}` });
   }
   if (res.destroyed || req.aborted) return;
+  // 等待 getInfo 期間其他請求可能已佔滿名額，這裡再確認一次
+  if (activeCtxs.size >= MAX_WEB_STREAMS) {
+    return res.status(503).json({ error: '目前串流人數已滿，請稍後再試' });
+  }
 
   const ctx = { req, res, item, procs: null, closed: false, started: false };
   activeCtxs.add(ctx);

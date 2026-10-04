@@ -12,7 +12,10 @@ const { spawn } = require('child_process');
 const fs   = require('fs');
 const path = require('path');
 const logger = require('../logger');
-const { CACHE_DIR, MAX_CACHE_SIZE_MB, evictCacheIfNeeded } = require('../musicStore');
+const { CACHE_DIR, MAX_CACHE_SIZE_MB, evictCacheIfNeeded, invalidateList } = require('../musicStore');
+
+// 單一下載的最長時間；yt-dlp 卡死時強制終止，否則下載鎖（downloadingUrls）永遠不會釋放
+const DOWNLOAD_TIMEOUT_MS = 15 * 60 * 1000;
 
 const ytdlpPath = 'yt-dlp';
 
@@ -75,19 +78,27 @@ function downloadAndCache(url, title, ytdlpArgs, onProgress) {
     const ytdlp = spawn(ytdlpPath, finalArgs, { windowsHide: true });
 
     let errorOutput = '';
+    const appendErr = (line) => { errorOutput = (errorOutput + line).slice(-4000); }; // 只留尾端，避免長時間下載無限累積
 
-    ytdlp.stderr.on('data', data => {
+    // yt-dlp 的下載進度印在 stdout；沒人讀的話 pipe 緩衝（64KB）滿了之後 yt-dlp 會卡死
+    const onChunk = (data) => {
       const line = data.toString();
-      errorOutput += line;
-      const progressMatch = line.match(/\[download\]\s+([\d.]+)%/);
-      if (progressMatch && onProgress) {
-        onProgress(parseFloat(progressMatch[1]));
-      }
-    });
+      const m = line.match(/\[download\]\s+([\d.]+)%/);
+      if (m && onProgress) onProgress(parseFloat(m[1]));
+      return line;
+    };
+    ytdlp.stdout.on('data', onChunk);
+    ytdlp.stderr.on('data', data => appendErr(onChunk(data)));
 
-    ytdlp.on('error', err => reject(new Error('執行 yt-dlp 失敗: ' + err.message)));
+    const timer = setTimeout(() => {
+      console.warn(`⚠️ [${platform}] 下載逾時（${DOWNLOAD_TIMEOUT_MS / 60000} 分鐘），強制終止: ${filename}`);
+      try { ytdlp.kill('SIGKILL'); } catch {}
+    }, DOWNLOAD_TIMEOUT_MS);
+
+    ytdlp.on('error', err => { clearTimeout(timer); reject(new Error('執行 yt-dlp 失敗: ' + err.message)); });
 
     ytdlp.on('close', code => {
+      clearTimeout(timer);
       if (code !== 0) {
         try { if (fs.existsSync(tmpActual)) fs.unlinkSync(tmpActual); } catch {}
         try { if (fs.existsSync(tmpBase))   fs.unlinkSync(tmpBase);   } catch {}
@@ -107,6 +118,8 @@ function downloadAndCache(url, title, ytdlpArgs, onProgress) {
 
       try {
         fs.renameSync(actualTmp, filePath);
+        invalidateList();
+        evictCacheIfNeeded(); // 新檔加入後再檢查一次容量（下載前的檢查看不到這一首）
         const sizeMB = (fs.statSync(filePath).size / 1024 / 1024).toFixed(2);
         console.log(`✅ [${platform}] 下載完成: ${filename} (${sizeMB} MB)`);
         resolve(filePath);

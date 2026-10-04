@@ -42,6 +42,21 @@ const PORT = process.env.PORT || 4100;
 const SECRET = process.env.MUSIC_LIB_SECRET || '';
 
 const app = express();
+app.disable('x-powered-by');
+
+// 基本安全標頭（播放器為純自家資源：腳本／樣式／音訊都來自同源或 blob:）
+app.use((req, res, next) => {
+  res.set({
+    'X-Content-Type-Options': 'nosniff',
+    'Referrer-Policy': 'no-referrer',
+    'X-Frame-Options': 'DENY',
+    'Content-Security-Policy':
+      "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; " +
+      "img-src 'self' data: blob:; media-src 'self' blob:; connect-src 'self'; " +
+      "worker-src 'self'; manifest-src 'self'; object-src 'none'; base-uri 'none'; frame-ancestors 'none'",
+  });
+  next();
+});
 
 // 健康檢查放在金鑰驗證之前 —— 部署平台的健康檢查探針不會帶金鑰，
 // 這條路由本身也不洩漏任何音樂庫內容。
@@ -53,7 +68,18 @@ mountLibraryRoutes(app, { store, secret: SECRET });
 // 網頁播放器：走自己的 Cookie 驗證，不影響上面 Bot 用的 /api/music/*
 const webPlayerEnabled = mountWebPlayer(app, { store, libSecret: SECRET });
 
-app.listen(PORT, () => {
+// 統一錯誤處理：不把堆疊或 HTML 錯誤頁回給客戶端
+app.use((err, req, res, next) => {
+  if (res.headersSent) return next(err);
+  const status = err && (err.status || err.statusCode) >= 400 && (err.status || err.statusCode) < 600
+    ? (err.status || err.statusCode) : 500;
+  if (status >= 500) console.error('❌ [Server] 未處理的錯誤:', err);
+  res.status(status).json({ error: status >= 500 ? '伺服器錯誤' : '請求不合法' });
+});
+
+store.cleanupStaleTemps().catch(() => {});
+
+const server = app.listen(PORT, () => {
   console.log(`✅ [MusicLibrary] 共用音樂庫服務已啟動，監聽埠 ${PORT}（音樂庫路徑: ${store.MUSIC_DIR}）`);
   if (!SECRET) {
     console.warn('⚠️ [MusicLibrary] 尚未設定 MUSIC_LIB_SECRET，任何連得到這個服務的請求都能讀寫音樂庫，僅建議在完全信任的內網環境這樣使用');
@@ -65,3 +91,13 @@ app.listen(PORT, () => {
     }
   }
 });
+
+// 部署平台重新部署會送 SIGTERM：停止收新連線，並讓 'exit' 處理器砍掉殘留的 yt-dlp / ffmpeg 子行程
+function shutdown(signal) {
+  console.log(`🛑 [MusicLibrary] 收到 ${signal}，關閉服務`);
+  server.close();
+  setTimeout(() => process.exit(0), 3000).unref();
+  process.exit(0);
+}
+process.on('SIGTERM', () => shutdown('SIGTERM'));
+process.on('SIGINT', () => shutdown('SIGINT'));

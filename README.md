@@ -11,7 +11,7 @@
 所有 `/api/music/*` 路由都需要帶 `x-music-lib-key: <MUSIC_LIB_SECRET>`
 header（未設定 `MUSIC_LIB_SECRET` 時不驗證，僅建議在完全信任的內網
 環境這樣用）。`filename` 一律是相對於音樂庫根目錄的路徑，用 `/` 分隔
-（例如 `cache/歌名 [BVxxxx].mp3`）。
+（例如 `favorites/歌名.mp3`；自動下載的快取檔直接放在根目錄）。
 
 | 方法 | 路徑 | 說明 |
 |---|---|---|
@@ -19,7 +19,7 @@ header（未設定 `MUSIC_LIB_SECRET` 時不驗證，僅建議在完全信任的
 | GET | `/api/music/list` | 列出整個音樂庫 |
 | GET | `/api/music/exists?filename=` | 檢查指定檔案是否存在 |
 | GET | `/api/music/file/*` | 下載檔案 |
-| PUT | `/api/music/file/*` | 上傳／覆寫檔案（原始位元組 body） |
+| PUT | `/api/music/file/*` | 上傳／覆寫檔案（原始位元組 body；僅限音訊副檔名，單檔上限 `MAX_UPLOAD_MB`，預設 512） |
 
 這個服務刻意不提供播放次數功能：每個呼叫端 Bot 各自計算、各自
 記錄自己的播放次數，不透過這裡同步或集中管理。
@@ -57,7 +57,7 @@ header（未設定 `MUSIC_LIB_SECRET` 時不驗證，僅建議在完全信任的
 
 播放流程移植自 Mousebot 的 `onlineMusicHandler.js`，邏輯與常數相同：
 
-1. 先查快取（`<MUSIC_DIR>/cache`，檔名格式與 Bot 相同，所以 Bot 與網頁的快取互相命中）。
+1. 先查快取（`<MUSIC_DIR>` 根目錄第一層，檔名格式與 Bot 相同，所以 Bot 與網頁的快取互相命中）。
    命中 → 直接播放檔案（可拖曳進度）。
 2. 未命中 → yt-dlp 即時串流（YouTube 沿用 client 輪換策略：default → mweb+po → tv → tv_simply → web_embedded）。
 3. 影片 ≤ 7 分鐘 → 同時背景下載快取，完成後自動響度正規化（loudnorm，-16 LUFS）；

@@ -18,7 +18,7 @@ const logger = require('../logger');
 const WARP_PROXY = process.env.WARP_PROXY_URL;
 
 if (WARP_PROXY) {
-  logger.debug('Proxy', `已設定 WARP_PROXY_URL，YouTube 請求將透過 Proxy 轉發: ${WARP_PROXY}`);
+  logger.debug('Proxy', '已設定 WARP_PROXY_URL，YouTube 請求將透過 Proxy 轉發');
 } else {
   logger.debug('Proxy', '未設定 WARP_PROXY_URL，YouTube 請求將直接使用本地網路連線');
 }
@@ -211,7 +211,7 @@ function buildYouTubeArgs(url, strategy, streamMode = true) {
 
   if (strategy.needsPO && YT_PO_TOKEN) {
     args.push('--extractor-args', `youtube:po_token=mweb.gvs+${YT_PO_TOKEN}`);
-    console.log(`🔑 [YouTube] 附加 PO Token (${YT_PO_TOKEN.slice(0, 8)}...)`);
+    logger.debug('YouTube', '附加 PO Token');
   }
 
   if (strategy.name !== 'tv_simply') {

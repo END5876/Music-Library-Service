@@ -23,6 +23,9 @@ const MAX_CONSECUTIVE_ERRORS = 5;
 // ── 超過此秒數則只串流，不下載快取（同 Bot）──────────────
 const MAX_CACHE_DURATION_SEC = 7 * 60; // 420 秒
 
+// 背景下載同時數上限：連續跳歌時，串流會被砍掉，但各首的背景下載仍會繼續，不限制的話會堆出一堆 yt-dlp
+const MAX_BG_DOWNLOADS = parseInt(process.env.WEB_MAX_DOWNLOADS || '2', 10);
+
 const WEB_KEY = 'web'; // 取代 Bot 的 guildId：YouTube client 輪換 & 連續錯誤計數
 
 // ── 狀態 ──────────────────────────────────────────────────
@@ -75,7 +78,11 @@ async function playStream(ctx, retryCount = 0) {
     _fallbackStream(ctx, retryCount);
 
     if (!tooLongToCache) {
-      if (!downloadingUrls.has(item.url)) {
+      if (downloadingUrls.has(item.url)) {
+        console.log(`⏳ 此 URL 已經在背景下載中，跳過重複下載任務。`);
+      } else if (downloadingUrls.size >= MAX_BG_DOWNLOADS) {
+        console.log(`⏭️ [${platform}] 背景下載已達上限 (${MAX_BG_DOWNLOADS})，這首只串流，不下載快取`);
+      } else {
         downloadingUrls.add(item.url);
 
         console.log(`⬇️ [${platform}] 背景開始下載快取...`);
@@ -121,8 +128,6 @@ async function playStream(ctx, retryCount = 0) {
           downloadingUrls.delete(item.url);
         });
 
-      } else {
-        console.log(`⏳ 此 URL 已經在背景下載中，跳過重複下載任務。`);
       }
     }
 
