@@ -663,8 +663,30 @@
   let dragging = false;
   const seekable = () => isFinite(audio.duration) && audio.duration > 0;
 
+  // 通知欄／鎖屏的進度條:明確告訴系統「這首歌」的長度與位置。
+  // 靜音保活元素(1 秒循環)也在播放,不主動設定的話系統可能拿它的長度而不是歌曲的,導致不顯示總長、不能拖曳。
+  let lastPosDur = 0, lastPosAt = 0;
+  function updatePositionState() {
+    if (!('mediaSession' in navigator) || !navigator.mediaSession.setPositionState) return;
+    lastPosAt = Date.now();
+    try {
+      if (seekable()) {
+        lastPosDur = audio.duration;
+        navigator.mediaSession.setPositionState({
+          duration: audio.duration,
+          playbackRate: audio.playbackRate || 1,
+          position: Math.min(Math.max(0, audio.currentTime || 0), audio.duration),
+        });
+      } else {
+        lastPosDur = 0;
+        navigator.mediaSession.setPositionState(); // 串流中沒有總長度:清除
+      }
+    } catch (err) { dbg('setPositionState 失敗', err); }
+  }
+
   function updateProgress() {
     const can = seekable();
+    if (can && (audio.duration !== lastPosDur || Date.now() - lastPosAt > 4000)) updatePositionState();
     const cur = audio.currentTime || 0;
     const p = can ? Math.min(100, cur / audio.duration * 100) : 0;
     for (const r of [$('seek'), $('fSeek')]) {
@@ -679,6 +701,7 @@
     $('miniProg').style.width = p + '%';
   }
   function updatePlayIcons() {
+    updatePositionState();
     const name = audio.paused ? 'play' : 'pause';
     ['toggle', 'miniToggle', 'fToggle'].forEach(id => setIcon($(id), name));
     $('bigCover').classList.toggle('paused', audio.paused);
@@ -892,6 +915,21 @@
     const setHandler = (name, fn) => { try { navigator.mediaSession.setActionHandler(name, fn); } catch {} };
     setHandler('previoustrack', () => { dbg('mediaSession:previoustrack'); prev(); });
     setHandler('nexttrack', () => { dbg('mediaSession:nexttrack'); advance(); });
+    // 通知欄進度條拖曳／快轉快退(沒有 seekto 處理器的話,系統不會開放拖曳)
+    setHandler('seekto', (d) => {
+      dbg('mediaSession:seekto', d && d.seekTime);
+      if (!seekable() || !d || typeof d.seekTime !== 'number') return;
+      audio.currentTime = Math.min(Math.max(0, d.seekTime), audio.duration);
+      updatePositionState();
+    });
+    setHandler('seekbackward', (d) => {
+      if (!seekable()) return;
+      audio.currentTime = Math.max(0, audio.currentTime - ((d && d.seekOffset) || 10)); updatePositionState();
+    });
+    setHandler('seekforward', (d) => {
+      if (!seekable()) return;
+      audio.currentTime = Math.min(audio.duration, audio.currentTime + ((d && d.seekOffset) || 10)); updatePositionState();
+    });
     setHandler('play', () => { dbg('mediaSession:play'); userPaused = false; tryPlay(); });
     setHandler('pause', () => {
       // 自動換歌剛開始播的 1.5 秒內、頁面在背景收到的 pause 動作:不是使用者按的,忽略
