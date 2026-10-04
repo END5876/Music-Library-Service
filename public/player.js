@@ -7,7 +7,59 @@
 // 相依腳本（player.html 中需先載入）：offlineStore.js（IndexedDB）、downloader.js（下載引擎）
 (() => {
   const $ = (id) => document.getElementById(id);
-  const audio = $('audio');
+  // ── 雙 <audio> 元素 ──
+  // 參考 Swing Music 網頁版(swingmx/webclient#38,Chrome for Android 鎖屏實測可自動接下一首)的做法:
+  // 兩個元素都放進 DOM,輪流當「正在播」與「待命」。背景預載好的下一首先載進待命元素,
+  // 換歌時直接 play() 待命元素,不改動正在播的那個元素的 src。
+  // 旗標(可在除錯面板切換,切換後會重新整理):ml_dual='0' 關閉雙元素;ml_keep='0' 關閉靜音保活。
+  const lsFlag = (k) => { try { return localStorage.getItem(k); } catch { return null; } };
+  // 這些都是針對「Android 鎖屏背景換歌被系統暫停」的補救:預設只在 Android 啟用,
+  // 電腦與 iOS 瀏覽器維持原本的單元素播放行為(可用除錯面板手動開關覆寫)。
+  const IS_ANDROID = /Android/i.test(navigator.userAgent);
+  const flagOn = (k, def) => { const v = lsFlag(k); return v === null ? def : v !== '0'; };
+  const DUAL = flagOn('ml_dual', IS_ANDROID);
+  const KEEP = flagOn('ml_keep', IS_ANDROID);
+  const audioA = $('audio');
+  const audioB = new Audio();
+  audioA.preload = 'auto'; audioB.preload = 'auto';
+  audioB.style.display = 'none'; audioB.id = 'audio2';
+  document.body.appendChild(audioB);
+  let audio = audioA;                      // 目前「正在播」的元素
+  const otherAudio = () => (audio === audioA ? audioB : audioA);
+  // 事件只處理目前正在播的元素;待命元素的事件一律忽略
+  const onAudio = (ev, fn) => {
+    for (const el of [audioA, audioB]) el.addEventListener(ev, (e) => { if (e.target === audio) fn(e); });
+  };
+
+  // ── 靜音保活元素 ──
+  // 日誌顯示:Android 鎖屏、連續背景換歌時,換音源的瞬間(abort/emptied)播放中的媒體會短暫歸零,
+  // 約 0.1~0.3 秒後系統就把這首暫停,同時背景網路請求也失敗(整個程序被降級)。
+  // 做法:另開一個永遠不換音源、循環播放靜音 WAV 的 <audio>,讓換歌空窗期間頁面仍有媒體在播放。
+  // 使用者暫停／播放結束時一併停止,不會一直佔著。
+  let silentUrl = null;
+  function silentWavUrl() {
+    const rate = 8000, n = rate; // 1 秒、8-bit 單聲道
+    const buf = new ArrayBuffer(44 + n), v = new DataView(buf);
+    const w = (o, str) => { for (let i = 0; i < str.length; i++) v.setUint8(o + i, str.charCodeAt(i)); };
+    w(0, 'RIFF'); v.setUint32(4, 36 + n, true); w(8, 'WAVE'); w(12, 'fmt ');
+    v.setUint32(16, 16, true); v.setUint16(20, 1, true); v.setUint16(22, 1, true);
+    v.setUint32(24, rate, true); v.setUint32(28, rate, true); v.setUint16(32, 1, true); v.setUint16(34, 8, true);
+    w(36, 'data'); v.setUint32(40, n, true);
+    new Uint8Array(buf, 44).fill(128); // 8-bit PCM 的 128 = 靜音
+    return (silentUrl = silentUrl || URL.createObjectURL(new Blob([buf], { type: 'audio/wav' })));
+  }
+  const keep = new Audio();
+  keep.loop = true; keep.preload = 'auto'; keep.setAttribute('playsinline', '');
+  let keepReady = false;
+  function keepOn() {
+    if (!KEEP) return;
+    if (!keepReady) { keep.src = silentWavUrl(); keepReady = true; }
+    if (!keep.paused) return;
+    const p = keep.play();
+    if (p && p.catch) p.catch((err) => dbg('保活元素 play 失敗', err));
+  }
+  function keepOff() { try { if (!keep.paused) keep.pause(); } catch {} }
+  for (const ev of ['play', 'pause', 'error']) keep.addEventListener(ev, () => dbg('keep:' + ev, 'hidden=' + document.hidden));
   const REPEATS = ['all', 'one', 'off'];
   const REPEAT_LABEL = { all: '循環:全部', one: '循環:單曲', off: '不循環' };
 
@@ -99,7 +151,7 @@
 
   try {
     const s = JSON.parse(localStorage.getItem('ml_prefs') || '{}');
-    if (typeof s.volume === 'number') audio.volume = Math.min(1, Math.max(0, s.volume));
+    if (typeof s.volume === 'number') audioA.volume = audioB.volume = Math.min(1, Math.max(0, s.volume));
     shuffle = !!s.shuffle;
     if (REPEATS.includes(s.repeat)) repeat = s.repeat;
   } catch {}
@@ -141,6 +193,8 @@
   // 載入空檔也維持「播放中」;失敗最多重試 retries 次,之後放棄(避免 recover 無限重試)
   function tryPlay(retries = 3) {
     configureAudioSession();
+    unlockStandby();
+    keepOn();
     pendingPlay = true;
     setSession('playing');
     const p = audio.play();
@@ -183,12 +237,13 @@
   });
   $('logoutBtn').addEventListener('click', async () => {
     pendingPlay = false; switchPending = false; userPaused = true;
-    audio.pause();
+    audio.pause(); keepOff();
     setSession('none');
     await fetch('/web/logout', { method: 'POST' }).catch(() => {});
     all = []; view = []; queue = []; history = []; byFile = new Map();
     playlists = []; plOpen = null; playlistCtx = null; clearDataCaches();
     currentFile = null; onlineCurrent = null;
+    dropPreload(); runCleanup(); keepOff();
     $('onlineResults').textContent = '';
     audio.removeAttribute('src'); audio.load();
     setNow(null); render();
@@ -601,7 +656,7 @@
       start(shuffle ? view[Math.floor(Math.random() * view.length)].filename : view[0].filename);
       return;
     }
-    if (audio.paused) { userPaused = false; tryPlay(); } else { pendingPlay = false; switchPending = false; userPaused = true; audio.pause(); }
+    if (audio.paused) { userPaused = false; tryPlay(); } else { pendingPlay = false; switchPending = false; userPaused = true; audio.pause(); keepOff(); }
   }
 
   // ── audio 事件 ──
@@ -628,8 +683,8 @@
     ['toggle', 'miniToggle', 'fToggle'].forEach(id => setIcon($(id), name));
     $('bigCover').classList.toggle('paused', audio.paused);
   }
-  for (const ev of ['timeupdate', 'durationchange', 'loadedmetadata', 'emptied', 'seeked']) audio.addEventListener(ev, updateProgress);
-  for (const ev of ['play', 'pause', 'ended', 'emptied']) audio.addEventListener(ev, updatePlayIcons);
+  for (const ev of ['timeupdate', 'durationchange', 'loadedmetadata', 'emptied', 'seeked']) onAudio(ev, updateProgress);
+  for (const ev of ['play', 'pause', 'ended', 'emptied']) onAudio(ev, updatePlayIcons);
 
   // ended 可重入:事件漏掉時 recover() 也能安全補呼叫,且同一次結束只處理一次
   function onEnded() {
@@ -643,36 +698,42 @@
       else { audio.currentTime = 0; tryPlay(); }
     } else advance();
   }
-  audio.addEventListener('canplay', () => {
+  onAudio('canplay', () => {
     if (switchPending && audio.paused && !audio.ended) { dbg('canplay: 補打 play'); tryPlay(1); }
   });
   for (const ev of ['loadstart', 'loadedmetadata', 'loadeddata', 'canplay', 'play', 'waiting', 'stalled', 'suspend', 'abort', 'error', 'emptied', 'seeking', 'seeked']) {
-    audio.addEventListener(ev, () => dbg('audio:' + ev,
-      'rs=' + audio.readyState, 'ns=' + audio.networkState, 'paused=' + audio.paused,
-      't=' + (audio.currentTime || 0).toFixed(1) + '/' + (isFinite(audio.duration) ? audio.duration.toFixed(1) : '?'),
-      ev === 'error' && audio.error ? 'code=' + audio.error.code + ' ' + (audio.error.message || '') : ''));
+    for (const el of [audioA, audioB]) {
+      el.addEventListener(ev, () => {
+        if (!DUAL && el === audioB) return;
+        dbg('audio:' + ev + (DUAL ? (el === audioA ? '[A' : '[B') + (el === audio ? '*]' : ' 待命]') : ''),
+          'rs=' + el.readyState, 'ns=' + el.networkState, 'paused=' + el.paused,
+          't=' + (el.currentTime || 0).toFixed(1) + '/' + (isFinite(el.duration) ? el.duration.toFixed(1) : '?'),
+          ev === 'error' && el.error ? 'code=' + el.error.code + ' ' + (el.error.message || '') : '');
+      });
+    }
   }
-  audio.addEventListener('ended', onEnded);
+  onAudio('ended', onEnded);
   // 實驗:Android 鎖屏時,曲目「播完(ended)」後再 play() 新音源常被系統立刻暫停(連續第 2 次背景換歌就會)。
   // 背景中在曲目最後 0.5 秒內直接換歌,讓媒體工作階段不經過 ended,看是否能避免被暫停。
   // 只在頁面隱藏、音樂庫曲目(有總長度)、非單曲循環時啟用;前景不受影響。
   let earlyTok = -1;
-  audio.addEventListener('timeupdate', () => {
+  onAudio('timeupdate', () => {
+    if (!IS_ANDROID || (DUAL && preload)) return; // 只有 Android 才提前切;雙元素待命已就緒時自然播完再切
     if (!document.hidden || !currentFile || earlyTok === srcTok || repeat === 'one') return;
     if (!seekable() || audio.duration - audio.currentTime > 0.5) return;
     earlyTok = srcTok;
     dbg('提前換歌(剩 ' + (audio.duration - audio.currentTime).toFixed(2) + 's)');
     onEnded();
   });
-  audio.addEventListener('emptied', () => { endHandled = false; });
-  audio.addEventListener('pause', () => {
+  onAudio('emptied', () => { endHandled = false; });
+  onAudio('pause', () => {
     // 真正發生 pause(使用者、來電、系統中斷):不要讓 recover() 自動恢復
     // 播放自然結束時也會先觸發 pause,那種情況不算
     if (audio.ended) return;
     // 自動換歌後數秒內、不是使用者按的暫停(多半是 Android 在背景換歌時把媒體暫停):
     // 視為「換歌後沒播起來」,直接補打 play,並留著 switchPending 讓解鎖時 recover() 再補一次
     // 實測系統會在剛換歌後連續暫停好幾次(間隔約 10~100ms,持續 ~0.3 秒),所以用遞增延遲重試,最多 8 次
-    const inWin = !userPaused && inAutoWindow() && (currentFile || onlineCurrent);
+    const inWin = IS_ANDROID && !userPaused && inAutoWindow() && (currentFile || onlineCurrent);
     const spurious = inWin && autoResumes < RESUME_DELAYS.length;
     dbg('pause', 'hidden=', document.hidden, 'time=', audio.currentTime, 'userPaused=', userPaused,
       spurious ? '→ 非使用者暫停,自動恢復 #' + (autoResumes + 1) + '(' + RESUME_DELAYS[autoResumes] + 'ms 後)' : (inWin ? '→ 恢復次數用完,留待解鎖／回前景補救' : ''));
@@ -691,17 +752,19 @@
     }
     if (inWin) switchPending = true; // 放棄自動恢復,但保留旗標:回到前景時 recover() 會再補打 play
     pendingPlay = false;
+    keepOff();
     setSession('paused');
   });
-  audio.addEventListener('playing', () => {
+  onAudio('playing', () => {
     lastPlayingAt = Date.now();
+    runCleanup();
     switchPending = false; errorStreak = 0; pendingPlay = false; endHandled = false;
     setSession('playing'); setStatus('');
     dbg('playing');
     prefetchNext();
     preloadNext();
   });
-  audio.addEventListener('volumechange', () => {
+  onAudio('volumechange', () => {
     $('vol').value = Math.round(audio.volume * 100);
     $('vol').style.setProperty('--p', Math.round(audio.volume * 100) + '%');
     savePrefs();
@@ -715,7 +778,7 @@
     } catch {}
     return true;
   }
-  audio.addEventListener('error', async () => {
+  onAudio('error', async () => {
     pendingPlay = false;
     dbg('error', audio.error && audio.error.code, 'hidden=', document.hidden, 'time=', audio.currentTime);
     if (!currentFile && !onlineCurrent) return;
@@ -734,6 +797,8 @@
 
   // ── 補救機制(頁面醒來 / 事件漏掉)──
   function recover() {
+    // 沒有任何播放意圖了(播完、使用者暫停、放棄恢復):停掉靜音保活元素
+    if (!keep.paused && (audio.paused || audio.ended) && !pendingPlay && !switchPending) { dbg('保活元素:無播放意圖,停止'); keepOff(); }
     if (!currentFile && !onlineCurrent) return;
     if (audio.ended && !endHandled) { dbg('recover: 補呼叫 ended'); onEnded(); return; }
     if (switchPending && currentFile && audio.readyState === 0 && lastSrc && Date.now() - loadAt > 10000) {
@@ -808,7 +873,7 @@
       updateProgress();
     });
   }
-  $('vol').addEventListener('input', (e) => { audio.volume = e.target.value / 100; });
+  $('vol').addEventListener('input', (e) => { audioA.volume = audioB.volume = e.target.value / 100; });
   $('vol').value = Math.round(audio.volume * 100);
   $('vol').style.setProperty('--p', Math.round(audio.volume * 100) + '%');
 
@@ -830,10 +895,10 @@
     setHandler('play', () => { dbg('mediaSession:play'); userPaused = false; tryPlay(); });
     setHandler('pause', () => {
       // 自動換歌剛開始播的 1.5 秒內、頁面在背景收到的 pause 動作:不是使用者按的,忽略
-      const spurious = document.hidden && inAutoWindow() && Date.now() - lastPlayingAt < 1500;
+      const spurious = IS_ANDROID && document.hidden && inAutoWindow() && Date.now() - lastPlayingAt < 1500;
       dbg('mediaSession:pause', spurious ? '(換歌後立即收到,忽略)' : '');
       if (spurious) return;
-      pendingPlay = false; switchPending = false; userPaused = true; audio.pause(); setSession('paused');
+      pendingPlay = false; switchPending = false; userPaused = true; audio.pause(); keepOff(); setSession('paused');
     });
   }
 
@@ -1003,7 +1068,44 @@
   // 完全不碰網路。前景不預載(省流量);只預載音樂庫曲目(線上串流長度未知)。
   let preload = null;          // { key, url }
   let preloadingKey = '';
-  function dropPreload() { if (preload) { try { URL.revokeObjectURL(preload.url); } catch {} preload = null; } }
+  function clearEl(el) { try { el.pause(); el.removeAttribute('src'); el.load(); } catch {} }
+  function dropPreload() {
+    if (!preload) return;
+    if (preload.el) clearEl(preload.el);
+    try { URL.revokeObjectURL(preload.url); } catch {}
+    preload = null;
+  }
+  // 雙元素切換後,舊元素要等新元素真的 playing 才清掉(避免換歌空窗)
+  let pendingCleanup = null;
+  function runCleanup() {
+    if (!pendingCleanup) return;
+    const { el, blob } = pendingCleanup; pendingCleanup = null;
+    clearEl(el);
+    if (blob) { try { URL.revokeObjectURL(blob); } catch {} }
+  }
+  function swapToStandby() {
+    runCleanup();
+    const next = preload.el, old = audio, oldBlob = blobUrl;
+    blobUrl = preload.url; preload = null;
+    next.volume = old.volume; next.muted = old.muted;
+    audio = next;   // 先換:舊元素之後的事件全部被忽略
+    dbg('雙元素切換', old === audioA ? 'A→B' : 'B→A', 'rs=' + next.readyState);
+    pendingCleanup = { el: old, blob: oldBlob };
+    tryPlay();
+  }
+  // 使用者手勢中順便讓待命元素也「播過一次」(靜音、立刻暫停),通過自動播放限制
+  let standbyUnlocked = false;
+  function unlockStandby() {
+    if (!DUAL || standbyUnlocked) return;
+    if (!(navigator.userActivation && navigator.userActivation.isActive)) return;
+    const el = otherAudio();
+    if (el.getAttribute('src')) return;
+    standbyUnlocked = true;
+    el.muted = true; el.src = silentWavUrl();
+    const done = (ok) => { el.muted = false; clearEl(el); dbg(ok ? '待命元素已解鎖' : '待命元素解鎖失敗'); };
+    const p = el.play();
+    if (p && p.then) p.then(() => done(true), () => done(false)); else done(true);
+  }
   function nextLibFilename() {
     const e = queue[0];
     if (e) return e.kind === 'lib' ? e.filename : null;
@@ -1011,7 +1113,7 @@
     return pickNext();
   }
   async function preloadNext() {
-    if (!document.hidden || !currentFile) return;
+    if (!(IS_ANDROID || DUAL) || !document.hidden || !currentFile) return;
     const fn = nextLibFilename();
     if (!fn || fn === currentFile) return;
     const key = 'lib:' + fn;
@@ -1025,7 +1127,13 @@
       if (!r.ok) throw new Error('HTTP ' + r.status);
       const blob = await r.blob();
       dropPreload();
+      runCleanup();
       preload = { key, url: URL.createObjectURL(blob) };
+      if (DUAL) { // 載進待命元素,換歌時直接 play() 它
+        const el = otherAudio();
+        el.src = preload.url; preload.el = el;
+        try { el.load(); } catch {}
+      }
       dbg('預載完成', key, fmtSize(blob.size), (Date.now() - t) + 'ms');
     } catch (err) {
       dbg('預載失敗', key, err);
@@ -1039,8 +1147,12 @@
     switchPending = true; userPaused = false; loadAt = Date.now();
     lastSrc = { key, url };
     if (blobUrl) { URL.revokeObjectURL(blobUrl); blobUrl = null; }
-    if (preload && preload.key === key) { // 背景預載好的整首:不用再靠背景網路,直接播
-      blobUrl = preload.url; preload = null;
+    runCleanup();
+    if (preload && preload.key === key) { // 背景預載好的整首:不用再靠背景網路
+      if (preload.el && preload.el.readyState >= 1) { dbg('使用預載的檔案(待命元素)', key); swapToStandby(); return; }
+      const u = preload.url;
+      if (preload.el) clearEl(preload.el);
+      preload = null; blobUrl = u;
       dbg('使用預載的檔案', key);
       audio.src = blobUrl; tryPlay(); return;
     }
@@ -1662,7 +1774,8 @@
     dbg('環境', 'standalone=' + (matchMedia('(display-mode: standalone)').matches || navigator.standalone === true),
       'onLine=' + navigator.onLine, 'net=' + (c.effectiveType || '?'),
       'sw=' + (navigator.serviceWorker && navigator.serviceWorker.controller ? '已控制' : '無'),
-      'audioSession=' + ('audioSession' in navigator), 'mediaSession=' + ('mediaSession' in navigator));
+      'audioSession=' + ('audioSession' in navigator), 'mediaSession=' + ('mediaSession' in navigator),
+      'android=' + IS_ANDROID, 'dual=' + DUAL, 'keep=' + KEEP);
     dbg('UA', navigator.userAgent);
   }
   const fullLog = () =>
@@ -1687,6 +1800,7 @@
   dlg.innerHTML = '<div class="box"><p class="ttl">除錯模式</p><p id="dbgInfo"></p>' +
     '<button class="go alt" id="dbgToggle" type="button"></button>' +
     '<textarea id="dbgText" readonly spellcheck="false" placeholder="尚無日誌。開啟除錯模式後重現問題,再回來複製或匯出。"></textarea>' +
+    '<div class="row2"><button class="go ghost" id="dbgDual" type="button"></button><button class="go ghost" id="dbgKeep" type="button"></button></div>' +
     '<div class="row2"><button class="go alt" id="dbgCopy" type="button">複製</button><button class="go alt" id="dbgExport" type="button">匯出</button><button class="go ghost" id="dbgClear" type="button">清除</button></div>' +
     '<button class="go ghost" id="dbgClose" type="button">關閉</button></div>';
   document.body.appendChild(dlg);
@@ -1694,6 +1808,8 @@
 
   function paintDbg() {
     dbgBtn.classList.toggle('on', DEBUG);
+    $('dbgDual').textContent = '雙元素:' + (DUAL ? '開' : '關');
+    $('dbgKeep').textContent = '靜音保活:' + (KEEP ? '開' : '關');
     $('dbgToggle').textContent = DEBUG ? '● 除錯模式:開(點此關閉)' : '○ 除錯模式:關(點此開啟)';
     $('dbgInfo').textContent = `共 ${logBuf.length} 行(最多保留 ${LOG_MAX} 行,鎖屏後仍會保留)`;
   }
@@ -1708,6 +1824,9 @@
 
   dbgBtn.addEventListener('click', () => { dlg.classList.add('show'); showLog(); ta.scrollTop = ta.scrollHeight; });
   $('dbgClose').addEventListener('click', () => dlg.classList.remove('show'));
+  const flipFlag = (k, on) => { try { localStorage.setItem(k, on ? '0' : '1'); } catch {} location.reload(); };
+  $('dbgDual').addEventListener('click', () => flipFlag('ml_dual', DUAL));
+  $('dbgKeep').addEventListener('click', () => flipFlag('ml_keep', KEEP));
   $('dbgToggle').addEventListener('click', () => {
     DEBUG = !DEBUG;
     try { localStorage.setItem('ml_debug', DEBUG ? '1' : '0'); } catch {}
