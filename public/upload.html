@@ -1,0 +1,65 @@
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="color-scheme" content="dark">
+<meta name="theme-color" content="#0b0b0b">
+<title>上傳音樂｜裊器音樂</title>
+<style>
+:root { color-scheme: dark; --bg:#0b0b0b; --panel:#151515; --line:#2a2a2a; --muted:#9c9c9c; --text:#f5f5f5; --accent:#f4d03f; --danger:#ff7474; }
+* { box-sizing:border-box; }
+body { margin:0; min-height:100vh; display:grid; place-items:center; padding:24px; background:radial-gradient(circle at top right,#2a2510 0,transparent 28rem),var(--bg); color:var(--text); font-family:"Noto Sans CJK TC","Noto Sans",system-ui,sans-serif; }
+main { width:min(100%,560px); }
+.brand { display:flex; gap:10px; align-items:center; margin:0 0 22px; color:#fff; font-weight:700; letter-spacing:.03em; }
+.mark { width:12px; height:12px; border-radius:50%; background:var(--accent); box-shadow:0 0 0 6px rgba(244,208,63,.15); }
+.card { background:rgba(21,21,21,.94); border:1px solid var(--line); border-radius:18px; padding:clamp(22px,5vw,38px); box-shadow:0 24px 80px rgba(0,0,0,.38); }
+h1 { margin:0; font-size:clamp(1.55rem,5vw,2.2rem); letter-spacing:-.03em; }
+.lead { color:var(--muted); line-height:1.7; margin:10px 0 28px; }
+form { display:grid; gap:18px; }
+label { display:grid; gap:8px; color:#ddd; font-size:.94rem; }
+input { width:100%; border:1px solid #3a3a3a; border-radius:10px; padding:13px 14px; background:#0d0d0d; color:#fff; font:inherit; }
+input:focus { outline:2px solid rgba(244,208,63,.65); outline-offset:1px; border-color:var(--accent); }
+input[type=file] { padding:11px; cursor:pointer; }
+input::file-selector-button { border:0; border-radius:7px; padding:8px 10px; margin-right:10px; background:#303030; color:#fff; cursor:pointer; font:inherit; }
+.note { margin:-8px 0 0; color:var(--muted); font-size:.82rem; line-height:1.55; }
+.actions { display:flex; align-items:center; gap:14px; margin-top:5px; }
+button { appearance:none; border:0; border-radius:10px; background:var(--accent); color:#17130a; padding:13px 18px; font:700 1rem inherit; cursor:pointer; }
+button:hover:not(:disabled) { filter:brightness(1.07); }
+button:disabled { opacity:.55; cursor:wait; }
+.status { min-height:1.5em; color:var(--muted); line-height:1.5; }
+.status.error { color:var(--danger); }
+.status.success { color:#9de6aa; }
+.progress { overflow:hidden; height:8px; border-radius:999px; background:#282828; }
+.progress > i { display:block; width:0; height:100%; background:var(--accent); transition:width .18s ease; }
+footer { margin:22px 0 0; text-align:center; font-size:.85rem; }
+a { color:#e7ce68; }
+</style>
+</head>
+<body>
+<main>
+  <div class="brand"><span class="mark"></span><span>裊器音樂</span></div>
+  <section class="card" aria-labelledby="title">
+    <h1 id="title">上傳音樂</h1>
+    <p class="lead">音檔會先壓縮為高品質 MP3，再依音樂庫標準進行雙通道響度正規化後儲存。</p>
+    <form id="uploadForm">
+      <label>音檔
+        <input id="file" type="file" accept="audio/mpeg,audio/wav,audio/ogg,audio/flac,audio/mp4,audio/aac,.mp3,.wav,.ogg,.flac,.m4a,.aac" required>
+      </label>
+      <p class="note">支援 MP3、WAV、OGG、FLAC、M4A、AAC；單檔上限由伺服器設定決定。</p>
+      <label>曲名
+        <input id="titleInput" type="text" maxlength="180" placeholder="預設使用原始檔名" autocomplete="off">
+      </label>
+      <label>儲存資料夾
+        <input id="folder" type="text" maxlength="200" placeholder="留空＝音樂庫根目錄" autocomplete="off">
+      </label>
+      <p class="note">留空會直接存到 MUSIC_DIR（例如 <code>/data/music</code>）；填寫時才存入該子資料夾。</p>
+      <div class="progress" aria-hidden="true"><i id="bar"></i></div>
+      <div class="actions"><button id="submit" type="submit">上傳並處理</button><span id="status" class="status" role="status" aria-live="polite"></span></div>
+    </form>
+  </section>
+  <footer><a href="/player">返回播放器</a></footer>
+</main>
+<script src="/player-assets/upload.js"></script>
+</body>
+</html>

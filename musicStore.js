@@ -186,12 +186,17 @@ function resolveForRead(rawRelPath) {
 //  寫入（上傳）── 暫存檔 + rename，確保不會有寫到一半就被讀到
 //  的半成品檔案。
 // ════════════════════════════════════════════════════════
-function writeFileFromStream(rawRelPath, readableStream) {
+// 將原始上傳內容先寫到不可見暫存檔。呼叫端必須在後續處理成功後才發布它，
+// 因此轉檔／正規化期間不會有半成品出現在音樂庫清單或被播放器讀取。
+function writeTempFileFromStream(rawRelPath, readableStream, tempExtension = '') {
   return new Promise((resolve, reject) => {
     let relPath, absPath;
     try {
       ({ relPath, absPath } = toSafeRelPath(rawRelPath));
       if (!isServableName(relPath)) throw new Error('只允許上傳音訊檔（' + SUPPORTED_EXTENSIONS.join(' ') + '）');
+      if (tempExtension && !SUPPORTED_EXTENSIONS.includes(String(tempExtension).toLowerCase())) {
+        throw new Error('不支援的音訊格式');
+      }
     } catch (err) {
       readableStream.resume(); // 把請求 body 排掉，避免連線卡住
       return reject(err);
@@ -205,8 +210,7 @@ function writeFileFromStream(rawRelPath, readableStream) {
     }
 
     fs.mkdirSync(path.dirname(absPath), { recursive: true });
-
-    const tmpPath = `${absPath}.upload_${Date.now()}_${Math.random().toString(36).slice(2, 8)}.tmp`;
+    const tmpPath = `${absPath}.upload_${Date.now()}_${Math.random().toString(36).slice(2, 8)}.tmp${tempExtension}`;
     const writer = fs.createWriteStream(tmpPath);
     const cleanupTmp = () => { try { fs.unlinkSync(tmpPath); } catch {} };
 
@@ -223,18 +227,25 @@ function writeFileFromStream(rawRelPath, readableStream) {
         cleanupTmp();
         return reject(err);
       }
+      resolve({ relPath, absPath, tmpPath });
+    });
+  });
+}
+
+function writeFileFromStream(rawRelPath, readableStream) {
+  return writeTempFileFromStream(rawRelPath, readableStream)
+    .then(({ relPath, absPath, tmpPath }) => {
       try {
         fs.renameSync(tmpPath, absPath);
-      } catch (e) {
-        cleanupTmp();
-        return reject(e);
+      } catch (err) {
+        try { fs.unlinkSync(tmpPath); } catch {}
+        throw err;
       }
       invalidateList();
       console.log(`✅ [MusicLibrary] 已寫入音樂庫: ${relPath}`);
       if (isCachePath(relPath)) scheduleEvict();
-      resolve({ relPath, absPath });
+      return { relPath, absPath };
     });
-  });
 }
 
 // ════════════════════════════════════════════════════════
@@ -319,5 +330,6 @@ module.exports = {
   listAll,
   exists,
   resolveForRead,
+  writeTempFileFromStream,
   writeFileFromStream,
 };

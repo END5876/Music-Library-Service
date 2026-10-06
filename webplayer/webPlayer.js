@@ -38,6 +38,7 @@ const online = require('../ytdlp/onlineStream');
 const { mountWebAuth } = require('./webAuth');
 const { mountOnlineRoutes } = require('./onlineRoutes');
 const { mountPlaylists } = require('./playlistRoutes');
+const { mountUploadRoutes } = require('./uploadRoutes');
 
 function mountWebPlayer(app, { store, libSecret }) {
   const auth = mountWebAuth(app, { libSecret });
@@ -91,6 +92,7 @@ function mountWebPlayer(app, { store, libSecret }) {
   mountOnlineRoutes(app, { requireWebAuth });
 
   mountPlaylists(app, { requireWebAuth, online });
+  mountUploadRoutes(app, { store, requireWebAuth });
 
   return true;
 }

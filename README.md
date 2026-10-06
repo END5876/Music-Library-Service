@@ -45,10 +45,20 @@ header（未設定 `MUSIC_LIB_SECRET` 時不驗證，僅建議在完全信任的
 | POST | `/web/logout` | 清除 Cookie |
 | GET | `/web/api/list` | 曲目清單（需登入） |
 | GET | `/web/stream/*` | 串流音檔，支援 Range（需登入） |
+| GET | `/upload?upload=1` | 受控的音檔上傳頁（需登入；未帶正確參數時不提供） |
+| POST | `/web/api/upload?upload=1` | 上傳、轉為 MP3、響度正規化後儲存（需登入） |
 | GET | `/web/api/capabilities` | `{ online }`：伺服器是否可線上串流 |
 | GET | `/web/api/search?q=` | 搜尋 YouTube + Bilibili |
 | GET | `/web/api/info?url=` | 取得影片資訊（標題、時長） |
 | GET | `/web/play?url=` | 線上播放（快取命中＝檔案；否則即時串流＋背景下載） |
+
+### 受控音檔上傳
+
+在已設定 `WEB_PLAYER_PASSWORD` 的前提下，開啟 `https://<你的公開網域>/upload?upload=1` 並登入，即可上傳 MP3、WAV、OGG、FLAC、M4A 或 AAC 音檔。未帶 `?upload=1`、值不是 `1` 或未登入時，頁面與上傳 API 都不會提供服務。
+
+上傳檔案會先寫入不會列出的暫存檔，再由 ffmpeg 轉為高品質 MP3（LAME VBR `-q:a 2`），接著沿用 `ytdlp/musicNormalizer.js` 的雙通道 EBU R128 loudnorm 處理（`-16 LUFS`、`LRA 20`、`TP -2.0`）。只有壓縮與正規化都成功後才會以原子化重新命名方式發布至音樂庫；若失敗，既有同名曲目不會被覆寫。
+
+預設儲存在 `uploads/` 子資料夾，並可於頁面中修改資料夾與曲名。這使手動上傳內容不受根目錄快取清理影響；單檔大小仍遵循 `MAX_UPLOAD_MB`（預設 `512`）。
 
 ### 線上串流（YouTube / Bilibili，yt-dlp）
 
