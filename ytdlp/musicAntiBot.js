@@ -11,6 +11,7 @@
 const fs   = require('fs');
 const path = require('path');
 const logger = require('../logger');
+const potProvider = require('./potProvider');
 
 // ════════════════════════════════════════════════════════
 //  Proxy 設定 (Cloudflare WARP)
@@ -208,6 +209,7 @@ function buildYouTubeArgs(url, strategy, streamMode = true) {
 
   args.push('--no-playlist', '--no-warnings');
   args.push(...strategy.args);
+  args.push(...potProvider.extractorArgs());
 
   if (strategy.needsPO && YT_PO_TOKEN) {
     args.push('--extractor-args', `youtube:po_token=mweb.gvs+${YT_PO_TOKEN}`);
@@ -321,6 +323,7 @@ function buildInfoArgs(url) {
 
     const strategy = YT_CLIENT_STRATEGIES.find(s => s.name === 'default') || YT_CLIENT_STRATEGIES[0];
     base.push(...strategy.args);
+    base.push(...potProvider.extractorArgs());
 
     if (strategy.name !== 'tv_simply') {
       _appendCookieArgs(base, YT_COOKIES_FILE, YT_COOKIE_HEADER);
@@ -392,5 +395,6 @@ module.exports = {
     bilibili : BILIBILI_COOKIES_FILE || BILIBILI_COOKIE_HEADER,
     youtube  : YT_COOKIES_FILE       || YT_COOKIE_HEADER,
     poToken  : YT_PO_TOKEN,
+    potProvider: potProvider.getMode(),
   }),
 };

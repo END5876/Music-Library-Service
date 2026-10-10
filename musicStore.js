@@ -22,7 +22,7 @@ const CACHE_DIR = CACHE_SUBDIR ? path.join(MUSIC_DIR, CACHE_SUBDIR) : MUSIC_DIR;
 const MAX_CACHE_SIZE_MB = parseInt(process.env.MAX_CACHE_SIZE_MB || '2048', 10);
 
 const SUPPORTED_EXTENSIONS = ['.mp3', '.wav', '.ogg', '.flac', '.m4a', '.aac'];
-const RESERVED_TOP_DIR = '.web';        // 播放清單等內部資料夾：不對外提供讀寫、不列入清單
+const RESERVED_TOP_DIR = '.web';        // 舊版播放清單資料夾：仍不對外提供讀寫、不列入清單
 const MAX_UPLOAD_MB = parseInt(process.env.MAX_UPLOAD_MB || '512', 10);
 const LIST_TTL_MS = 3000;               // listAll 結果的短暫快取
 const STALE_TMP_MS = 60 * 60 * 1000;    // 殘留暫存檔超過 1 小時視為垃圾

@@ -94,6 +94,18 @@ RUN apt-get update && apt-get install -y --no-install-recommends ffmpeg ca-certi
 
 YouTube 需要的環境變數（`WARP_PROXY_URL`、`YOUTUBE_PO_TOKEN`、cookies 檔等）和 Bot 相同，見 `.env.example`。
 
+#### PO Token 自動產生器（bgutil）
+
+專案的 Dockerfile 內建 [bgutil-ytdlp-pot-provider](https://github.com/Brainicism/bgutil-ytdlp-pot-provider)：
+server 裝在 `/opt/bgutil/server`，由 `ytdlp/potProvider.js` 在線上功能初始化時啟動（只聽 `127.0.0.1:4416`，
+掛掉會自動重啟），yt-dlp plugin 放在 `/etc/yt-dlp/plugins/`。yt-dlp 需要 PO Token 時會自動向它要，
+不必再手動更新會過期的 `YOUTUBE_PO_TOKEN`。啟動 log 的「PO Token ✓（bgutil 本機）」代表已啟用。
+
+- 想改用獨立的 bgutil 容器：設 `POT_PROVIDER_URL=http://<host>:4416`。
+- 想關閉：設 `POT_PROVIDER=0`。
+- 升級時修改 Dockerfile 的 `BGUTIL_VERSION`（server 與 plugin 版本須一致），並建議同時重建映像以更新 yt-dlp。
+- PO Token 不能解決以 IP 為準的「Sign in to confirm you're not a bot」；機房 IP 被擋時仍需要 cookies 或 `WARP_PROXY_URL`。
+
 > 瀏覽器需要連得到這個服務，所以要在幫**這個服務**綁一個公開網域。
 > Bot 之間的內部呼叫仍可走 Private Networking；公開之後請務必同時設定
 > `MUSIC_LIB_SECRET`，否則 `/api/music/*` 會對公網完全開放讀寫。
@@ -104,7 +116,7 @@ YouTube 需要的環境變數（`WARP_PROXY_URL`、`YOUTUBE_PO_TOKEN`、cookies 
 
 - 建立／重新命名／刪除播放清單；音樂庫與線上搜尋的每首歌旁有「加入播放清單」圖示（全螢幕播放頁右上角也有，加入目前這首）。
 - 清單內可移除歌曲、拖曳排序、▶ 播放／🔀 隨機播放（會依「隨機」「循環」按鈕的設定續播）。
-- 播放清單存在伺服器（`PLAYLISTS_FILE`，預設 `<MUSIC_DIR>/.web/playlists.json`），所有裝置共用；音樂庫與線上歌曲都可以放進同一份清單。
+- 播放清單存在伺服器（`PLAYLISTS_FILE`，預設 `/app/data/playlists.json`；舊版 `<MUSIC_DIR>/.web/playlists.json` 會在第一次讀取時自動複製過來），所有裝置共用；音樂庫與線上歌曲都可以放進同一份清單。
 - **離線下載**：每首歌旁的 ⬇ 可單曲下載，清單頁的「⬇ 下載離線」一鍵下載整份清單（同時最多 2 首，可取消）。檔案存在這個瀏覽器的 IndexedDB，不經過伺服器；已下載的歌曲前面會有 ✓，播放時優先使用離線檔（可拖曳進度）。Service Worker 會預快取播放器頁面、樣式、程式、PWA Manifest 與圖示；登入成功的曲目清單／播放清單採網路優先並於離線時回退至快取。登出會清除這些清單快取，但不會刪除使用者主動下載的離線曲目。正式部署需要 HTTPS。
 - 線上（YouTube / Bilibili）歌曲的離線下載走 `/web/play`：已快取就是直接傳檔案，未快取則是 ffmpeg 即時轉出的 mp3。
 
@@ -133,8 +145,9 @@ Private Networking（`<服務名稱>.internal`）呼叫這裡，不用把
 這個服務曝露到公網。
 
 1. 建一個新服務，指向這個 repo。
-2. 掛一顆 Volume 到 `MUSIC_DIR`（環境變數不設的話預設是
-   `/app/data/music`）。
+2. 掛一顆 Volume 到 `/app/data`。音樂庫在 `/app/data/music`（`MUSIC_DIR`），
+   播放清單（`playlists.json`）與 cookies（`cookies.txt`、`www.youtube.com_cookies.txt`）
+   直接放在 `/app/data`，重新部署都不會消失。
 3. 設定環境變數 `MUSIC_LIB_SECRET`（自己挑一組長字串），視需要調整
    `MAX_CACHE_SIZE_MB`。
 4. 部署完成後，記下這個服務的內部網域＋Port，給要呼叫的 Bot 服務

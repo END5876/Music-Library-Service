@@ -31,6 +31,7 @@ const { promisify } = require('util');
 
 const cache      = require('./musicCache');
 const antiBot    = require('./musicAntiBot');
+const potProvider = require('./potProvider');
 const logger     = require('../logger');
 const { cleanUrl, isAllowedUrl } = require('./urlUtils');
 const { getInfoCached, searchMulti } = require('./videoLookup');
@@ -75,13 +76,15 @@ function init() {
   if (initPromise) return initPromise;
   initPromise = (async () => {
     antiBot.initCookies();
+    potProvider.start();
     cache.ensureCacheDir();
     const [ytdlpOk, ffmpegOk] = await Promise.all([checkYtDlp(), checkFFmpeg()]);
     available = ytdlpOk && ffmpegOk;
     if (available) {
-      const { bilibili, youtube, poToken } = antiBot.getCookieStatus();
+      const { bilibili, youtube, poToken, potProvider: pot } = antiBot.getCookieStatus();
+      const potLabel = pot === 'local' ? '✓（bgutil 本機）' : pot === 'external' ? '✓（bgutil 外部）' : poToken ? '✓（固定）' : '✗';
       logger.info('OnlineMusic',
-        `網頁線上串流已就緒｜Bilibili ${bilibili ? '✓' : '✗'}、YouTube ${youtube ? '✓' : '✗（無帳號模式）'}、PO Token ${poToken ? '✓' : '✗'}`);
+        `網頁線上串流已就緒｜Bilibili ${bilibili ? '✓' : '✗'}、YouTube ${youtube ? '✓' : '✗（無帳號模式）'}、PO Token ${potLabel}`);
     } else {
       logger.warn('OnlineMusic', 'yt-dlp 或 FFmpeg 未就緒，網頁的線上搜尋／串流功能停用（音樂庫播放不受影響）');
     }

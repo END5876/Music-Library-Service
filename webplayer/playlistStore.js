@@ -3,9 +3,9 @@
 // ─────────────────────────────────────────────────────────────
 // 網頁播放器的播放清單儲存（單一 JSON 檔，同步原子寫入）。
 //
-// 檔案位置：PLAYLISTS_FILE，預設 <MUSIC_DIR>/.web/playlists.json
-//   → 放在音樂庫 Volume 內，重新部署後不會消失；副檔名不是音訊，
-//     不會出現在曲目清單，也不會被快取清理刪掉。
+// 檔案位置：PLAYLISTS_FILE，預設 <repo root>/data/playlists.json（Docker 內為 /app/data，掛 Volume）
+//   → 在音樂庫資料夾外面，不會出現在曲目清單，也不會被快取清理刪掉。
+//   舊版預設位置 <MUSIC_DIR>/.web/playlists.json：新位置還沒有檔案時，第一次讀取會自動複製過來。
 //
 // 項目格式（id 由伺服器產生，同一個播放清單內不重複歌曲）：
 //   { id, kind:'lib',    filename, title }
@@ -16,7 +16,8 @@ const path = require('path');
 const crypto = require('crypto');
 const store = require('../musicStore');
 
-const FILE = process.env.PLAYLISTS_FILE || path.join(store.MUSIC_DIR, '.web', 'playlists.json');
+const FILE = process.env.PLAYLISTS_FILE || path.join(__dirname, '..', 'data', 'playlists.json');
+const LEGACY_FILE = process.env.PLAYLISTS_FILE ? null : path.join(store.MUSIC_DIR, '.web', 'playlists.json');
 const MAX_PLAYLISTS = 100;
 const MAX_ITEMS = 2000;
 const MAX_NAME = 50;
@@ -31,6 +32,7 @@ let data = null;
 function load() {
   if (data) return data;
   data = { playlists: [] };
+  migrateLegacyFile();
   let text;
   try {
     text = fs.readFileSync(FILE, 'utf8');
@@ -48,6 +50,18 @@ function load() {
     console.error(`❌ [Playlists] JSON 解析失敗，已備份為 ${path.basename(bak)}:`, err.message);
   }
   return data;
+}
+
+// 舊位置的檔案保留不刪，當作備份
+function migrateLegacyFile() {
+  if (!LEGACY_FILE || fs.existsSync(FILE) || !fs.existsSync(LEGACY_FILE)) return;
+  try {
+    fs.mkdirSync(path.dirname(FILE), { recursive: true });
+    fs.copyFileSync(LEGACY_FILE, FILE, fs.constants.COPYFILE_EXCL);
+    console.log(`📦 [Playlists] 已將舊版播放清單 ${LEGACY_FILE} 複製到 ${FILE}`);
+  } catch (err) {
+    console.error('❌ [Playlists] 搬移舊版播放清單失敗:', err.message);
+  }
 }
 
 function save() {
