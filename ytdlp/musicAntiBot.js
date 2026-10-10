@@ -104,13 +104,8 @@ function isYouTubeUrl(url) {
   return /youtube\.com|youtu\.be/.test(url);
 }
 
+// Bilibili 只讀 .env 的 BILIBILI_*，不使用 cookies.txt（cookies.txt 只給 YouTube 用）
 function prepareBilibiliCookies() {
-  if (fs.existsSync(COOKIES_PATH)) {
-    logger.debug('Bilibili', '找到 cookies.txt');
-    BILIBILI_COOKIES_FILE  = COOKIES_PATH;
-    BILIBILI_COOKIE_HEADER = null;
-    return;
-  }
   const sessdata   = process.env.BILIBILI_SESSDATA;
   const biliJct    = process.env.BILIBILI_BILI_JCT;
   const dedeUserId = process.env.BILIBILI_DEDEUSERID;
@@ -123,7 +118,7 @@ function prepareBilibiliCookies() {
     BILIBILI_COOKIE_HEADER = parts.join('; ');
     return;
   }
-  logger.debug('Bilibili', '未找到 Cookies，播放可能失敗');
+  logger.debug('Bilibili', '未設定 BILIBILI_SESSDATA，播放可能失敗');
   BILIBILI_COOKIES_FILE  = null;
   BILIBILI_COOKIE_HEADER = null;
 }
