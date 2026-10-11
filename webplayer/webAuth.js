@@ -113,6 +113,17 @@ function mountWebAuth(app, { libSecret }) {
       rec.count += 1;
       if (!failures.has(req.ip) && failures.size >= 10000) failures.delete(failures.keys().next().value); // 上限，避免被大量不同 IP 灌爆記憶體
       failures.set(req.ip, rec);
+      // TODO(暫時)：確認反向代理鏈實際帶的 IP header，用來修正限流的 req.ip；確認完就移除。不會印出密碼。
+      console.log('[IP-DEBUG] 登入失敗 ' + JSON.stringify({
+        reqIp: req.ip,
+        socket: req.socket.remoteAddress,
+        xff: req.get('x-forwarded-for') || null,
+        cfConnectingIp: req.get('cf-connecting-ip') || null,
+        xRealIp: req.get('x-real-ip') || null,
+        xfProto: req.get('x-forwarded-proto') || null,
+        secure: req.secure,
+        count: rec.count,
+      }));
       return res.status(401).json({ error: '密碼錯誤' });
     }
 
