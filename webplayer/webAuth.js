@@ -24,6 +24,7 @@
 
 const crypto = require('crypto');
 const express = require('express');
+const { clientIp } = require('./clientIp');
 
 const COOKIE_NAME = 'ml_session';
 
@@ -55,7 +56,8 @@ function mountWebAuth(app, { libSecret }) {
   const SESSION_HOURS = Math.max(1, parseFloat(process.env.WEB_SESSION_HOURS || '168') || 168);
   const SESSION_MS = SESSION_HOURS * 3600 * 1000;
 
-  // 服務的反向代理後面：讓 req.ip / req.secure 取到真實值（只信任一層）
+  // 部署平台的反向代理後面：讓 req.secure（Cookie 的 Secure）與 req.ip 取到平台代理看到的值（只信任一層）。
+  // 限流用的使用者 IP 另外由 clientIp() 處理前面還有 Cloudflare 的情況。
   app.set('trust proxy', 1);
 
   const sign = (payload) =>
@@ -89,7 +91,7 @@ function mountWebAuth(app, { libSecret }) {
     res.status(401).json({ error: '請先登入' });
   }
 
-  // ── 登入嘗試限流（每個 IP 10 分鐘內最多 10 次失敗）──────────
+  // ── 登入嘗試限流（每個使用者 IP 10 分鐘內最多 10 次失敗；IP 的判斷見 clientIp.js）──────────
   const failures = new Map(); // ip -> { count, resetAt }
   const MAX_FAILS = 10;
   const WINDOW_MS = 10 * 60 * 1000;
@@ -101,7 +103,8 @@ function mountWebAuth(app, { libSecret }) {
   // 只有這條路由解析 JSON body，音樂庫的 PUT 上傳仍是原始串流
   app.post('/web/login', express.json({ limit: '2kb' }), (req, res) => {
     const now = Date.now();
-    let rec = failures.get(req.ip);
+    const ip = clientIp(req);
+    let rec = failures.get(ip);
     if (!rec || rec.resetAt <= now) rec = { count: 0, resetAt: now + WINDOW_MS };
     if (rec.count >= MAX_FAILS) {
       res.set('Retry-After', String(Math.ceil((rec.resetAt - now) / 1000)));
@@ -111,23 +114,12 @@ function mountWebAuth(app, { libSecret }) {
     const password = req.body && typeof req.body.password === 'string' ? req.body.password : '';
     if (!password || !safeEqual(password, PASSWORD)) {
       rec.count += 1;
-      if (!failures.has(req.ip) && failures.size >= 10000) failures.delete(failures.keys().next().value); // 上限，避免被大量不同 IP 灌爆記憶體
-      failures.set(req.ip, rec);
-      // TODO(暫時)：確認反向代理鏈實際帶的 IP header，用來修正限流的 req.ip；確認完就移除。不會印出密碼。
-      console.log('[IP-DEBUG] 登入失敗 ' + JSON.stringify({
-        reqIp: req.ip,
-        socket: req.socket.remoteAddress,
-        xff: req.get('x-forwarded-for') || null,
-        cfConnectingIp: req.get('cf-connecting-ip') || null,
-        xRealIp: req.get('x-real-ip') || null,
-        xfProto: req.get('x-forwarded-proto') || null,
-        secure: req.secure,
-        count: rec.count,
-      }));
+      if (!failures.has(ip) && failures.size >= 10000) failures.delete(failures.keys().next().value); // 上限，避免被大量不同 IP 灌爆記憶體
+      failures.set(ip, rec);
       return res.status(401).json({ error: '密碼錯誤' });
     }
 
-    failures.delete(req.ip);
+    failures.delete(ip);
     res.set('Set-Cookie', cookieString(req, issueToken(), Math.floor(SESSION_MS / 1000)));
     res.json({ ok: true });
   });
