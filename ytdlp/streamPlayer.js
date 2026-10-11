@@ -8,6 +8,7 @@
 
 const { spawn } = require('child_process');
 const path = require('path');
+const { spawnTree, isAlive, killTree } = require('./procTree');
 
 const cache      = require('./musicCache');
 const antiBot    = require('./musicAntiBot');
@@ -37,13 +38,13 @@ function cleanupProcess(ctx) {
   if (!procs) return;
   ctx.procs = null; // 先解除關聯，讓舊進程的 close/data 事件全部失效
   console.log('🧹 清理舊的 yt-dlp 進程');
-  for (const [proc, force] of [[procs.ytdlp, true], [procs.ffmpeg, false]]) {
-    if (!proc || proc.killed) continue;
-    try {
-      proc.kill(force ? 'SIGTERM' : 'SIGKILL');
-      if (force) setTimeout(() => { try { if (!proc.killed) proc.kill('SIGKILL'); } catch {} }, 1000);
-    } catch {}
+  // yt-dlp（含它自己開的 ffmpeg）先 SIGTERM，1 秒後還活著就 SIGKILL；轉檔用的 ffmpeg 直接 SIGKILL
+  const { ytdlp, ffmpeg } = procs;
+  if (isAlive(ytdlp)) {
+    killTree(ytdlp, 'SIGTERM');
+    setTimeout(() => killTree(ytdlp, 'SIGKILL'), 1000).unref();
   }
+  if (isAlive(ffmpeg)) { try { ffmpeg.kill('SIGKILL'); } catch {} }
 }
 
 // ════════════════════════════════════════════════════════
@@ -170,7 +171,7 @@ function _fallbackStream(ctx, retryCount) {
     streamArgs = antiBot.buildBilibiliArgs(item.url, true);
   }
 
-  const ytdlp = spawn(ytdlpPath, streamArgs, {
+  const ytdlp = spawnTree(ytdlpPath, streamArgs, {
     stdio: ['ignore', 'pipe', 'pipe'],
     windowsHide: true,
   });
@@ -263,7 +264,7 @@ function _fallbackStream(ctx, retryCount) {
     } else if (dataReceived || code !== 0) {
       // yt-dlp 有輸出資料但 ffmpeg 一個位元組都沒產出（格式無法解碼等）
       mine.done = true;
-      try { ytdlp.kill('SIGKILL'); } catch {}
+      killTree(ytdlp, 'SIGKILL');
       _handleStreamError(ctx, retryCount, `ffmpeg 轉檔失敗 (code ${code})`);
     }
     // 否則交給 yt-dlp 的 close 事件判斷（含 client 輪換）
@@ -272,7 +273,7 @@ function _fallbackStream(ctx, retryCount) {
   ffmpeg.on('error', err => {
     if (stale() || mine.done) return;
     mine.done = true;
-    try { ytdlp.kill('SIGKILL'); } catch {}
+    killTree(ytdlp, 'SIGKILL');
     _handleStreamError(ctx, retryCount, `執行 ffmpeg 失敗: ${err.message}`);
   });
 }

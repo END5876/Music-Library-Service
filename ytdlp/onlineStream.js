@@ -36,6 +36,7 @@ const logger     = require('../logger');
 const { cleanUrl, isAllowedUrl } = require('./urlUtils');
 const { getInfoCached, searchMulti } = require('./videoLookup');
 const { playStream, cleanupProcess, WEB_KEY } = require('./streamPlayer');
+const { killTree } = require('./procTree');
 
 const execAsync = promisify(exec);
 const ytdlpPath = 'yt-dlp';
@@ -140,9 +141,8 @@ process.on('exit', () => {
   for (const ctx of activeCtxs) {
     const p = ctx.procs;
     if (!p) continue;
-    for (const proc of [p.ytdlp, p.ffmpeg]) {
-      try { if (proc && !proc.killed) proc.kill('SIGKILL'); } catch {}
-    }
+    killTree(p.ytdlp, 'SIGKILL');
+    killTree(p.ffmpeg, 'SIGKILL');
   }
 });
 

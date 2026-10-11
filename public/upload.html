@@ -53,7 +53,7 @@ a { color:#e7ce68; }
       <label>儲存資料夾
         <input id="folder" type="text" maxlength="200" placeholder="留空＝音樂庫根目錄" autocomplete="off">
       </label>
-      <p class="note">留空會直接存到 MUSIC_DIR（例如 <code>/data/music</code>）；填寫時才存入該子資料夾。</p>
+      <p class="note">留空會直接存到 MUSIC_DIR（例如 <code>/data/music</code>）；填寫時才存入該子資料夾。<br>根目錄的檔案會被當成快取，空間不足時可能被自動清除；要長期保存請填寫資料夾（例如 <code>uploads</code>）。</p>
       <div class="progress" aria-hidden="true"><i id="bar"></i></div>
       <div class="actions"><button id="submit" type="submit">上傳並處理</button><span id="status" class="status" role="status" aria-live="polite"></span></div>
     </form>

@@ -15,10 +15,10 @@ FROM node:22-slim
 
 ENV NODE_ENV=production
 
-# 安裝 ffmpeg、python3(yt-dlp 執行需要)、curl
+# 安裝 ffmpeg、python3(yt-dlp 執行需要)、curl、tini(PID 1：轉送訊號並回收孤兒子行程)
 RUN apt-get update && \
     apt-get install -y --no-install-recommends \
-      ffmpeg python3 curl ca-certificates && \
+      ffmpeg python3 curl ca-certificates tini && \
     curl -fL https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp \
       -o /usr/local/bin/yt-dlp && \
     chmod a+rx /usr/local/bin/yt-dlp && \
@@ -37,4 +37,6 @@ COPY . .
 
 EXPOSE 4100
 
+# node 當 PID 1 不會回收孫行程（例如 yt-dlp 被砍後留下的 ffmpeg），交給 tini 處理
+ENTRYPOINT ["/usr/bin/tini", "--"]
 CMD ["node", "server.js"]

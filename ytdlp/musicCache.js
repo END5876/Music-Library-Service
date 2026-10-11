@@ -8,7 +8,7 @@
 //      下載完成的檔案就已經在共用音樂庫裡了，其他 Bot 下次 checkExists 就會命中。
 //   2. 檔名格式 getCacheFilename() 與 Bot 完全相同，因此 Bot 與網頁彼此的快取會互相命中。
 
-const { spawn } = require('child_process');
+const { spawnTree, killTree } = require('./procTree');
 const fs   = require('fs');
 const path = require('path');
 const logger = require('../logger');
@@ -75,7 +75,7 @@ function downloadAndCache(url, title, ytdlpArgs, onProgress) {
       ? 'YouTube' : 'Bilibili';
 
     console.log(`⬇️ [${platform}] 開始下載: ${filename}`);
-    const ytdlp = spawn(ytdlpPath, finalArgs, { windowsHide: true });
+    const ytdlp = spawnTree(ytdlpPath, finalArgs, { windowsHide: true });
 
     let errorOutput = '';
     const appendErr = (line) => { errorOutput = (errorOutput + line).slice(-4000); }; // 只留尾端，避免長時間下載無限累積
@@ -92,7 +92,7 @@ function downloadAndCache(url, title, ytdlpArgs, onProgress) {
 
     const timer = setTimeout(() => {
       console.warn(`⚠️ [${platform}] 下載逾時（${DOWNLOAD_TIMEOUT_MS / 60000} 分鐘），強制終止: ${filename}`);
-      try { ytdlp.kill('SIGKILL'); } catch {}
+      killTree(ytdlp, 'SIGKILL'); // 連同 yt-dlp 轉檔用的 ffmpeg 一起終止
     }, DOWNLOAD_TIMEOUT_MS);
 
     ytdlp.on('error', err => { clearTimeout(timer); reject(new Error('執行 yt-dlp 失敗: ' + err.message)); });
