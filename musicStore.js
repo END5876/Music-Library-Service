@@ -105,6 +105,16 @@ async function walkFiles(dir, depth = 0) {
   return out;
 }
 
+// 分批並行 stat，避免數千首時一次開太多 fd，也不會同步卡住 event loop。
+// 回傳與 paths 同順序的 stat 結果；掃描途中被刪除的檔案為 null。
+async function statBatched(paths, batchSize = 64) {
+  const out = [];
+  for (let i = 0; i < paths.length; i += batchSize) {
+    out.push(...await Promise.all(paths.slice(i, i + batchSize).map(fp => fsp.stat(fp).catch(() => null))));
+  }
+  return out;
+}
+
 // ════════════════════════════════════════════════════════
 //  清單 / 存在檢查 / 讀取
 //  ★ 不含播放次數：每台呼叫端 Bot 各自計算自己的播放次數，
@@ -122,24 +132,20 @@ async function scanLibrary() {
     .filter(fp => SUPPORTED_EXTENSIONS.includes(path.extname(fp).toLowerCase()));
 
   const out = [];
-  // 分批並行 stat，避免數千首時一次開太多 fd，也不再同步卡住 event loop
-  for (let i = 0; i < allFiles.length; i += 64) {
-    const batch = allFiles.slice(i, i + 64);
-    const stats = await Promise.all(batch.map(fp => fsp.stat(fp).catch(() => null)));
-    batch.forEach((fp, k) => {
-      const stat = stats[k];
-      if (!stat) return; // 掃描途中被刪除（快取清理）
-      const relPath = normalizeSlashes(path.relative(MUSIC_DIR, fp));
-      const baseName = path.basename(fp, path.extname(fp));
-      const sourcePrefix = relPath.includes('/') ? `[${relPath.split('/')[0]}] ` : '';
-      out.push({
-        filename: relPath,
-        name: cleanDisplayName(`${sourcePrefix}${baseName}`),
-        size: stat.size,
-        mtimeMs: stat.mtimeMs,
-      });
+  const stats = await statBatched(allFiles);
+  allFiles.forEach((fp, k) => {
+    const stat = stats[k];
+    if (!stat) return; // 掃描途中被刪除（快取清理）
+    const relPath = normalizeSlashes(path.relative(MUSIC_DIR, fp));
+    const baseName = path.basename(fp, path.extname(fp));
+    const sourcePrefix = relPath.includes('/') ? `[${relPath.split('/')[0]}] ` : '';
+    out.push({
+      filename: relPath,
+      name: cleanDisplayName(`${sourcePrefix}${baseName}`),
+      size: stat.size,
+      mtimeMs: stat.mtimeMs,
     });
-  }
+  });
   const collator = new Intl.Collator('zh-Hant');
   return out.sort((a, b) => collator.compare(a.name, b.name));
 }
@@ -172,14 +178,17 @@ async function exists(rawRelPath) {
   }
 }
 
+// 只做路徑檢查，不 stat：檔案存不存在交給 res.sendFile（它本來就會 stat），
+// 失敗時呼叫端用 isNotFoundError() 判斷要不要回 404。
+// 這樣每個 Range 請求（拖曳進度）不必再多一次同步 stat 卡住 event loop。
 function resolveForRead(rawRelPath) {
   const { relPath, absPath } = toSafeRelPath(rawRelPath);
-  if (!isServableName(relPath)) return null;
-  try {
-    return fs.statSync(absPath).isFile() ? absPath : null;
-  } catch {
-    return null;
-  }
+  return isServableName(relPath) ? absPath : null;
+}
+
+// res.sendFile 的錯誤是否代表「沒有這個檔案」（不存在、路徑中段不是資料夾、目標是資料夾）
+function isNotFoundError(err) {
+  return !!err && (err.status === 404 || ['ENOENT', 'ENOTDIR', 'EISDIR'].includes(err.code));
 }
 
 // ════════════════════════════════════════════════════════
@@ -254,38 +263,55 @@ function writeFileFromStream(rawRelPath, readableStream) {
 //  - 只處理音訊副檔名：.gitkeep、說明文件、.part 殘留檔等不會被刪
 //  - 排除暫存檔：避免把正在下載／正規化／上傳的檔案當成舊檔刪掉
 // ════════════════════════════════════════════════════════
-function evictCacheIfNeeded() {
+// 全部用非同步 I/O：曲目多時同步 readdir + 逐檔 stat 會卡住 event loop，讓同時進行的串流斷斷續續
+async function evictOnce() {
+  let entries;
   try {
-    if (!fs.existsSync(CACHE_DIR)) return;
-
-    const files = [];
-    for (const d of fs.readdirSync(CACHE_DIR, { withFileTypes: true })) {
-      if (!d.isFile() || isTempName(d.name)
-          || !SUPPORTED_EXTENSIONS.includes(path.extname(d.name).toLowerCase())) continue;
-      const fp = path.join(CACHE_DIR, d.name);
-      try {
-        const stat = fs.statSync(fp);
-        files.push({ fp, mtime: stat.mtimeMs, size: stat.size });
-      } catch { /* 掃描途中被刪除，略過 */ }
-    }
-    files.sort((a, b) => a.mtime - b.mtime); // 最舊排前面
-
-    let totalMB = files.reduce((sum, f) => sum + f.size, 0) / 1024 / 1024;
-    let removed = 0;
-
-    while (totalMB > MAX_CACHE_SIZE_MB && files.length > 0) {
-      const oldest = files.shift();
-      try { fs.unlinkSync(oldest.fp); } catch (err) {
-        if (err.code !== 'ENOENT') console.error('❌ [MusicLibrary] 刪除舊檔失敗:', err.message);
-      }
-      totalMB -= oldest.size / 1024 / 1024;
-      removed++;
-      console.log(`🗑️ [MusicLibrary] 快取已滿，刪除舊檔: ${path.basename(oldest.fp)}`);
-    }
-    if (removed) invalidateList();
+    entries = await fsp.readdir(CACHE_DIR, { withFileTypes: true });
   } catch (err) {
-    console.error('❌ [MusicLibrary] 快取清理失敗:', err);
+    if (err.code !== 'ENOENT') console.error('❌ [MusicLibrary] 快取清理失敗:', err);
+    return;
   }
+
+  const paths = entries
+    .filter(d => d.isFile() && !isTempName(d.name)
+      && SUPPORTED_EXTENSIONS.includes(path.extname(d.name).toLowerCase()))
+    .map(d => path.join(CACHE_DIR, d.name));
+  const stats = await statBatched(paths);
+  const files = [];
+  paths.forEach((fp, k) => {
+    if (stats[k]) files.push({ fp, mtime: stats[k].mtimeMs, size: stats[k].size }); // null = 掃描途中被刪除，略過
+  });
+  files.sort((a, b) => a.mtime - b.mtime); // 最舊排前面
+
+  let totalMB = files.reduce((sum, f) => sum + f.size, 0) / 1024 / 1024;
+  let removed = 0;
+
+  while (totalMB > MAX_CACHE_SIZE_MB && files.length > 0) {
+    const oldest = files.shift();
+    try { await fsp.unlink(oldest.fp); } catch (err) {
+      if (err.code !== 'ENOENT') console.error('❌ [MusicLibrary] 刪除舊檔失敗:', err.message);
+    }
+    totalMB -= oldest.size / 1024 / 1024;
+    removed++;
+    console.log(`🗑️ [MusicLibrary] 快取已滿，刪除舊檔: ${path.basename(oldest.fp)}`);
+  }
+  if (removed) invalidateList();
+}
+
+// 同一時間只跑一份；執行期間又被要求時，結束後再補跑一次（確保看得到期間新增的檔案）。
+// 回傳的 Promise 不會 reject，呼叫端可以不 await。
+let evictRunning = null;
+let evictAgain = false;
+function evictCacheIfNeeded() {
+  if (evictRunning) { evictAgain = true; return evictRunning; }
+  evictRunning = evictOnce()
+    .catch((err) => console.error('❌ [MusicLibrary] 快取清理失敗:', err))
+    .finally(() => {
+      evictRunning = null;
+      if (evictAgain) { evictAgain = false; evictCacheIfNeeded(); }
+    });
+  return evictRunning;
 }
 
 // 批次上傳（例如搬移音樂庫）時每個檔案都掃一次整個資料夾是 O(n²)，合併成一次
@@ -330,6 +356,7 @@ module.exports = {
   listAll,
   exists,
   resolveForRead,
+  isNotFoundError,
   writeTempFileFromStream,
   writeFileFromStream,
 };

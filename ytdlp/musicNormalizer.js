@@ -14,6 +14,11 @@ const TARGET_LUFS = -16;   // -t -16
 const TARGET_LRA  = 20;    // -lrt 20
 const TARGET_TP   = -2.0;  // 未指定 -tp 時，ffmpeg-normalize 於 ebu 模式的預設值
 
+// 上傳用：只取第一條音軌（忽略封面圖等視訊串流），輸出 LAME VBR -q:a 2
+const MP3_SELECT = ['-map', '0:a:0', '-vn'];
+const MP3_ENCODE = ['-c:a', 'libmp3lame', '-q:a', '2'];
+
+// 所有 ffmpeg 響度工作（背景下載的正規化、網頁上傳）共用同一個並行上限
 const MAX_CONCURRENT = 2;
 let running = 0;
 const queue = [];
@@ -21,8 +26,8 @@ const queue = [];
 function _runNext() {
   if (running >= MAX_CONCURRENT || queue.length === 0) return;
   running++;
-  const { filePath, resolve, reject } = queue.shift();
-  _normalizeOne(filePath)
+  const { task, resolve, reject } = queue.shift();
+  task()
     .then(resolve, reject)
     .finally(() => {
       running--;
@@ -30,15 +35,30 @@ function _runNext() {
     });
 }
 
+function _enqueue(task) {
+  return new Promise((resolve, reject) => {
+    queue.push({ task, resolve, reject });
+    _runNext();
+  });
+}
+
 /**
  * 成功：覆蓋原檔案，resolve(filePath)
  * 失敗：保留原檔案不動，reject(err)（呼叫端應 catch 但不中斷主流程）
  */
 function normalizeAudioFile(filePath) {
-  return new Promise((resolve, reject) => {
-    queue.push({ filePath, resolve, reject });
-    _runNext();
-  });
+  return _enqueue(() => _normalizeOne(filePath));
+}
+
+/**
+ * 網頁上傳用：直接分析原始檔的響度，套用 loudnorm 的同一次就編碼成 MP3。
+ * （以前是「先轉 MP3 → 分析 → 再重新編碼一次」：多跑一次 ffmpeg，還多一次有損壓縮）
+ * 成功：寫出 outputPath；失敗：reject(err)，由呼叫端清理暫存檔
+ */
+function normalizeToMp3(inputPath, outputPath) {
+  return _enqueue(() =>
+    _analyzeLoudness(inputPath, MP3_SELECT)
+      .then((measured) => _applyLoudnorm(inputPath, outputPath, measured, [...MP3_SELECT, ...MP3_ENCODE])));
 }
 
 function _normalizeOne(filePath) {
@@ -72,11 +92,12 @@ function _normalizeOne(filePath) {
   });
 }
 
-function _analyzeLoudness(filePath) {
+function _analyzeLoudness(filePath, outputArgs = []) {
   return new Promise((resolve, reject) => {
     const args = [
       '-hide_banner', '-nostats',
       '-i', filePath,
+      ...outputArgs,
       '-af', `loudnorm=I=${TARGET_LUFS}:LRA=${TARGET_LRA}:TP=${TARGET_TP}:print_format=json`,
       '-f', 'null', '-',
     ];
@@ -101,7 +122,7 @@ function _analyzeLoudness(filePath) {
   });
 }
 
-function _applyLoudnorm(inputPath, outputPath, measured) {
+function _applyLoudnorm(inputPath, outputPath, measured, outputArgs = []) {
   return new Promise((resolve, reject) => {
     const af =
       `loudnorm=I=${TARGET_LUFS}:LRA=${TARGET_LRA}:TP=${TARGET_TP}:` +
@@ -112,6 +133,7 @@ function _applyLoudnorm(inputPath, outputPath, measured) {
     const args = [
       '-hide_banner', '-nostats', '-y',
       '-i', inputPath,
+      ...outputArgs,
       '-af', af,
       outputPath,
     ];
@@ -131,6 +153,7 @@ function _applyLoudnorm(inputPath, outputPath, measured) {
 
 module.exports = {
   normalizeAudioFile,
+  normalizeToMp3,
   TARGET_LUFS,
   TARGET_LRA,
   TARGET_TP,

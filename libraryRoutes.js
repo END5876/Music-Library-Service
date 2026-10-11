@@ -61,6 +61,7 @@ function mountLibraryRoutes(app, { store, secret }) {
       if (!absPath) return res.status(404).json({ error: '找不到檔案' });
       res.sendFile(absPath, (err) => {
         if (err && !res.headersSent) {
+          if (store.isNotFoundError(err)) return res.status(404).json({ error: '找不到檔案' });
           console.error('❌ [MusicLibrary] 下載檔案失敗:', err.message);
           res.status(500).json({ error: '下載檔案失敗' });
         }

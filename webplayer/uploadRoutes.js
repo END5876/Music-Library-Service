@@ -1,9 +1,8 @@
 'use strict';
 // webplayer/uploadRoutes.js
 // 僅供已登入網頁使用的手動音檔上傳。入口及 API 都必須帶 ?upload=1，
-// 並將檔案統一壓縮成 MP3，接著沿用 musicNormalizer 的雙通道 loudnorm。
+// 並沿用 musicNormalizer 的雙通道 loudnorm，在套用正規化的同一次統一編碼成 MP3。
 
-const { spawn } = require('child_process');
 const fs = require('fs');
 const path = require('path');
 const normalizer = require('../ytdlp/musicNormalizer');
@@ -42,27 +41,6 @@ function audioExtension(filename) {
   return ['.mp3', '.wav', '.ogg', '.flac', '.m4a', '.aac'].includes(ext) ? ext : '';
 }
 
-function transcodeToMp3(inputPath, outputPath) {
-  return new Promise((resolve, reject) => {
-    const ff = spawn('ffmpeg', [
-      '-hide_banner', '-nostats', '-y',
-      '-i', inputPath,
-      '-map', '0:a:0',
-      '-vn',
-      '-c:a', 'libmp3lame',
-      '-q:a', '2',
-      outputPath,
-    ]);
-    let stderr = '';
-    ff.stderr.on('data', (d) => { stderr = (stderr + d.toString()).slice(-4000); });
-    ff.on('error', (err) => reject(new Error('無法啟動音訊轉檔：' + err.message)));
-    ff.on('close', (code) => {
-      if (code === 0) resolve();
-      else reject(new Error(`音訊壓縮失敗 (code ${code})：${stderr.slice(-500)}`));
-    });
-  });
-}
-
 function mountUploadRoutes(app, { store, requireWebAuth }) {
   app.get('/upload', (req, res, next) => {
     if (!isUploadEnabled(req)) return next();
@@ -91,8 +69,7 @@ function mountUploadRoutes(app, { store, requireWebAuth }) {
         tempInputPath = staged.tmpPath;
         tempOutputPath = `${staged.absPath}.transcode_${Date.now()}_${Math.random().toString(36).slice(2, 8)}.tmp${OUTPUT_EXTENSION}`;
 
-        await transcodeToMp3(tempInputPath, tempOutputPath);
-        await normalizer.normalizeAudioFile(tempOutputPath);
+        await normalizer.normalizeToMp3(tempInputPath, tempOutputPath);
         fs.renameSync(tempOutputPath, staged.absPath);
         fs.unlinkSync(tempInputPath);
         store.invalidateList();

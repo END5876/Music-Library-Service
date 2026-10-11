@@ -120,12 +120,14 @@ async function normalizeItem(raw, { isAllowedUrl, cleanUrl }) {
   return null;
 }
 
+// 分批並行驗證（lib 項目每首都要 stat 一次，2000 首依序做會很慢），結果維持原本的順序
 async function normalizeMany(rawItems, deps) {
   if (!Array.isArray(rawItems)) return [];
+  const list = rawItems.slice(0, MAX_ADD_PER_REQUEST);
   const out = [];
-  for (const raw of rawItems.slice(0, MAX_ADD_PER_REQUEST)) {
-    const it = await normalizeItem(raw, deps);
-    if (it) out.push(it);
+  for (let i = 0; i < list.length; i += 64) {
+    const batch = await Promise.all(list.slice(i, i + 64).map((raw) => normalizeItem(raw, deps)));
+    for (const it of batch) if (it) out.push(it);
   }
   return out;
 }

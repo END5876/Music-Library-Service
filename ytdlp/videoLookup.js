@@ -55,7 +55,7 @@ async function getInfo(url) {
     }, GET_INFO_TIMEOUT_MS);
 
     ytdlp.stdout.on('data', c => { data      += c.toString(); });
-    ytdlp.stderr.on('data', c => { errorData += c.toString(); });
+    ytdlp.stderr.on('data', c => { errorData = (errorData + c.toString()).slice(-8000); }); // 只留尾端（錯誤分類只看關鍵字）
 
     ytdlp.on('close', code => {
       if (finished) return;
@@ -156,7 +156,7 @@ function _searchOnePlatform(searchPrefix, keyword, limit, fast = false) {
     }, timeoutMs);
 
     ytdlp.stdout.on('data', c => { data      += c.toString(); });
-    ytdlp.stderr.on('data', c => { errorData += c.toString(); });
+    ytdlp.stderr.on('data', c => { errorData = (errorData + c.toString()).slice(-8000); }); // 只留尾端（錯誤分類只看關鍵字）
 
     ytdlp.on('close', code => {
       if (finished) return;
