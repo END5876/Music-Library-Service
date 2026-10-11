@@ -6,6 +6,7 @@
 const fs = require('fs');
 const path = require('path');
 const normalizer = require('../ytdlp/musicNormalizer');
+const { SUPPORTED_EXTENSIONS } = require('../musicStore');
 
 const OUTPUT_EXTENSION = '.mp3';
 const UPLOAD_FLAG = 'upload';
@@ -38,7 +39,7 @@ function sanitizeFolder(value) {
 
 function audioExtension(filename) {
   const ext = path.extname(String(filename || '')).toLowerCase();
-  return ['.mp3', '.wav', '.ogg', '.flac', '.m4a', '.aac'].includes(ext) ? ext : '';
+  return SUPPORTED_EXTENSIONS.includes(ext) ? ext : '';
 }
 
 function mountUploadRoutes(app, { store, requireWebAuth }) {
@@ -53,13 +54,14 @@ function mountUploadRoutes(app, { store, requireWebAuth }) {
   app.post('/web/api/upload', (req, res, next) => {
     if (!isUploadEnabled(req)) return next();
     return requireWebAuth(req, res, async () => {
-      const originalName = decodeUploadHeader(req.get('x-upload-filename'));
-      const originalExtension = audioExtension(originalName);
       let finalRelPath;
       let tempInputPath;
       let tempOutputPath;
 
+      // 解碼也要在 try 裡：這是 async 函式，丟出去的例外會變成沒人處理的 rejection，讓整個服務行程結束
       try {
+        const originalName = decodeUploadHeader(req.get('x-upload-filename'));
+        const originalExtension = audioExtension(originalName);
         if (!originalExtension) throw new Error('只允許上傳 MP3、WAV、OGG、FLAC、M4A 或 AAC 音檔');
         const title = sanitizeFilename(req.get('x-upload-title') || originalName);
         const folder = sanitizeFolder(req.get('x-upload-folder'));

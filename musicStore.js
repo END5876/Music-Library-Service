@@ -347,8 +347,8 @@ async function cleanupStaleTemps(dir = MUSIC_DIR, depth = 0) {
 
 module.exports = {
   MUSIC_DIR,
-  CACHE_SUBDIR,
   CACHE_DIR,
+  SUPPORTED_EXTENSIONS,
   MAX_CACHE_SIZE_MB,
   evictCacheIfNeeded,
   invalidateList,

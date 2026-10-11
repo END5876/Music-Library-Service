@@ -14,8 +14,6 @@ const cache      = require('./musicCache');
 const antiBot    = require('./musicAntiBot');
 const normalizer = require('./musicNormalizer');
 
-const ytdlpPath = 'yt-dlp';
-
 // ── 重試配置（同 Bot）────────────────────────────────────
 const MAX_RETRIES            = 3;
 const RETRY_DELAY            = 3000;
@@ -89,11 +87,7 @@ async function playStream(ctx, retryCount = 0) {
         console.log(`⬇️ [${platform}] 背景開始下載快取...`);
 
         const dlArgs = antiBot.isYouTubeUrl(item.url)
-          ? antiBot.buildYouTubeArgs(
-              item.url,
-              antiBot.YT_CLIENT_STRATEGIES.find(s => s.name === 'default') || antiBot.YT_CLIENT_STRATEGIES[0],
-              false,
-            )
+          ? antiBot.buildYouTubeArgs(item.url, antiBot.DEFAULT_YT_STRATEGY, false)
           : antiBot.buildBilibiliArgs(item.url, false);
 
         let lastProgress = 0;
@@ -171,7 +165,7 @@ function _fallbackStream(ctx, retryCount) {
     streamArgs = antiBot.buildBilibiliArgs(item.url, true);
   }
 
-  const ytdlp = spawnTree(ytdlpPath, streamArgs, {
+  const ytdlp = spawnTree(antiBot.YTDLP_PATH, streamArgs, {
     stdio: ['ignore', 'pipe', 'pipe'],
     windowsHide: true,
   });

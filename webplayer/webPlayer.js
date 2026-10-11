@@ -13,24 +13,16 @@
 //
 // 環境變數：見 webAuth.js（WEB_PLAYER_PASSWORD / WEB_SESSION_SECRET / WEB_SESSION_HOURS）
 //
-// 這個檔案只負責組裝與曲目清單／靜態頁／音檔串流；其餘拆在同資料夾：
+// 這個檔案只負責組裝與曲目清單／靜態頁／音檔串流；其餘拆在同資料夾（各檔開頭有自己的路由說明，完整清單見 README）：
 //   webAuth.js         登入、Cookie、限流（POST /web/login、/web/logout）
 //   onlineRoutes.js    線上串流 API（/web/api/capabilities|search|info、/web/play）
 //   playlistRoutes.js  播放清單 API（/web/api/playlists/*）
+//   uploadRoutes.js    受控音檔上傳（/upload?upload=1、/web/api/upload?upload=1）
 //
-// 路由：
+// 本檔路由：
 //   GET  /player             播放器頁面（純靜態，不含任何音樂庫資料）
-//   POST /web/login          { password } → 設定 Cookie
-//   POST /web/logout         清除 Cookie
 //   GET  /web/api/list       曲目清單（需登入）
 //   GET  /web/stream/*       串流音檔，支援 Range 拖曳進度（需登入）
-//
-// 線上串流（YouTube / Bilibili，需要伺服器有 yt-dlp 與 ffmpeg；沒有就自動停用，不影響上面的功能）：
-//   GET  /web/api/capabilities   { online: true|false }
-//   GET  /web/api/search?q=      同時搜尋 YouTube + Bilibili
-//   GET  /web/api/info?url=      取得影片資訊（標題／時長）
-//   GET  /web/play?url=          播放：快取命中→檔案（可拖曳）；否則 yt-dlp 即時串流＋背景下載快取
-//   WEB_ONLINE=0 可強制關閉線上串流。
 
 const path = require('path');
 const express = require('express');

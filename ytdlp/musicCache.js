@@ -3,7 +3,7 @@
 // 職責：快取資料夾管理、檔名產生、快取讀寫、大小控制、下載執行
 //
 // 與 Bot 版本的差異（僅此兩點）：
-//   1. 這個服務「本身就是」共用音樂庫，所以快取資料夾直接是 <MUSIC_DIR>/cache，
+//   1. 這個服務「本身就是」共用音樂庫，所以快取直接放在 MUSIC_DIR 根目錄第一層（見 musicStore.CACHE_DIR），
 //      不需要（也沒有）musicLibraryClient 的「向共用音樂庫查詢／上傳」——
 //      下載完成的檔案就已經在共用音樂庫裡了，其他 Bot 下次 checkExists 就會命中。
 //   2. 檔名格式 getCacheFilename() 與 Bot 完全相同，因此 Bot 與網頁彼此的快取會互相命中。
@@ -12,12 +12,11 @@ const { spawnTree, killTree } = require('./procTree');
 const fs   = require('fs');
 const path = require('path');
 const logger = require('../logger');
+const { isYouTubeUrl, YTDLP_PATH } = require('./musicAntiBot');
 const { CACHE_DIR, MAX_CACHE_SIZE_MB, evictCacheIfNeeded, invalidateList } = require('../musicStore');
 
 // 單一下載的最長時間；yt-dlp 卡死時強制終止，否則下載鎖（downloadingUrls）永遠不會釋放
 const DOWNLOAD_TIMEOUT_MS = 15 * 60 * 1000;
-
-const ytdlpPath = 'yt-dlp';
 
 function ensureCacheDir() {
   if (!fs.existsSync(CACHE_DIR)) {
@@ -71,11 +70,10 @@ function downloadAndCache(url, title, ytdlpArgs, onProgress) {
 
     const finalArgs = ytdlpArgs.map(a => a === '__OUTPUT__' ? tmpBase : a);
 
-    const platform = url.includes('youtube.com') || url.includes('youtu.be')
-      ? 'YouTube' : 'Bilibili';
+    const platform = isYouTubeUrl(url) ? 'YouTube' : 'Bilibili';
 
     console.log(`⬇️ [${platform}] 開始下載: ${filename}`);
-    const ytdlp = spawnTree(ytdlpPath, finalArgs, { windowsHide: true });
+    const ytdlp = spawnTree(YTDLP_PATH, finalArgs, { windowsHide: true });
 
     let errorOutput = '';
     const appendErr = (line) => { errorOutput = (errorOutput + line).slice(-4000); }; // 只留尾端，避免長時間下載無限累積

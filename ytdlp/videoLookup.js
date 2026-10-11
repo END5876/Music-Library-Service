@@ -7,8 +7,6 @@ const { spawn } = require('child_process');
 const antiBot = require('./musicAntiBot');
 const { isAllowedUrl } = require('./urlUtils');
 
-const ytdlpPath = 'yt-dlp';
-
 // ── 搜尋／getInfo 逾時保護（同 Bot）──────────────────────
 const SEARCH_TIMEOUT_MS_YT   = 15_000;
 const SEARCH_TIMEOUT_MS_BILI = 25_000;
@@ -42,7 +40,7 @@ function formatDuration(seconds) {
 async function getInfo(url) {
   return new Promise((resolve, reject) => {
     const args  = antiBot.buildInfoArgs(url);
-    const ytdlp = spawn(ytdlpPath, args);
+    const ytdlp = spawn(antiBot.YTDLP_PATH, args);
     let data = '', errorData = '';
     let finished = false;
 
@@ -143,7 +141,7 @@ function _searchOnePlatform(searchPrefix, keyword, limit, fast = false) {
     args.push(query);
 
     const timeoutMs = isYT ? SEARCH_TIMEOUT_MS_YT : SEARCH_TIMEOUT_MS_BILI;
-    const ytdlp = spawn(ytdlpPath, args, { windowsHide: true });
+    const ytdlp = spawn(antiBot.YTDLP_PATH, args, { windowsHide: true });
     let data = '', errorData = '';
     let finished = false;
 

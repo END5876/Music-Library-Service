@@ -21,11 +21,8 @@
 //   GET  /api/music/file/*                          下載檔案內容（* 是相對於音樂庫根目錄的路徑）
 //   PUT  /api/music/file/*                          上傳／覆寫檔案內容（原始位元組，不做任何解析）
 //
-// 網頁播放器（設定 WEB_PLAYER_PASSWORD 才啟用，細節見 webplayer/webPlayer.js）：
-//   GET  /player                                   播放器頁面
-//   POST /web/login | /web/logout                  密碼登入／登出（Cookie）
-//   GET  /web/api/list                             曲目清單（需登入）
-//   GET  /web/stream/*                             串流音檔，支援 Range（需登入）
+// 網頁播放器（設定 WEB_PLAYER_PASSWORD 才啟用）：路由完整清單見 README，
+// 各組路由的實作分在 webplayer/ 底下（入口是 webplayer/webPlayer.js）。
 //
 // 這個服務刻意不提供播放次數功能：每個呼叫端 Bot 各自計算、各自
 // 記錄自己的播放次數，不透過這裡同步或集中管理。
@@ -79,7 +76,7 @@ app.use((err, req, res, next) => {
 
 store.cleanupStaleTemps().catch(() => {});
 
-const server = app.listen(PORT, () => {
+app.listen(PORT, () => {
   console.log(`✅ [MusicLibrary] 共用音樂庫服務已啟動，監聽埠 ${PORT}（音樂庫路徑: ${store.MUSIC_DIR}）`);
   if (!SECRET) {
     console.warn('⚠️ [MusicLibrary] 尚未設定 MUSIC_LIB_SECRET，任何連得到這個服務的請求都能讀寫音樂庫，僅建議在完全信任的內網環境這樣使用');
@@ -92,11 +89,10 @@ const server = app.listen(PORT, () => {
   }
 });
 
-// 部署平台重新部署會送 SIGTERM：停止收新連線，並讓 'exit' 處理器砍掉殘留的 yt-dlp / ffmpeg 子行程
+// 部署平台重新部署會送 SIGTERM：立即結束，由各模組的 'exit' 處理器砍掉殘留的 yt-dlp / ffmpeg 子行程。
+// 刻意不等進行中的請求：播放清單是同步寫檔、上傳是暫存檔＋rename，中斷不會留下半成品（暫存檔下次啟動清除）。
 function shutdown(signal) {
   console.log(`🛑 [MusicLibrary] 收到 ${signal}，關閉服務`);
-  server.close();
-  setTimeout(() => process.exit(0), 3000).unref();
   process.exit(0);
 }
 process.on('SIGTERM', () => shutdown('SIGTERM'));

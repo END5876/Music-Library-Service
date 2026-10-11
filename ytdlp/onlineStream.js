@@ -39,7 +39,6 @@ const { playStream, cleanupProcess, WEB_KEY } = require('./streamPlayer');
 const { killTree } = require('./procTree');
 
 const execAsync = promisify(exec);
-const ytdlpPath = 'yt-dlp';
 
 // ── 網頁版額外的資源保護（Bot 有 Discord 頻道人數天然限制，網頁沒有）──
 const MAX_WEB_STREAMS       = parseInt(process.env.WEB_MAX_STREAMS || '4', 10);       // 同時即時串流數
@@ -55,7 +54,7 @@ let initPromise = null;
 // ════════════════════════════════════════════════════════
 async function checkYtDlp() {
   try {
-    const { stdout } = await execAsync(`${ytdlpPath} --version`);
+    const { stdout } = await execAsync(`${antiBot.YTDLP_PATH} --version`);
     logger.debug('OnlineMusic', `yt-dlp 版本: ${stdout.trim()}`);
     return true;
   } catch {

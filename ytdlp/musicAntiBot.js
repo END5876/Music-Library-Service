@@ -13,6 +13,9 @@ const path = require('path');
 const logger = require('../logger');
 const potProvider = require('./potProvider');
 
+// yt-dlp 執行檔（所有呼叫 yt-dlp 的模組共用這個常數）
+const YTDLP_PATH = 'yt-dlp';
+
 // ════════════════════════════════════════════════════════
 //  Proxy 設定 (Cloudflare WARP)
 // ════════════════════════════════════════════════════════
@@ -94,6 +97,9 @@ const YT_CLIENT_STRATEGIES = [
     desc    : 'web_embedded（僅可嵌入影片，最後備用）',
   },
 ];
+
+// 背景下載與 getInfo 固定使用的 client（即時串流才會依失敗情況輪換）
+const DEFAULT_YT_STRATEGY = YT_CLIENT_STRATEGIES.find(s => s.name === 'default') || YT_CLIENT_STRATEGIES[0];
 
 const ytClientIndex = new Map();
 
@@ -316,7 +322,7 @@ function buildInfoArgs(url) {
     }
     base.push('--js-runtimes', 'node');
 
-    const strategy = YT_CLIENT_STRATEGIES.find(s => s.name === 'default') || YT_CLIENT_STRATEGIES[0];
+    const strategy = DEFAULT_YT_STRATEGY;
     base.push(...strategy.args);
     base.push(...potProvider.extractorArgs());
 
@@ -373,9 +379,11 @@ function classifyBilibiliError(errorOutput) {
 }
 
 module.exports = {
+  YTDLP_PATH,
   initCookies,
   isYouTubeUrl,
   YT_CLIENT_STRATEGIES,
+  DEFAULT_YT_STRATEGY,
   getYtClientStrategy,
   rotateYtClient,
   resetYtClient,

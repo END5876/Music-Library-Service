@@ -85,13 +85,14 @@ header（未設定 `MUSIC_LIB_SECRET` 時不驗證，僅建議在完全信任的
 - 目前不支援播放清單網址（只播單支影片）。
 
 **伺服器需要安裝 `yt-dlp` 和 `ffmpeg`**，沒裝的話線上功能自動停用，音樂庫播放不受影響。
-Dockerfile 範例（Debian／Ubuntu 系映像）：
+專案的 [Dockerfile](Dockerfile) 已內建；自行建置其他 Debian／Ubuntu 系映像時可參考（`yt-dlp` 這個版本需要 python3）：
 
 ```dockerfile
-RUN apt-get update && apt-get install -y --no-install-recommends ffmpeg ca-certificates curl \
- && curl -fsSL https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp_linux -o /usr/local/bin/yt-dlp \
+RUN apt-get update && apt-get install -y --no-install-recommends ffmpeg python3 ca-certificates curl tini \
+ && curl -fL https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp -o /usr/local/bin/yt-dlp \
  && chmod a+rx /usr/local/bin/yt-dlp \
  && rm -rf /var/lib/apt/lists/*
+ENTRYPOINT ["/usr/bin/tini", "--"]
 ```
 
 YouTube 需要的環境變數（`WARP_PROXY_URL`、`YOUTUBE_PO_TOKEN`、cookies 檔等）和 Bot 相同，見 `.env.example`。

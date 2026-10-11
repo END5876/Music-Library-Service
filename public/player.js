@@ -64,7 +64,6 @@
   // 日誌存在記憶體並同步寫入 localStorage.ml_log(最多 500 行,鎖屏／重新整理後仍在),可在面板複製或匯出。
   let DEBUG = false;
   if (DEBUG_UI) { try { DEBUG = localStorage.getItem('ml_debug') === '1'; } catch {} }
-  const t0 = Date.now();
   const LOG_MAX = 500;
   let logBuf = [];
   if (DEBUG_UI) { try { const l = JSON.parse(localStorage.getItem('ml_log') || '[]'); if (Array.isArray(l)) logBuf = l.slice(-LOG_MAX); } catch {} }
@@ -91,9 +90,6 @@
     if (document.hidden) saveLog(); else if (!logSaveTimer) logSaveTimer = setTimeout(saveLog, 500);
     if (logLive) logLive();
   }
-
-  // 預載下一首(預設關閉;只抓開頭小段 / 預熱線上 info,效果不保證,請自行實測)
-  const PREFETCH = false;
 
   // 拖曳排序的提示線(CSS 檔不用再改)
   const st = document.createElement('style');
@@ -334,13 +330,15 @@
   }
 
   // ── 音樂庫清單 ──
-  async function loadList() {
+  // listReq:可傳入已經發出的請求(初始化時與 IndexedDB 掃描同時進行,省一段等待)
+  async function loadList(listReq) {
     setStatus('載入清單中…', true);
     let r;
-    try { r = await fetch('/web/api/list'); } catch (err) { dbg('loadList 連線失敗', err); return setStatus('連線失敗'); }
+    try { r = await (listReq || fetch('/web/api/list')); } catch (err) { dbg('loadList 連線失敗', err); return setStatus('連線失敗'); }
     if (r.status === 401) { setStatus(''); return showLogin(); }
     if (!r.ok) return setStatus('讀取清單失敗');
     all = (await r.json()).files || [];
+    for (const f of all) f.q = (f.name + '\n' + f.filename).toLowerCase(); // 搜尋用,先算好小寫,打字時不必每個字都重算
     byFile = new Map(all.map(f => [f.filename, f]));
     queue = queue.filter(e => e.kind !== 'lib' || libAvailable(e.filename)); // 已被刪除(且沒有離線檔)的檔案移出佇列
     $('logoutBtn').hidden = false;
@@ -369,7 +367,7 @@
     const q = libQuery.trim().toLowerCase();
     view = all.filter(f =>
       (!folder || f.filename.startsWith(folder + '/')) &&
-      (!q || f.name.toLowerCase().includes(q) || f.filename.toLowerCase().includes(q)));
+      (!q || f.q.includes(q)));
     libLimit = LIB_PAGE;
     if (shuffle) syncShuffleQueue(); // 篩選條件變了,隨機佇列要跟著畫面上的清單走(重新開頁時也靠這裡排好)
     render();
@@ -503,15 +501,15 @@
   }
   $('reshuffle').addEventListener('click', () => { buildShuffle(); setStatus('🔀 已重新洗牌'); });
 
-  // ── 拖曳排序(Pointer Events,滑鼠與觸控通用)──
-  function startDrag(ev, li) {
+  // ── 拖曳排序(Pointer Events,滑鼠與觸控通用;佇列與播放清單共用)──
+  // rows:拖曳中的列以外、可以放置的列;sc:捲動容器;onEnd(dropped, pos):放開或取消時呼叫
+  function dragSort(ev, li, rows, sc, onEnd) {
     if (ev.button > 0) return;
     ev.preventDefault(); ev.stopPropagation();
-    const ul = $('nextList');
-    const sc = ul.closest('.queue');
-    const rows = [...ul.querySelectorAll('.row[data-qid], .row[data-pv]')].filter(r => r !== li);
     const startY = ev.clientY, startScroll = sc.scrollTop;
-    let y = startY, pos = 0;
+    // 各列中點換算成捲動內容座標,只量一次;拖曳中只依捲動量換算,不必每次 tick 都量所有列(會反覆觸發 layout)
+    const mids = rows.map((r) => { const b = r.getBoundingClientRect(); return b.top + b.height / 2 + startScroll; });
+    let y = startY, pos = 0, marked = null;
     li.classList.add('dragging');
 
     const tick = () => {
@@ -519,10 +517,11 @@
       if (y < box.top + 50) sc.scrollTop -= 12;
       else if (y > box.bottom - 50) sc.scrollTop += 12;
       li.style.transform = `translateY(${y - startY + sc.scrollTop - startScroll}px)`;
-      pos = rows.filter(r => { const b = r.getBoundingClientRect(); return b.top + b.height / 2 < y; }).length;
-      rows.forEach(r => r.classList.remove('drop-before', 'drop-after'));
-      if (pos < rows.length) rows[pos].classList.add('drop-before');
-      else if (rows.length) rows[rows.length - 1].classList.add('drop-after');
+      const at = y + sc.scrollTop;
+      pos = mids.filter((m) => m < at).length;
+      if (marked) marked.classList.remove('drop-before', 'drop-after');
+      marked = pos < rows.length ? rows[pos] : rows[rows.length - 1] || null;
+      if (marked) marked.classList.add(pos < rows.length ? 'drop-before' : 'drop-after');
     };
     const timer = setInterval(tick, 30);
     const move = (e) => { y = e.clientY; };
@@ -531,7 +530,19 @@
       window.removeEventListener('pointermove', move);
       window.removeEventListener('pointerup', end);
       window.removeEventListener('pointercancel', end);
-      if (e.type === 'pointerup') {
+      onEnd(e.type === 'pointerup', pos);
+    };
+    window.addEventListener('pointermove', move);
+    window.addEventListener('pointerup', end);
+    window.addEventListener('pointercancel', end);
+    tick();
+  }
+
+  function startDrag(ev, li) {
+    const ul = $('nextList');
+    const rows = [...ul.querySelectorAll('.row[data-qid], .row[data-pv]')].filter(r => r !== li);
+    dragSort(ev, li, rows, ul.closest('.queue'), (dropped, pos) => {
+      if (dropped) {
         // 依畫面上的列順序重建佇列;預覽列(data-pv)在這一刻才轉成真正的佇列項目,
         // 所以非隨機模式的「接下來」也能拖曳。沒畫出來的(隨機模式超過 100 列的)項目維持在後面。
         const toEntry = (r) => r.dataset.qid != null
@@ -546,11 +557,7 @@
         }
       }
       renderNext();
-    };
-    window.addEventListener('pointermove', move);
-    window.addEventListener('pointerup', end);
-    window.addEventListener('pointercancel', end);
-    tick();
+    });
   }
 
   // ── 播放 ──
@@ -768,7 +775,6 @@
     switchPending = false; errorStreak = 0; pendingPlay = false; endHandled = false;
     setSession('playing'); setStatus('');
     dbg('playing');
-    prefetchNext();
     preloadNext();
   });
   audio.addEventListener('volumechange', () => {
@@ -886,24 +892,6 @@
   document.addEventListener('visibilitychange', () => { dbg('visibility', document.visibilityState); recover(); });
   window.addEventListener('pageshow', recover);
   window.addEventListener('online', () => { netProbeAt = 0; recover(); });
-
-  // ── 預載下一首(PREFETCH 開啟時才啟用;不下載整首)──
-  let prefetched = '';
-  function prefetchNext() {
-    if (!PREFETCH) return;
-    if (!currentFile && !onlineCurrent) return;
-    const e = queue[0];
-    if (e && e.kind === 'online') {
-      const u = e.item.srcUrl || e.item.url;
-      if (u !== prefetched) { prefetched = u; fetch('/web/api/info?url=' + enc(u)).catch(() => {}); }
-      return;
-    }
-    const next = e ? e.filename : (shuffle || onlineCurrent ? null : pickNext());
-    if (!next || next === prefetched || next === currentFile) return;
-    prefetched = next;
-    // 只抓開頭 256KB,是否命中 audio 的快取不保證
-    fetch(streamUrl(next), { headers: { Range: 'bytes=0-262143' } }).then(r => r.arrayBuffer()).catch(() => {});
-  }
 
   // ── 控制項 ──
   function syncButtons() {
@@ -1032,8 +1020,14 @@
   }
   document.querySelectorAll('[data-view]').forEach(b => b.addEventListener('click', () => setMode(b.dataset.view)));
 
+  // 音樂庫篩選每次都要重畫最多 300 列:連續打字時合併成停頓 100ms 後畫一次
+  let filterTimer = 0;
   $('search').addEventListener('input', () => {
-    if (mode === 'library') { libQuery = $('search').value; applyFilter(); }
+    if (mode === 'library') {
+      libQuery = $('search').value;
+      clearTimeout(filterTimer);
+      filterTimer = setTimeout(applyFilter, 100);
+    }
     else if (mode === 'playlists') { plQuery = $('search').value; renderPlaylists(); }
     else onlineQuery = $('search').value;
   });
@@ -1495,42 +1489,15 @@
     markPlaying();
   }
 
-  // 拖曳排序(播放清單版;邏輯同佇列的 startDrag)
+  // 拖曳排序(播放清單版,共用 dragSort)
   function startPlDrag(ev, li, pid) {
-    if (ev.button > 0) return;
-    ev.preventDefault(); ev.stopPropagation();
-    const ul = $('plItems'), sc = $('main');
-    const rows = [...ul.querySelectorAll('.row[data-iid]')].filter((r) => r !== li);
-    const startY = ev.clientY, startScroll = sc.scrollTop;
-    let y = startY, pos = 0;
-    li.classList.add('dragging');
-    const tick = () => {
-      const box = sc.getBoundingClientRect();
-      if (y < box.top + 50) sc.scrollTop -= 12;
-      else if (y > box.bottom - 50) sc.scrollTop += 12;
-      li.style.transform = `translateY(${y - startY + sc.scrollTop - startScroll}px)`;
-      pos = rows.filter((r) => { const b = r.getBoundingClientRect(); return b.top + b.height / 2 < y; }).length;
-      rows.forEach((r) => r.classList.remove('drop-before', 'drop-after'));
-      if (pos < rows.length) rows[pos].classList.add('drop-before');
-      else if (rows.length) rows[rows.length - 1].classList.add('drop-after');
-    };
-    const timer = setInterval(tick, 30);
-    const move = (e) => { y = e.clientY; };
-    const end = (e) => {
-      clearInterval(timer);
-      window.removeEventListener('pointermove', move);
-      window.removeEventListener('pointerup', end);
-      window.removeEventListener('pointercancel', end);
-      if (e.type === 'pointerup') {
-        const ids = rows.map((r) => r.dataset.iid);
-        ids.splice(Math.min(pos, ids.length), 0, li.dataset.iid);
-        reorderPlaylist(pid, ids);
-      } else renderPlaylists();
-    };
-    window.addEventListener('pointermove', move);
-    window.addEventListener('pointerup', end);
-    window.addEventListener('pointercancel', end);
-    tick();
+    const rows = [...$('plItems').querySelectorAll('.row[data-iid]')].filter((r) => r !== li);
+    dragSort(ev, li, rows, $('main'), (dropped, pos) => {
+      if (!dropped) return renderPlaylists();
+      const ids = rows.map((r) => r.dataset.iid);
+      ids.splice(Math.min(pos, ids.length), 0, li.dataset.iid);
+      reorderPlaylist(pid, ids);
+    });
   }
 
   // ── 「加入播放清單」選單 ──────────────────────────────
@@ -1653,42 +1620,17 @@
     const isOff = offlineKeys.has(key);
     menuEl.textContent = '';
 
-    const mk = (icon, text, fn, cls) => {
-      const b = document.createElement('button');
-      b.className = 'menu-item' + (cls ? ' ' + cls : '');
-      b.innerHTML = `<svg><use href="#i-${icon}"/></svg>`;
-      const s = document.createElement('span'); s.textContent = text; b.appendChild(s);
-      b.addEventListener('click', (ev) => { ev.stopPropagation(); closeRowMenu(); fn(); });
-      menuEl.appendChild(b);
-    };
-    mk(isOff ? 'close' : 'download',
+    menuItem(isOff ? 'close' : 'download',
       isOff ? '移除離線檔案' : (dlState.has(key) ? '下載中…' : '下載離線'),
       () => toggleOffline(item));
-    mk('playlist-add', '加入播放清單', () => pickPlaylist([item]));
-
-    const sep = document.createElement('div'); sep.className = 'menu-sep'; menuEl.appendChild(sep);
-    const info = document.createElement('div'); info.className = 'menu-info';
-    const line = (label, value) => {
-      const d = document.createElement('div');
-      const b = document.createElement('b'); b.textContent = label;
-      d.append(b, document.createTextNode(value));
-      info.appendChild(d);
-    };
-    line('資料夾:', folderOf(f) || '(音樂庫根目錄)');
-    line('檔案大小:', fmtSize(f.size));
-    line('離線狀態:', isOff ? '已下載到此裝置' : (dlState.has(key) ? '下載中' : '未下載'));
-    menuEl.appendChild(info);
-
-    menuEl.hidden = false;
-    const r = anchor.getBoundingClientRect();
-    const mw = menuEl.offsetWidth, mh = menuEl.offsetHeight;
-    const left = Math.min(Math.max(8, r.right - mw), window.innerWidth - mw - 8);
-    let top = r.bottom + 4;
-    if (top + mh > window.innerHeight - 8) top = Math.max(8, r.top - mh - 4);
-    menuEl.style.left = left + 'px';
-    menuEl.style.top = top + 'px';
+    menuItem('playlist-add', '加入播放清單', () => pickPlaylist([item]));
+    menuInfo([
+      ['資料夾:', folderOf(f) || '(音樂庫根目錄)'],
+      ['檔案大小:', fmtSize(f.size)],
+      ['離線狀態:', isOff ? '已下載到此裝置' : (dlState.has(key) ? '下載中' : '未下載')],
+    ]);
+    placeMenu(anchor);
   }
-
 
   document.addEventListener('pointerdown', (e) => {
     if (menuEl.hidden) return;
@@ -1700,7 +1642,7 @@
   document.addEventListener('keydown', (e) => { if (e.key === 'Escape') closeRowMenu(); });
   $('search').addEventListener('input', closeRowMenu);
 
-  // ── 播放清單內頁(依設計稿重做):頂部搜尋、⋯ 下拉選單、每首歌的 ⋯ 選單 ──────
+  // ── 選單 helper(音樂庫與播放清單的 ⋯ 選單共用)與播放清單內頁:頂部搜尋、⋯ 下拉選單、每首歌的 ⋯ 選單 ──────
   function menuItem(icon, text, fn, cls) {
     const b = document.createElement('button');
     b.className = 'menu-item' + (cls ? ' ' + cls : '');
@@ -1915,6 +1857,9 @@
   setNow(null);
   updateProgress();
   updatePlayIcons();
-  offlineInit().finally(() => loadList()); // 先讀出離線清單,畫面才能正確標示
+  // 清單請求與離線清單掃描同時進行;等離線清單讀完才畫畫面,才能正確標示已下載的歌
+  const listReq = fetch('/web/api/list');
+  listReq.catch(() => {}); // 失敗交給 loadList 處理,這裡只避免「未處理的 Promise 錯誤」
+  offlineInit().finally(() => loadList(listReq));
   registerSW();
 })();
