@@ -18,6 +18,7 @@
 //   onlineRoutes.js    線上串流 API（/web/api/capabilities|search|info、/web/play）
 //   playlistRoutes.js  播放清單 API（/web/api/playlists/*）
 //   uploadRoutes.js    受控音檔上傳（/upload?upload=1、/web/api/upload?upload=1）
+//   durationStore.js   歌曲長度快取（ffprobe 讀取，/web/api/list 會帶上 duration）
 //
 // 本檔路由：
 //   GET  /player             播放器頁面（純靜態，不含任何音樂庫資料）
@@ -31,6 +32,7 @@ const { mountWebAuth } = require('./webAuth');
 const { mountOnlineRoutes } = require('./onlineRoutes');
 const { mountPlaylists } = require('./playlistRoutes');
 const { mountUploadRoutes } = require('./uploadRoutes');
+const durationStore = require('./durationStore');
 
 function mountWebPlayer(app, { store, libSecret }) {
   const auth = mountWebAuth(app, { libSecret });
@@ -57,8 +59,16 @@ function mountWebPlayer(app, { store, libSecret }) {
   app.get('/web/api/list', requireWebAuth, async (req, res) => {
     try {
       const files = await store.listAll();
+      // duration:歌曲長度(秒),還沒讀到的曲目不帶;durationsPending=true 表示背景還在讀,前端可稍後再要一次
+      const { durations, pending } = durationStore.lookup(files, (fn) => store.resolveForRead(fn));
       res.set('Cache-Control', 'no-store');
-      res.json({ files: files.map(({ filename, name, size }) => ({ filename, name, size })) });
+      res.json({
+        files: files.map(({ filename, name, size }) => {
+          const duration = durations.get(filename);
+          return duration ? { filename, name, size, duration } : { filename, name, size };
+        }),
+        durationsPending: pending,
+      });
     } catch (err) {
       console.error('❌ [MusicLibrary] /web/api/list 失敗:', err);
       res.status(500).json({ error: '讀取音樂庫清單失敗' });

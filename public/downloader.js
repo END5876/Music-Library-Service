@@ -2,14 +2,14 @@
 // downloader.js
 // 離線下載引擎：同時最多 2 首、可整批取消、回報進度。從 player.js 拆出，邏輯不變。
 // 與畫面的接觸點全部由 createDownloader(deps) 傳入（不直接碰 DOM、不直接讀 player.js 的變數）：
-//   offlineKeys / offlineSizes / dlState  由 player.js 持有的共用狀態（只就地修改，不重新指派）
+//   offlineKeys / offlineSizes / offlineMeta / dlState  由 player.js 持有的共用狀態（只就地修改，不重新指派）
 //   itemKey / streamUrl / enc             網址與鍵值工具
 //   offlinePut                            寫入 IndexedDB（來自 offlineStore.js）
 //   setStatus / showLogin / refreshDl     提示訊息、登入視窗、重繪下載狀態
 // 回傳 { enqueueDownloads, cancelDownloads, dlBusy, getBatch }；getBatch() 取得目前批次 { total, done, failed }。
 // 載入順序：必須早於 player.js（player.html 的 <script> 順序、sw.js 的 SHELL_URLS 都要列出）。
 (() => {
-  function createDownloader({ offlineKeys, offlineSizes, dlState, itemKey, streamUrl, enc, offlinePut, setStatus, showLogin, refreshDl }) {
+  function createDownloader({ offlineKeys, offlineSizes, offlineMeta, dlState, itemKey, streamUrl, enc, offlinePut, setStatus, showLogin, refreshDl }) {
     // ── 下載(最多同時 2 個,可整批取消)──────────────────
     const DL_CONCURRENCY = 2;
     const dlQueue = [];
@@ -72,8 +72,9 @@
         }
         if (!got) throw new Error('下載到空檔案');
         const blob = new Blob(chunks, { type: r.headers.get('Content-Type') || 'audio/mpeg' });
-        await offlinePut({ key, blob, size: blob.size, title: it.title || '', at: Date.now() });
-        offlineKeys.add(key); offlineSizes.set(key, blob.size);
+        const meta = { title: it.title || '', at: Date.now(), author: it.author || '', platform: it.platform || '', duration: it.duration || '' };
+        await offlinePut({ key, blob, size: blob.size, ...meta });
+        offlineKeys.add(key); offlineSizes.set(key, blob.size); offlineMeta.set(key, meta);
       } finally {
         dlState.delete(key);
       }

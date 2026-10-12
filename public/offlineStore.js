@@ -31,14 +31,18 @@
   const offlinePut = (rec) => idbTx('readwrite', (s) => s.put(rec));
   const offlineDel = (key) => idbTx('readwrite', (s) => s.delete(key));
   const offlineClearAll = () => idbTx('readwrite', (s) => s.clear());
-  // 只掃描 key / size,不把音檔內容讀進記憶體
+  // 只掃描 key / size / 歌曲資訊,不把音檔內容讀進記憶體
   function offlineScan() {
     return idb().then((db) => new Promise((resolve, reject) => {
       const out = [];
       const rq = db.transaction(IDB_STORE, 'readonly').objectStore(IDB_STORE).openCursor();
       rq.onsuccess = () => {
         const c = rq.result;
-        if (c) { out.push({ key: c.value.key, size: c.value.size || 0 }); c.continue(); } else resolve(out);
+        if (c) {
+          const v = c.value;
+          out.push({ key: v.key, size: v.size || 0, title: v.title || '', at: v.at || 0, author: v.author || '', platform: v.platform || '', duration: v.duration || '' });
+          c.continue();
+        } else resolve(out);
       };
       rq.onerror = () => reject(rq.error);
     }));

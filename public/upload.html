@@ -7,38 +7,45 @@
 <meta name="theme-color" content="#0b0b0b">
 <title>上傳音樂｜裊器音樂</title>
 <style>
-:root { color-scheme: dark; --bg:#0b0b0b; --panel:#151515; --line:#2a2a2a; --muted:#9c9c9c; --text:#f5f5f5; --accent:#f4d03f; --danger:#ff7474; }
+/* 與播放器(player.css)共用同一套顏色與按鈕語言:白色主要按鈕、粉紅只表示狀態/進度 */
+:root { color-scheme:dark; --bg:#0b0b0b; --surface-1:#141414; --surface-2:#1c1c1c; --surface-3:#2a2a2a; --border:#2e2e2e; --text:#fff; --text-2:#b3b3b3; --text-3:#8a8a8a; --accent:#ff2d55; --danger:#ff6b81; --ok:#6fdc8c; }
 * { box-sizing:border-box; }
-body { margin:0; min-height:100vh; display:grid; place-items:center; padding:24px; background:radial-gradient(circle at top right,#2a2510 0,transparent 28rem),var(--bg); color:var(--text); font-family:"Noto Sans CJK TC","Noto Sans",system-ui,sans-serif; }
+body { margin:0; min-height:100vh; display:grid; place-items:center; padding:24px 16px; background:var(--bg); color:var(--text); font-family:-apple-system,"Segoe UI","Noto Sans TC","PingFang TC","Microsoft JhengHei",Roboto,sans-serif; }
 main { width:min(100%,560px); }
-.brand { display:flex; gap:10px; align-items:center; margin:0 0 22px; color:#fff; font-weight:700; letter-spacing:.03em; }
-.mark { width:12px; height:12px; border-radius:50%; background:var(--accent); box-shadow:0 0 0 6px rgba(244,208,63,.15); }
-.card { background:rgba(21,21,21,.94); border:1px solid var(--line); border-radius:18px; padding:clamp(22px,5vw,38px); box-shadow:0 24px 80px rgba(0,0,0,.38); }
-h1 { margin:0; font-size:clamp(1.55rem,5vw,2.2rem); letter-spacing:-.03em; }
-.lead { color:var(--muted); line-height:1.7; margin:10px 0 28px; }
+.brand { display:flex; gap:8px; align-items:center; margin:0 0 20px; font-weight:700; font-size:20px; letter-spacing:-.5px; }
+.mark { width:28px; height:28px; border-radius:50%; background:conic-gradient(var(--accent),#ff8a00,var(--accent)); display:grid; place-items:center; }
+.mark::after { content:""; border-left:9px solid #fff; border-top:6px solid transparent; border-bottom:6px solid transparent; margin-left:2px; }
+.card { background:var(--surface-2); border:1px solid var(--border); border-radius:16px; padding:clamp(22px,5vw,32px); box-shadow:0 20px 60px rgba(0,0,0,.5); }
+h1 { margin:0; font-size:clamp(1.5rem,5vw,1.9rem); }
+.lead { color:var(--text-2); line-height:1.7; margin:10px 0 24px; font-size:14px; }
 form { display:grid; gap:18px; }
-label { display:grid; gap:8px; color:#ddd; font-size:.94rem; }
-input { width:100%; border:1px solid #3a3a3a; border-radius:10px; padding:13px 14px; background:#0d0d0d; color:#fff; font:inherit; }
-input:focus { outline:2px solid rgba(244,208,63,.65); outline-offset:1px; border-color:var(--accent); }
-input[type=file] { padding:11px; cursor:pointer; }
-input::file-selector-button { border:0; border-radius:7px; padding:8px 10px; margin-right:10px; background:#303030; color:#fff; cursor:pointer; font:inherit; }
-.note { margin:-8px 0 0; color:var(--muted); font-size:.82rem; line-height:1.55; }
-.actions { display:flex; align-items:center; gap:14px; margin-top:5px; }
-button { appearance:none; border:0; border-radius:10px; background:var(--accent); color:#17130a; padding:13px 18px; font:700 1rem inherit; cursor:pointer; }
-button:hover:not(:disabled) { filter:brightness(1.07); }
-button:disabled { opacity:.55; cursor:wait; }
-.status { min-height:1.5em; color:var(--muted); line-height:1.5; }
+label { display:grid; gap:8px; color:var(--text); font-size:14px; font-weight:500; }
+input { width:100%; border:1px solid var(--border); border-radius:10px; padding:12px 14px; background:var(--surface-1); color:var(--text); font:inherit; font-size:15px; outline:0; }
+input:focus { border-color:var(--text-2); }
+input:focus-visible { box-shadow:0 0 0 2px rgba(255,255,255,.35); }
+input[type=file] { padding:9px; cursor:pointer; font-size:14px; }
+input::file-selector-button { border:0; border-radius:16px; padding:7px 14px; margin-right:10px; background:var(--surface-3); color:var(--text); cursor:pointer; font:inherit; font-weight:600; }
+input::file-selector-button:hover { background:#333; }
+.note { margin:-8px 0 0; color:var(--text-3); font-size:12.5px; line-height:1.6; }
+code { background:var(--surface-3); border-radius:4px; padding:1px 5px; font-size:.95em; }
+.actions { display:flex; align-items:center; gap:14px; margin-top:4px; flex-wrap:wrap; }
+button { appearance:none; border:0; border-radius:23px; height:46px; padding:0 22px; background:#fff; color:#000; font:inherit; font-size:15px; font-weight:700; cursor:pointer; }
+button:hover:not(:disabled) { background:#e6e6e6; }
+button:focus-visible { outline:2px solid #fff; outline-offset:2px; }
+button:disabled { opacity:.45; cursor:wait; }
+.status { min-height:1.5em; color:var(--text-2); line-height:1.5; font-size:14px; }
 .status.error { color:var(--danger); }
-.status.success { color:#9de6aa; }
-.progress { overflow:hidden; height:8px; border-radius:999px; background:#282828; }
+.status.success { color:var(--ok); }
+.progress { overflow:hidden; height:4px; border-radius:2px; background:#4a4a4a; }
 .progress > i { display:block; width:0; height:100%; background:var(--accent); transition:width .18s ease; }
-footer { margin:22px 0 0; text-align:center; font-size:.85rem; }
-a { color:#e7ce68; }
+footer { margin:20px 0 0; text-align:center; font-size:14px; }
+a { color:var(--text-2); }
+a:hover { color:var(--text); }
 </style>
 </head>
 <body>
 <main>
-  <div class="brand"><span class="mark"></span><span>裊器音樂</span></div>
+  <div class="brand"><span class="mark" aria-hidden="true"></span><span>裊器音樂</span></div>
   <section class="card" aria-labelledby="title">
     <h1 id="title">上傳音樂</h1>
     <p class="lead">音檔會先壓縮為高品質 MP3，再依音樂庫標準進行雙通道響度正規化後儲存。</p>
