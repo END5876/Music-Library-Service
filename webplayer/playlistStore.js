@@ -200,6 +200,18 @@ function removeItem(id, itemId) {
   return p;
 }
 
+// 一次移除多首：不存在的 id 直接略過（可能已被其他裝置刪掉），回傳實際移除的數量
+function removeItems(id, itemIds) {
+  const p = find(id);
+  if (!Array.isArray(itemIds) || !itemIds.length) throw new HttpError(400, '沒有要移除的歌曲');
+  const drop = new Set(itemIds.map(String));
+  const before = p.items.length;
+  p.items = p.items.filter((x) => !drop.has(x.id));
+  const removed = before - p.items.length;
+  if (removed) { p.updatedAt = now(); save(); }
+  return { playlist: p, removed };
+}
+
 // order：項目 id 陣列。沒列到的項目維持原順序接在後面（避免多裝置同時編輯時遺失歌曲）
 function reorder(id, order) {
   const p = find(id);
@@ -217,4 +229,4 @@ function reorder(id, order) {
   return p;
 }
 
-module.exports = { HttpError, FILE, list, create, rename, remove, addItems, removeItem, reorder };
+module.exports = { HttpError, FILE, list, create, rename, remove, addItems, removeItem, removeItems, reorder };

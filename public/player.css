@@ -38,6 +38,26 @@ section{margin-top:28px;min-width:0}
 .sec-head h2{font-size:28px;font-weight:700}
 .sec-head .more{border:1px solid #444;border-radius:16px;padding:6px 14px;font-size:13px;white-space:nowrap;flex-shrink:0}
 .sec-head .more:hover{background:var(--surface2)}
+.sec-btns{display:flex;gap:8px;align-items:center;justify-content:flex-end}
+/* 標題列按鈕:主要動作=白色膠囊,次要動作=圓形圖示(與播放清單內頁一致) */
+.btn-pill{height:38px;padding:0 18px 0 14px;border-radius:19px;background:#fff;color:#000;font-size:14px;font-weight:700;gap:6px;white-space:nowrap;flex-shrink:0}
+.btn-pill:hover{background:#e6e6e6}
+.btn-pill svg{width:20px;height:20px}
+.btn-icon{width:38px;height:38px;border-radius:50%;border:1px solid #333;background:#141414;color:#fff;flex-shrink:0}
+.btn-icon:hover{background:#222}
+.btn-icon svg{width:20px;height:20px}
+/* 多選模式:頂端固定的動作列 + 列表封面變成勾選框 */
+.sel-bar{position:sticky;top:0;z-index:5;display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin:0 0 12px;padding:8px 10px;background:var(--surface2);border-radius:10px;box-shadow:0 4px 16px rgba(0,0,0,.5)}
+.sel-bar .sel-count{flex:1;font-size:14px;white-space:nowrap}
+.sel-bar .more{border:1px solid #444;border-radius:16px;padding:6px 12px;font-size:13px;white-space:nowrap;gap:4px}
+.sel-bar .more:hover{background:#333}
+.sel-bar .more.primary{background:var(--accent);border-color:var(--accent);color:#fff}
+.sel-bar .more.danger{color:#ff6b81;border-color:#5a2a33}
+.sel-bar .more svg{width:18px;height:18px}
+#list.selecting .row .cover::before,#plItems.selecting .row .cover::before{content:"";width:20px;height:20px;border:2px solid #ddd;border-radius:50%;box-sizing:border-box}
+#list.selecting .row.selected,#plItems.selecting .row.selected{background:var(--surface2)}
+#list.selecting .row.selected .cover,#plItems.selecting .row.selected .cover{background:var(--accent)}
+#list.selecting .row.selected .cover::before,#plItems.selecting .row.selected .cover::before{content:"✓";border:0;width:auto;height:auto;font-size:20px;color:#fff;font-weight:700}
 .hint,.empty{color:var(--muted);font-size:14px;padding:4px 0 14px}
 .empty{padding:32px 0;text-align:center}
 
@@ -218,6 +238,8 @@ body.pl-detail header .search{visibility:hidden}
 .pl-menu.show{display:block}
 .pl-menu button{width:100%;justify-content:flex-start;text-align:left;gap:10px;color:#eee;padding:11px 12px;border-radius:8px;font-size:14px}
 .pl-menu button:hover{background:#2a2a2a}
+.pl-menu button svg{width:20px;height:20px;color:#aaa}
+.pl-menu .danger svg{color:inherit}
 .pl-menu .danger{color:#ff6b6b}
 .pl-menu hr{border:0;border-top:1px solid #2e2e2e;margin:4px 0}
 #plItems{margin-top:8px}
@@ -230,8 +252,6 @@ body.pl-detail header .search{visibility:hidden}
 .menu-item.danger{color:#ff6b6b}
 
 /* ── 播放清單:總覽卡片 + 電腦版內頁雙欄 ── */
-#plNew{background:#fff;color:#000;border:0;font-weight:700;padding:9px 18px;font-size:14px}
-#plNew:hover{background:#e6e6e6}
 #plLists{grid-template-columns:minmax(0,1fr);gap:4px}
 .pl-card{display:flex;align-items:center;gap:12px;padding:8px;border-radius:12px;cursor:pointer;position:relative;min-width:0}
 .pl-card:hover{background:var(--surface)}
@@ -262,12 +282,13 @@ body.pl-detail header .search{visibility:hidden}
 
 .pl-search{max-width:460px}
 @media (min-width:760px){
-  #plDetailPane{max-width:1100px;display:grid;grid-template-columns:300px minmax(0,1fr);grid-template-areas:"top top" "side list";column-gap:40px;align-items:start}
+  /* 不設寬度上限,歌曲欄吃滿剩餘寬度;左欄隨視窗放大 */
+  #plDetailPane{max-width:none;display:grid;grid-template-columns:clamp(240px,22vw,340px) minmax(0,1fr);grid-template-areas:"top top" "side list";column-gap:clamp(28px,3vw,56px);align-items:start}
   .pl-top{grid-area:top}
   .pl-side{grid-area:side;position:sticky;top:8px}
   .pl-header{flex-direction:column;align-items:flex-start;gap:18px;margin:12px 0 18px}
-  .pl-cover{width:240px;font-size:84px;border-radius:14px}
+  .pl-cover{width:100%;font-size:84px;border-radius:14px}
   .pl-meta h1{font-size:30px}
-  #plItems{grid-area:list;margin-top:0}
-  #plItemsEmpty{grid-area:list}
+  .pl-listcol{grid-area:list;min-width:0}
+  #plItems{margin-top:0}
 }

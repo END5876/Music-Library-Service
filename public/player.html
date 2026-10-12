@@ -40,6 +40,9 @@
   <symbol id="i-download" viewBox="0 0 24 24"><path d="M19 9h-4V3H9v6H5l7 7 7-7zM5 18v2h14v-2H5z"/></symbol>
   <symbol id="i-check" viewBox="0 0 24 24"><path d="M12 2a10 10 0 100 20 10 10 0 000-20zm-2 15l-5-5 1.41-1.41L10 14.17l7.59-7.59L19 8l-9 9z"/></symbol>
   <symbol id="i-more" viewBox="0 0 24 24"><path d="M12 8c1.1 0 2-.9 2-2s-.9-2-2-2-2 .9-2 2 .9 2 2 2zm0 2c-1.1 0-2 .9-2 2s.9 2 2 2 2-.9 2-2-.9-2-2-2zm0 6c-1.1 0-2 .9-2 2s.9 2 2 2 2-.9 2-2-.9-2-2-2z"/></symbol>
+  <symbol id="i-select" viewBox="0 0 24 24"><path d="M3 5h11v2H3zm0 6h11v2H3zm0 6h7v2H3zm16.6-5.4L21 13l-6 6-3.5-3.5 1.4-1.4 2.1 2.1z"/></symbol>
+  <symbol id="i-edit" viewBox="0 0 24 24"><path d="M3 17.25V21h3.75L17.81 9.94l-3.75-3.75zM20.71 7.04a1 1 0 000-1.41l-2.34-2.34a1 1 0 00-1.41 0l-1.83 1.83 3.75 3.75z"/></symbol>
+  <symbol id="i-delete" viewBox="0 0 24 24"><path d="M6 19a2 2 0 002 2h8a2 2 0 002-2V7H6zM19 4h-3.5l-1-1h-5l-1 1H5v2h14z"/></symbol>
   <symbol id="i-back" viewBox="0 0 24 24"><path d="M20 11H7.83l5.59-5.59L12 4l-8 8 8 8 1.41-1.41L7.83 13H20v-2z"/></symbol>
 </svg>
 
@@ -68,7 +71,16 @@
     <section>
       <div class="sec-head">
         <div><small id="libCount">&nbsp;</small><h2>音樂庫</h2></div>
-        <button class="more" id="shuffleAll">🔀 隨機播放</button>
+        <div class="sec-btns">
+          <button class="btn-icon" id="selectBtn" title="多選" aria-label="多選"><svg><use href="#i-select"/></svg></button>
+          <button class="btn-pill" id="shuffleAll"><svg><use href="#i-shuffle"/></svg>隨機播放</button>
+        </div>
+      </div>
+      <div class="sel-bar" id="selBar" hidden>
+        <span class="sel-count"></span>
+        <button class="more sel-all">全選</button>
+        <button class="more primary sel-act" id="selAdd" disabled><svg><use href="#i-playlist-add"/></svg>加入播放清單</button>
+        <button class="more" id="selCancel">取消</button>
       </div>
       <ul class="quick" id="list"></ul>
       <div class="empty" id="empty" hidden>沒有符合的曲目</div>
@@ -86,7 +98,7 @@
   <div id="viewPlaylists" hidden>
     <div id="plListPane">
       <section style="margin-top:0">
-        <div class="sec-head"><div><small id="plCount">&nbsp;</small><h2>播放清單</h2></div><button class="more" id="plNew">＋ 新增</button></div>
+        <div class="sec-head"><div><small id="plCount">&nbsp;</small><h2>播放清單</h2></div><button class="btn-pill" id="plNew"><svg><use href="#i-plus"/></svg>新增</button></div>
         <ul class="quick" id="plLists"></ul>
         <div class="empty" id="plEmpty" hidden></div>
         <div class="offline-box"><div class="hint" id="offlineInfo"></div><button class="more" id="offlineClear" hidden>清除全部離線檔案</button></div>
@@ -108,14 +120,24 @@
         <button class="pl-circle" id="plDownloadAll" title="下載離線" aria-label="下載離線"><svg><use href="#i-download"/></svg></button>
         <button class="pl-circle" id="plMoreBtn" title="更多" aria-label="更多"><svg><use href="#i-more"/></svg></button>
         <div class="pl-menu" id="plMenu">
-          <button id="plRename">✎ 重新命名</button>
+          <button id="plSelect"><svg><use href="#i-select"/></svg>選取歌曲</button>
+          <button id="plRename"><svg><use href="#i-edit"/></svg>重新命名</button>
           <hr>
-          <button class="danger" id="plDelete">🗑 刪除播放清單</button>
+          <button class="danger" id="plDelete"><svg><use href="#i-delete"/></svg>刪除播放清單</button>
         </div>
       </div>
       </div>
+      <div class="pl-listcol">
+      <div class="sel-bar" id="plSelBar" hidden>
+        <span class="sel-count"></span>
+        <button class="more sel-all">全選</button>
+        <button class="more sel-act" id="plSelAdd" disabled><svg><use href="#i-playlist-add"/></svg>加入其他清單</button>
+        <button class="more danger sel-act" id="plSelRemove" disabled><svg><use href="#i-close"/></svg>移出</button>
+        <button class="more" id="plSelCancel">取消</button>
+      </div>
       <ul class="quick single" id="plItems"></ul>
-      <div class="empty" id="plItemsEmpty" hidden>這個播放清單還是空的。在音樂庫歌曲旁的「⋮」選單選擇「加入播放清單」就能加入。</div>
+      <div class="empty" id="plItemsEmpty" hidden>這個播放清單還是空的。在音樂庫歌曲旁的「⋮」選單選擇「加入播放清單」,或用音樂庫的「多選」一次加入多首。</div>
+      </div>
     </div>
   </div>
 </main>
@@ -220,6 +242,7 @@
 
 <!-- 載入順序有依賴:offlineStore.js、downloader.js 必須早於 player.js(player.js 一開始就會取用 window.MLOfflineStore / window.MLDownloader);
      新增或更名腳本時,sw.js 的 SHELL_URLS 也要同步 -->
+<script src="/player-assets/zhFold.js"></script>
 <script src="/player-assets/offlineStore.js"></script>
 <script src="/player-assets/downloader.js"></script>
 <script src="/player-assets/player.js"></script>

@@ -8,6 +8,7 @@
 //   DELETE /web/api/playlists/:id                   刪除
 //   POST   /web/api/playlists/:id/items             { items:[...] } 加入歌曲（重複的會略過）
 //   DELETE /web/api/playlists/:id/items/:itemId     移除歌曲
+//   POST   /web/api/playlists/:id/items/remove      { ids:[itemId...] } 一次移除多首
 //   PUT    /web/api/playlists/:id/order             { order:[itemId...] } 重新排序
 
 const express = require('express');
@@ -48,6 +49,9 @@ function mountPlaylists(app, { requireWebAuth, online }) {
 
   app.post(`${BASE}/:id/items`, requireWebAuth, json, handle((req) =>
     pl.addItems(req.params.id, (req.body || {}).items, deps)));
+
+  app.post(`${BASE}/:id/items/remove`, requireWebAuth, json, handle((req) =>
+    pl.removeItems(req.params.id, (req.body || {}).ids)));
 
   app.delete(`${BASE}/:id/items/:itemId`, requireWebAuth, handle((req) => ({
     playlist: pl.removeItem(req.params.id, req.params.itemId),

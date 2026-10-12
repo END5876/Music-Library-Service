@@ -299,10 +299,73 @@
     play(filename);
     if (shuffle) buildShuffle();
   }
-  const libRow = (f) => makeRow({
-    key: 'lib:' + f.filename, title: f.name, sub: '',
-    btn: { icon: 'more', title: '更多', dlmenu: 'lib:' + f.filename, onClick: (b) => openRowMenu(b, f) },
-    onClick: () => start(f.filename),
+  const libRow = (f) => {
+    const li = makeRow({
+      key: 'lib:' + f.filename, title: f.name, sub: '',
+      btn: { icon: 'more', title: '更多', dlmenu: 'lib:' + f.filename, onClick: (b) => openRowMenu(b, f) },
+      onClick: (ev) => libSel.on ? libSel.toggle(f.filename, ev.shiftKey) : start(f.filename),
+    });
+    if (libSel.on && libSel.set.has(f.filename)) li.classList.add('selected');
+    return li;
+  };
+
+  // ── 多選(音樂庫批次加入、播放清單批次移除共用)──
+  // ids():目前畫面篩選後、依顯示順序的全部 id;rowId(row):從列取得 id(取不到回 null)
+  // set 依點選順序保存;Shift+點擊可選取上一次點的那首到這首之間的範圍
+  function makeSelector({ list, bar, ids, rowId }) {
+    const s = { on: false, set: new Set(), anchor: null };
+    s.paint = () => list.querySelectorAll('.row').forEach((r) => {
+      const id = rowId(r);
+      if (id != null) r.classList.toggle('selected', s.set.has(id));
+    });
+    s.update = () => {
+      const all = ids();
+      bar.querySelector('.sel-count').textContent = `已選 ${s.set.size} 首`;
+      bar.querySelectorAll('.sel-act').forEach((b) => { b.disabled = !s.set.size; });
+      bar.querySelector('.sel-all').textContent = all.length && all.every((id) => s.set.has(id)) ? '取消全選' : '全選';
+    };
+    s.setMode = (on) => {
+      s.on = on; s.set.clear(); s.anchor = null;
+      list.classList.toggle('selecting', on);
+      bar.hidden = !on;
+      s.update();
+    };
+    s.toggle = (id, range) => {
+      const all = range && s.anchor != null ? ids() : [];
+      const ai = all.indexOf(s.anchor), bi = all.indexOf(id);
+      if (ai >= 0 && bi >= 0) {
+        const on = !s.set.has(id);
+        for (const x of all.slice(Math.min(ai, bi), Math.max(ai, bi) + 1)) on ? s.set.add(x) : s.set.delete(x);
+      } else if (s.set.has(id)) s.set.delete(id); else s.set.add(id);
+      s.anchor = id;
+      s.paint(); s.update();
+    };
+    bar.querySelector('.sel-all').addEventListener('click', () => {
+      const all = ids();
+      const allOn = all.length && all.every((id) => s.set.has(id));
+      for (const id of all) allOn ? s.set.delete(id) : s.set.add(id);
+      s.paint(); s.update();
+    });
+    return s;
+  }
+
+  const libSel = makeSelector({
+    list: $('list'), bar: $('selBar'),
+    ids: () => view.map((f) => f.filename),
+    rowId: (r) => r.dataset.key ? r.dataset.key.slice(4) : null,
+  });
+  function setLibSelecting(on) {
+    libSel.setMode(on);
+    $('selectBtn').hidden = on;
+    render();
+  }
+  $('selectBtn').addEventListener('click', () => setLibSelecting(true));
+  $('selCancel').addEventListener('click', () => setLibSelecting(false));
+  $('selAdd').addEventListener('click', () => {
+    const items = [...libSel.set].filter((fn) => byFile.has(fn))
+      .map((fn) => ({ kind: 'lib', filename: fn, title: byFile.get(fn).name }));
+    if (!items.length) return setStatus('選取的歌曲已不在音樂庫中');
+    pickPlaylist(items, () => setLibSelecting(false));
   });
   // 非隨機模式下佇列畫面裡「接下來播什麼」的預覽列:可以拖曳
   const previewRow = (f) => makeRow({
@@ -338,7 +401,7 @@
     if (r.status === 401) { setStatus(''); return showLogin(); }
     if (!r.ok) return setStatus('讀取清單失敗');
     all = (await r.json()).files || [];
-    for (const f of all) f.q = (f.name + '\n' + f.filename).toLowerCase(); // 搜尋用,先算好小寫,打字時不必每個字都重算
+    for (const f of all) f.q = zhFold(f.name + '\n' + f.filename); // 搜尋用,先算好小寫+繁轉簡,打字時不必每個字都重算
     byFile = new Map(all.map(f => [f.filename, f]));
     queue = queue.filter(e => e.kind !== 'lib' || libAvailable(e.filename)); // 已被刪除(且沒有離線檔)的檔案移出佇列
     $('logoutBtn').hidden = false;
@@ -364,7 +427,7 @@
   }
 
   function applyFilter() {
-    const q = libQuery.trim().toLowerCase();
+    const q = zhFold(libQuery.trim());
     view = all.filter(f =>
       (!folder || f.filename.startsWith(folder + '/')) &&
       (!q || f.q.includes(q)));
@@ -390,6 +453,7 @@
     ul.appendChild(frag);
     markPlaying();
     renderNext();
+    if (libSel.on) libSel.update();
   }
 
   // ── 目前播放資訊 ──
@@ -997,7 +1061,7 @@
     else if (e.key === 'p' || e.key === 'P') prev();
     else if (e.key === 's' || e.key === 'S') toggleShuffle();
     else if (e.key === 'r' || e.key === 'R') cycleRepeat();
-    else if (e.key === 'Escape') closeFull();
+    else if (e.key === 'Escape') { if ($('full').classList.contains('open')) closeFull(); else if ($('pickPl').classList.contains('show')) return; else if (plSel.on) setPlSelecting(false); else if (libSel.on) setLibSelecting(false); }
     // 焦點在進度條時瀏覽器本身也會處理方向鍵(±0.1%),要 preventDefault 才不會蓋掉 ±10 秒;音量條則保留原生行為
     else if (e.key === 'ArrowRight' && seekable() && e.target.id !== 'vol') { e.preventDefault(); audio.currentTime = Math.min(audio.duration, audio.currentTime + 10); }
     else if (e.key === 'ArrowLeft' && seekable() && e.target.id !== 'vol') { e.preventDefault(); audio.currentTime = Math.max(0, audio.currentTime - 10); }
@@ -1413,6 +1477,17 @@
     syncCtx(pid, { removedId: iid });
     renderPlaylists();
   }
+  async function removeManyFromPlaylist(pid, ids) {
+    let j;
+    try { j = await plApi('POST', `${PL_API}/${pid}/items/remove`, { ids }); }
+    catch (err) { setStatus(err.message); return false; }
+    upsertPlaylist(j.playlist);
+    if (playlistCtx && playlistCtx.id === pid) { const gone = new Set(ids); queue = queue.filter((e) => !gone.has(e.src)); }
+    syncCtx(pid);
+    renderPlaylists();
+    setStatus(`已移出 ${j.removed} 首`);
+    return true;
+  }
   async function reorderPlaylist(pid, ids) {
     const p = plById(pid); if (!p) return;
     const map = new Map(p.items.map((it) => [it.id, it]));
@@ -1431,6 +1506,7 @@
   }
 
   function openPlaylist(id) {
+    if (plSel.on) plSel.setMode(false);
     plOpen = id; plQuery = ''; $('search').value = '';
     renderPlaylists();
     $('main').scrollTop = 0;
@@ -1447,8 +1523,8 @@
   }
 
   function renderPlList() {
-    const q = plQuery.trim().toLowerCase();
-    const list = playlists.filter((p) => !q || p.name.toLowerCase().includes(q));
+    const q = zhFold(plQuery.trim());
+    const list = playlists.filter((p) => !q || zhFold(p.name).includes(q));
     $('plCount').textContent = playlists.length ? `${playlists.length} 個播放清單` : '\u00a0';
     $('plEmpty').hidden = list.length > 0;
     $('plEmpty').textContent = playlists.length ? '沒有符合的播放清單' : '還沒有播放清單,點「＋ 新增」建立一個';
@@ -1465,26 +1541,31 @@
     return makeRow({
       key, iid: it.id, missing,
       title: itemTitle(it),
-      sub: isLib ? (f ? libSub(f) : (missing ? '檔案已不存在' : '音樂庫'))
-        : [onlineSub(it), it.duration && it.duration !== '未知' ? it.duration : ''].filter(Boolean).join(' · '),
-      grip: canDrag ? (ev, li) => startPlDrag(ev, li, p.id) : false,
+      sub: isLib ? (f ? libSub(f) : (missing ? '檔案已不存在' : '音樂庫')) : onlineSub(it),
+      dur: isLib ? (f ? fmtSize(f.size) : '') : (it.duration && it.duration !== '未知' ? it.duration : ''),
+      grip: canDrag && !plSel.on ? (ev, li) => startPlDrag(ev, li, p.id) : false,
       btn: { icon: 'more', title: '更多', dlmenu: key, onClick: (b) => openItemMenu(b, p, it) },
-      onClick: () => playPlaylist(p.id, it.id),
+      onClick: (ev) => plSel.on ? plSel.toggle(it.id, ev.shiftKey) : playPlaylist(p.id, it.id),
     });
+  }
+  // 播放清單內頁目前看得到的項目(套用頂部搜尋)
+  function plVisible(p) {
+    const q = zhFold(plQuery.trim());
+    return q ? p.items.filter((it) => zhFold(itemTitle(it)).includes(q)) : p.items;
   }
 
   function renderPlDetail(p) {
     $('plTitle').textContent = p.name;
     if (!plQuery && $('plSearch').value) $('plSearch').value = '';
-    const q = plQuery.trim().toLowerCase();
     const ul = $('plItems'); ul.textContent = '';
     $('plItemsEmpty').hidden = p.items.length > 0;
     const frag = document.createDocumentFragment();
-    for (const it of p.items) {
-      if (q && !itemTitle(it).toLowerCase().includes(q)) continue;
-      frag.appendChild(plItemRow(p, it, !q)); // 搜尋篩選時不能拖曳排序
-    }
+    for (const it of plVisible(p)) frag.appendChild(plItemRow(p, it, !plQuery.trim())); // 搜尋篩選時不能拖曳排序
     ul.appendChild(frag);
+    if (plSel.on) {
+      for (const id of [...plSel.set]) if (!p.items.some((it) => it.id === id)) plSel.set.delete(id); // 已被移除(例如別台裝置)的不再算選取
+      plSel.paint(); plSel.update();
+    }
     updatePlDetailButtons();
     markPlaying();
   }
@@ -1501,11 +1582,13 @@
   }
 
   // ── 「加入播放清單」選單 ──────────────────────────────
-  let pickItems = null;
+  let pickItems = null, pickDone = null;
   const closePick = () => $('pickPl').classList.remove('show');
-  function pickPlaylist(items) {
+  // onDone:成功加入後呼叫(多選模式用來結束選取)
+  function pickPlaylist(items, onDone) {
     if (!items || !items.length) return;
-    pickItems = items;
+    pickItems = items; pickDone = onDone || null;
+    $('pickPl').querySelector('.ttl').textContent = items.length > 1 ? `加入播放清單(${items.length} 首)` : '加入播放清單';
     const ul = $('pickList'); ul.textContent = '';
     if (!playlists.length) {
       const li = document.createElement('li'); li.className = 'note';
@@ -1515,10 +1598,13 @@
       ul.appendChild(makeRow({
         title: p.name, sub: `${p.items.length} 首`,
         onClick: async () => {
-          const its = pickItems; closePick();
+          const its = pickItems, done = pickDone; closePick();
           try {
             const j = await addToPlaylist(p.id, its);
-            setStatus(j.added ? `已加入「${p.name}」` + (its.length > 1 ? `(${j.added} 首)` : '') : `「${p.name}」已經有這首歌了`);
+            const dup = its.length - j.added;
+            setStatus(!j.added ? `「${p.name}」已經有${its.length > 1 ? '這些歌' : '這首歌'}了`
+              : `已加入「${p.name}」` + (its.length > 1 ? `(${j.added} 首` + (dup > 0 ? `,略過 ${dup} 首重複` : '') + ')' : ''));
+            if (done) done();
           } catch (err) { setStatus(err.message); }
         },
       }));
@@ -1527,13 +1613,14 @@
   }
   $('pickClose').addEventListener('click', closePick);
   $('pickNew').addEventListener('click', async () => {
-    const its = pickItems; closePick();
+    const its = pickItems, done = pickDone; closePick();
     const name = await askText('新增播放清單');
     if (!name) return;
     try {
       const p = await createPlaylist(name, its);
       renderPlaylists();
       setStatus(`已建立「${p.name}」並加入 ${p.items.length} 首`);
+      if (done) done();
     } catch (err) { setStatus(err.message); }
   });
   $('fAddPl').addEventListener('click', () => {
@@ -1551,11 +1638,38 @@
     try { const p = await createPlaylist(name); openPlaylist(p.id); } catch (err) { setStatus(err.message); }
   });
   $('plBack').addEventListener('click', () => {
+    if (plSel.on) plSel.setMode(false);
     plOpen = null; plQuery = ''; $('search').value = '';
     renderPlaylists(); $('main').scrollTop = 0;
   });
   $('plPlay').addEventListener('click', () => { if (plOpen) playPlaylist(plOpen); });
   $('plShuffle').addEventListener('click', () => { if (plOpen) playPlaylist(plOpen, null, { shuffleStart: true }); });
+  // 播放清單內頁多選:批次移出 / 加入其他清單
+  const plSel = makeSelector({
+    list: $('plItems'), bar: $('plSelBar'),
+    ids: () => { const p = plOpen && plById(plOpen); return p ? plVisible(p).map((it) => it.id) : []; },
+    rowId: (r) => r.dataset.iid || null,
+  });
+  function setPlSelecting(on) { plSel.setMode(on); renderPlaylists(); }
+  const plSelItems = () => {
+    const p = plOpen && plById(plOpen); if (!p) return [];
+    const byId = new Map(p.items.map((it) => [it.id, it]));
+    return [...plSel.set].map((id) => byId.get(id)).filter(Boolean);
+  };
+  $('plSelect').addEventListener('click', () => setPlSelecting(true));
+  $('plSelCancel').addEventListener('click', () => setPlSelecting(false));
+  $('plSelRemove').addEventListener('click', async () => {
+    const p = plOpen && plById(plOpen); const its = plSelItems();
+    if (!p || !its.length) return;
+    if (!confirm(`從「${p.name}」移出 ${its.length} 首歌?`)) return;
+    if (await removeManyFromPlaylist(p.id, its.map((it) => it.id))) setPlSelecting(false);
+  });
+  $('plSelAdd').addEventListener('click', () => {
+    const its = plSelItems().map((it) => it.kind === 'lib'
+      ? { kind: 'lib', filename: it.filename, title: it.title }
+      : { kind: 'online', url: it.url, title: it.title, author: it.author, platform: it.platform, duration: it.duration });
+    pickPlaylist(its, () => setPlSelecting(false));
+  });
   $('plRename').addEventListener('click', async () => {
     const p = plOpen && plById(plOpen); if (!p) return;
     const name = await askText('重新命名', p.name);
@@ -1569,6 +1683,7 @@
     try { await plApi('DELETE', `${PL_API}/${p.id}`); } catch (err) { return setStatus(err.message); }
     playlists = playlists.filter((x) => x.id !== p.id);
     if (playlistCtx && playlistCtx.id === p.id) playlistCtx = null;
+    if (plSel.on) plSel.setMode(false);
     plOpen = null; renderPlaylists();
     setStatus('已刪除播放清單');
   });
