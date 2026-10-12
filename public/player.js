@@ -10,7 +10,20 @@
   const lsFlag = (k) => { try { return localStorage.getItem(k); } catch { return null; } };
   // 針對「Android 鎖屏背景換歌被系統暫停」的補救:預設只在 Android 啟用,
   // 電腦與 iOS 瀏覽器維持原本的播放行為(可用除錯面板手動開關覆寫)。
-  const IS_ANDROID = /Android/i.test(navigator.userAgent);
+  // Android 平板的 Chrome 常預設「電腦版網站」,UA 會偽裝成 "X11; Linux x86_64"、不含 Android,
+  // 所以除了 UA / Client Hints 之外,再用「Linux(非 ChromeOS)+ 主要輸入是觸控、無滑鼠懸停」判斷。
+  // 觸控螢幕的 Linux 筆電主要輸入是觸控板/滑鼠(pointer: fine、hover: hover),不會被誤判;iPad 的 UA 是 Macintosh,不受影響。
+  const ANDROID_BY = (() => {
+    const ua = navigator.userAgent || '';
+    if (/Android/i.test(ua)) return 'ua';
+    try { if (navigator.userAgentData && navigator.userAgentData.platform === 'Android') return 'uach'; } catch {}
+    try {
+      if (/\bLinux\b/i.test(ua) && !/CrOS/i.test(ua) && navigator.maxTouchPoints > 0
+        && matchMedia('(pointer: coarse)').matches && matchMedia('(hover: none)').matches) return 'desktop-mode';
+    } catch {}
+    return '';
+  })();
+  const IS_ANDROID = !!ANDROID_BY;
   const flagOn = (k, def) => { const v = lsFlag(k); return v === null ? def : v !== '0'; };
   // 除錯功能預設完全關閉。用 /player?debug=1 開啟一次後會記在這個瀏覽器(ml_debug_ui),之後安裝成 PWA 也看得到;
   // /player?debug=0 關閉並清除日誌。沒開啟時不會建立按鈕、不掛任何除錯監聽、不寫日誌。
@@ -2317,7 +2330,7 @@
       'onLine=' + navigator.onLine, 'net=' + (c.effectiveType || '?'),
       'sw=' + (navigator.serviceWorker && navigator.serviceWorker.controller ? '已控制' : '無'),
       'audioSession=' + ('audioSession' in navigator), 'mediaSession=' + ('mediaSession' in navigator),
-      'android=' + IS_ANDROID, 'keep=' + KEEP);
+      'android=' + IS_ANDROID + (ANDROID_BY ? '(' + ANDROID_BY + ')' : ''), 'keep=' + KEEP);
     dbg('UA', navigator.userAgent);
   }
   const fullLog = () =>
