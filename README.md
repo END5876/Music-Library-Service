@@ -70,7 +70,7 @@ header（未設定 `MUSIC_LIB_SECRET` 時不驗證，僅建議在完全信任的
 播放流程移植自 Mousebot 的 `onlineMusicHandler.js`，邏輯與常數相同：
 
 1. 先查快取（`<MUSIC_DIR>` 根目錄第一層，檔名格式與 Bot 相同，所以 Bot 與網頁的快取互相命中）。
-   命中 → 直接播放檔案（可拖曳進度）。
+   命中 → 直接播放檔案（可拖曳進度）。網頁版會先用網址裡的影片 ID 找快取檔，命中時連取得影片資訊的 yt-dlp 都不跑。
 2. 未命中 → yt-dlp 即時串流（YouTube 沿用 client 輪換策略：default → mweb+po → tv → tv_simply → web_embedded）。
 3. 影片 ≤ 7 分鐘 → 同時背景下載快取，完成後自動響度正規化（loudnorm，-16 LUFS）；
    > 7 分鐘、直播或未知長度 → 只串流不下載。同一網址不會重複下載。
@@ -100,8 +100,9 @@ YouTube 需要的環境變數（`WARP_PROXY_URL`、`YOUTUBE_PO_TOKEN`、cookies 
 #### PO Token 自動產生器（bgutil）
 
 專案的 Dockerfile 內建 [bgutil-ytdlp-pot-provider](https://github.com/Brainicism/bgutil-ytdlp-pot-provider)：
-server 裝在 `/opt/bgutil/server`，由 `ytdlp/potProvider.js` 在線上功能初始化時啟動（只聽 `127.0.0.1:4416`，
-掛掉會自動重啟），yt-dlp plugin 放在 `/etc/yt-dlp/plugins/`。yt-dlp 需要 PO Token 時會自動向它要，
+server 裝在 `/opt/bgutil/server`，由 `ytdlp/potProvider.js` **按需啟動**（只聽 `127.0.0.1:4416`）：
+第一次要跑 YouTube 的 yt-dlp 前才啟動，閒置 `POT_IDLE_MINUTES`（預設 15）分鐘後關閉以釋放記憶體，
+掛掉的話下次需要時再啟動。yt-dlp plugin 放在 `/etc/yt-dlp/plugins/`。yt-dlp 需要 PO Token 時會自動向它要，
 不必再手動更新會過期的 `YOUTUBE_PO_TOKEN`。啟動 log 的「PO Token ✓（bgutil 本機）」代表已啟用。
 
 - 想改用獨立的 bgutil 容器：設 `POT_PROVIDER_URL=http://<host>:4416`。

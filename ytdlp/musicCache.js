@@ -13,7 +13,7 @@ const fs   = require('fs');
 const path = require('path');
 const logger = require('../logger');
 const { isYouTubeUrl, YTDLP_PATH } = require('./musicAntiBot');
-const { CACHE_DIR, MAX_CACHE_SIZE_MB, evictCacheIfNeeded, invalidateList } = require('../musicStore');
+const { CACHE_DIR, MAX_CACHE_SIZE_MB, evictCacheIfNeeded, invalidateList, listAll } = require('../musicStore');
 
 // 單一下載的最長時間；yt-dlp 卡死時強制終止，否則下載鎖（downloadingUrls）永遠不會釋放
 const DOWNLOAD_TIMEOUT_MS = 15 * 60 * 1000;
@@ -25,6 +25,18 @@ function ensureCacheDir() {
   }
 }
 
+// 快取檔名裡的影片 ID（BVxxx / avNNN / yt_xxx）；認不出平台 ID 時回傳 null
+function getCacheId(url) {
+  const bvMatch = url.match(/BV[\w]+/i);
+  const avMatch = url.match(/av(\d+)/i);
+  const ytMatch = url.match(/(?:v=|youtu\.be\/)([A-Za-z0-9_-]{11})/);
+
+  return bvMatch ? bvMatch[0]
+    : avMatch    ? `av${avMatch[1]}`
+    : ytMatch    ? `yt_${ytMatch[1]}`
+    : null;
+}
+
 // 格式：<清理後的標題> [<影片ID>].mp3
 function getCacheFilename(url, title) {
   const safeTitle = (title || '')
@@ -33,14 +45,8 @@ function getCacheFilename(url, title) {
     .trim()
     .slice(0, 80);
 
-  const bvMatch = url.match(/BV[\w]+/i);
-  const avMatch = url.match(/av(\d+)/i);
-  const ytMatch = url.match(/(?:v=|youtu\.be\/)([A-Za-z0-9_-]{11})/);
-
-  const idSuffix = bvMatch ? bvMatch[0]
-    : avMatch              ? `av${avMatch[1]}`
-    : ytMatch              ? `yt_${ytMatch[1]}`
-    : Buffer.from(url).toString('base64').replace(/[^A-Za-z0-9]/g, '').slice(0, 12);
+  const idSuffix = getCacheId(url)
+    || Buffer.from(url).toString('base64').replace(/[^A-Za-z0-9]/g, '').slice(0, 12);
 
   return safeTitle ? `${safeTitle} [${idSuffix}].mp3` : `${idSuffix}.mp3`;
 }
@@ -53,6 +59,24 @@ async function getCachedPath(url, title) {
 
   if (fs.existsSync(filePath)) return filePath;
   return null;
+}
+
+// 不知道標題時，只用影片 ID 找快取檔（播放前不必為了算檔名先跑一次 yt-dlp 取標題）。
+// 只找快取範圍（根目錄第一層）；同一個 ID 有多個檔案（影片改過標題）時取最新的。
+// Bilibili 分 P（網址帶 ?p=）各 P 共用同一個 BV 號，認不出是哪一 P，一律回傳 null 走原本流程。
+async function findCachedById(url) {
+  const id = getCacheId(url);
+  if (!id) return null;
+  try { if (new URL(url).searchParams.has('p')) return null; } catch { return null; }
+
+  const suffix = ` [${id}].mp3`;
+  let best = null;
+  for (const f of await listAll()) {
+    if (f.filename.includes('/')) continue;
+    if (!f.filename.endsWith(suffix) && f.filename !== `${id}.mp3`) continue;
+    if (!best || f.mtimeMs > best.mtimeMs) best = f;
+  }
+  return best ? path.join(CACHE_DIR, best.filename) : null;
 }
 
 // 快取大小管理：與 musicStore 共用同一份實作（只清 cache/、不碰暫存檔與策展資料夾）
@@ -134,6 +158,7 @@ module.exports = {
   ensureCacheDir,
   getCacheFilename,
   getCachedPath,
+  findCachedById,
   evictCacheIfNeeded,
   downloadAndCache,
 };

@@ -2,6 +2,7 @@
 // 移植自 Mousebot handlers/musicplayer/onlineMusicHandler.js
 //
 // 播放流程與 Bot 完全相同（playStream）：
+//   0. （網頁版新增）先用網址裡的影片 ID 找快取檔 → 命中就直接送檔，連 getInfo 都不跑
 //   1. 查快取（getCachedPath）→ 命中：直接播放快取檔（_playFromFile）
 //   2. 未命中 → _fallbackStream：yt-dlp 即時串流（YouTube 走 client 輪換策略）
 //   3. 長度 ≤ 7 分鐘 → 同時背景下載快取（downloadingUrls 防重複）→ 下載完成後自動響度正規化
@@ -28,6 +29,7 @@
 
 const { exec }      = require('child_process');
 const { promisify } = require('util');
+const path          = require('path');
 
 const cache      = require('./musicCache');
 const antiBot    = require('./musicAntiBot');
@@ -104,6 +106,12 @@ async function handlePlayRequest(req, res, rawUrl) {
   const url = cleanUrl(String(rawUrl || ''));
   if (!isAllowedUrl(url)) return res.status(400).json({ error: '只支援 YouTube / Bilibili 網址' });
 
+  // 快取命中的快速路徑：用影片 ID 直接找快取檔，不必先跑 yt-dlp 取標題（省一個 yt-dlp 行程與等待時間）。
+  // 只是送檔案，不佔即時串流名額；找不到或送檔失敗就走下面的完整流程。
+  const cachedPath = await cache.findCachedById(url).catch(() => null);
+  if (res.destroyed || req.aborted) return;
+  if (cachedPath && await sendCachedFile(res, cachedPath)) return;
+
   if (activeCtxs.size >= MAX_WEB_STREAMS) {
     return res.status(503).json({ error: '目前串流人數已滿，請稍後再試' });
   }
@@ -133,6 +141,16 @@ async function handlePlayRequest(req, res, rawUrl) {
   });
 
   await playStream(ctx, 0);
+}
+
+// 回傳 true = 已處理（送出或中途斷線）；false = 還沒送出任何東西（例如檔案剛被快取清理刪掉），呼叫端改走完整流程
+function sendCachedFile(res, filePath) {
+  console.log(`✅ [Cache] 依影片 ID 命中快取，直接播放: ${path.basename(filePath)}`);
+  return new Promise((resolve) => {
+    res.sendFile(filePath, { headers: { 'Cache-Control': 'private, no-cache' } }, (err) => {
+      resolve(!err || res.headersSent);
+    });
+  });
 }
 
 // ── 防殭屍進程保護（同 Bot）──

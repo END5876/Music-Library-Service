@@ -60,18 +60,21 @@
         if (r.status === 401) { showLogin('登入已過期,請重新登入'); throw new Error('登入已過期'); }
         if (!r.ok) { const j = await r.json().catch(() => ({})); throw new Error(j.error || 'HTTP ' + r.status); }
         const total = Number(r.headers.get('Content-Length')) || 0;
-        const reader = r.body.getReader();
-        const chunks = []; let got = 0, lastUi = 0;
-        for (;;) {
-          const { done, value } = await reader.read();
-          if (done) break;
-          chunks.push(value); got += value.length;
-          if (st && total) st.pct = Math.min(99, Math.floor(got / total * 100));
-          const t = Date.now();
-          if (t - lastUi > 300) { lastUi = t; refreshDl(); }
-        }
+        // 資料流經計數器只更新進度、不留在 JS 陣列裡，由瀏覽器直接組成 Blob
+        // (Blob 存在 JS heap 之外，可能暫存到磁碟；以前先收集 chunks 再 new Blob，組裝時整首會在記憶體裡佔兩份)
+        let got = 0, lastUi = 0;
+        const counter = new TransformStream({
+          transform(chunk, ctl) {
+            got += chunk.length;
+            if (st && total) st.pct = Math.min(99, Math.floor(got / total * 100));
+            const t = Date.now();
+            if (t - lastUi > 300) { lastUi = t; refreshDl(); }
+            ctl.enqueue(chunk);
+          },
+        });
+        const type = r.headers.get('Content-Type') || 'audio/mpeg';
+        const blob = await new Response(r.body.pipeThrough(counter), { headers: { 'Content-Type': type } }).blob();
         if (!got) throw new Error('下載到空檔案');
-        const blob = new Blob(chunks, { type: r.headers.get('Content-Type') || 'audio/mpeg' });
         const meta = { title: it.title || '', at: Date.now(), author: it.author || '', platform: it.platform || '', duration: it.duration || '' };
         await offlinePut({ key, blob, size: blob.size, ...meta });
         offlineKeys.add(key); offlineSizes.set(key, blob.size); offlineMeta.set(key, meta);

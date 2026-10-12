@@ -19,7 +19,8 @@ const MP3_SELECT = ['-map', '0:a:0', '-vn'];
 const MP3_ENCODE = ['-c:a', 'libmp3lame', '-q:a', '2'];
 
 // 所有 ffmpeg 響度工作（背景下載的正規化、網頁上傳）共用同一個並行上限
-const MAX_CONCURRENT = 2;
+// 記憶體小的機器可設 WEB_MAX_NORMALIZE=1：只是快取檔晚一點完成正規化，不影響播放
+const MAX_CONCURRENT = Math.max(1, parseInt(process.env.WEB_MAX_NORMALIZE || '2', 10) || 2);
 let running = 0;
 const queue = [];
 

@@ -5,6 +5,7 @@
 const { spawn } = require('child_process');
 
 const antiBot = require('./musicAntiBot');
+const potProvider = require('./potProvider');
 const { isAllowedUrl } = require('./urlUtils');
 
 // ── 搜尋／getInfo 逾時保護（同 Bot）──────────────────────
@@ -105,7 +106,8 @@ async function getInfoCached(url) {
 
   if (activeQueries >= MAX_WEB_QUERIES) throw new Error('伺服器忙碌中，請稍後再試');
   activeQueries++;
-  const p = getInfo(url)
+  const p = (antiBot.isYouTubeUrl(url) ? potProvider.ensureReady() : Promise.resolve())
+    .then(() => getInfo(url))
     .then((info) => {
       if (infoCache.size >= INFO_CACHE_MAX) infoCache.delete(infoCache.keys().next().value);
       infoCache.set(url, { info, ts: Date.now() });
@@ -215,22 +217,22 @@ function _searchOnePlatform(searchPrefix, keyword, limit, fast = false) {
 }
 
 // searchMulti — 同時搜尋 YouTube + Bilibili（同 Bot）
+// 每個平台各開一個 yt-dlp，名額依實際開的行程數計算（WEB_MAX_QUERIES 才真的限制得住 yt-dlp 數量）
 async function searchMulti(keyword, limit = 5, fast = false, platforms = ['youtube', 'bilibili']) {
-  if (activeQueries >= MAX_WEB_QUERIES) throw new Error('伺服器忙碌中，請稍後再試');
-  activeQueries++;
+  const useYT   = platforms.includes('youtube');
+  const useBili = platforms.includes('bilibili');
+  const slots   = (useYT ? 1 : 0) + (useBili ? 1 : 0);
+  if (activeQueries + slots > MAX_WEB_QUERIES) throw new Error('伺服器忙碌中，請稍後再試');
+  activeQueries += slots;
   try {
     const tasks = [
-      platforms.includes('youtube')
-        ? _searchOnePlatform('ytsearch', keyword, limit, fast)
-        : Promise.resolve([]),
-      platforms.includes('bilibili')
-        ? _searchOnePlatform('bilisearch', keyword, limit, fast)
-        : Promise.resolve([]),
+      useYT   ? _searchOnePlatform('ytsearch', keyword, limit, fast)   : Promise.resolve([]),
+      useBili ? _searchOnePlatform('bilisearch', keyword, limit, fast) : Promise.resolve([]),
     ];
     const [ytResults, biliResults] = await Promise.all(tasks);
     return [...ytResults, ...biliResults].filter(r => isAllowedUrl(r.url));
   } finally {
-    activeQueries--;
+    activeQueries -= slots;
   }
 }
 

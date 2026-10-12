@@ -13,6 +13,7 @@ const { spawnTree, isAlive, killTree } = require('./procTree');
 const cache      = require('./musicCache');
 const antiBot    = require('./musicAntiBot');
 const normalizer = require('./musicNormalizer');
+const potProvider = require('./potProvider');
 
 // ── 重試配置（同 Bot）────────────────────────────────────
 const MAX_RETRIES            = 3;
@@ -72,6 +73,12 @@ async function playStream(ctx, retryCount = 0) {
       console.log(`⏭️ [${platform}] ${reason}，跳過背景下載，僅串流: ${item.title}`);
     } else {
       console.log(`🔄 [${platform}] 快取未命中，啟動即時串流播放: ${item.title}`);
+    }
+
+    // 串流與背景下載都是 YouTube 的 yt-dlp：先確保 PO Token server 在跑（按需啟動，見 potProvider.js）
+    if (platform === 'YouTube') {
+      await potProvider.ensureReady();
+      if (ctx.closed) return;
     }
 
     _fallbackStream(ctx, retryCount);
@@ -193,7 +200,7 @@ function _fallbackStream(ctx, retryCount) {
     const err = data.toString();
     if (!err.includes('Deleting original file')) {
       console.error(`[${platform}] yt-dlp stderr:`, err);
-      errorOutput += err;
+      errorOutput = (errorOutput + err).slice(-8000); // 只留尾端（錯誤分類只看關鍵字），長時間串流不會一直累積
       if (!err.includes('unable to write data') &&
           !err.includes('Broken pipe') &&
           !err.includes('Invalid argument')) {
@@ -218,7 +225,11 @@ function _fallbackStream(ctx, retryCount) {
 
         if (classified.rotate && antiBot.rotateYtClient(WEB_KEY)) {
           console.log('🔄 [YouTube] 使用備用 client 重試...');
-          setTimeout(() => { if (!ctx.closed && ctx.procs === mine) _fallbackStream(ctx, retryCount); }, 1000);
+          setTimeout(() => {
+            potProvider.ensureReady().then(() => {
+              if (!ctx.closed && ctx.procs === mine) _fallbackStream(ctx, retryCount);
+            });
+          }, 1000);
           return;
         }
       }

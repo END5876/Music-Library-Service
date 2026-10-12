@@ -313,8 +313,12 @@ function buildYouTubeSearchArgs() {
   return args;
 }
 
+// getInfo 實際用到的欄位（見 videoLookup.getInfo），以 yt-dlp 輸出範本輸出成單行 JSON
+const INFO_FIELDS_TEMPLATE = '%(.{title,uploader,channel,creator,duration,thumbnail})j';
+
 function buildInfoArgs(url) {
-  const base = ['--dump-json', '--no-playlist', '--no-warnings', '--skip-download'];
+  // 只輸出用得到的欄位：--dump-json 的完整 JSON（formats、字幕等）YouTube 動輒數 MB，Node 端得整份接收再解析
+  const base = ['-O', INFO_FIELDS_TEMPLATE, '--no-playlist', '--no-warnings', '--skip-download'];
 
   if (isYouTubeUrl(url)) {
     if (WARP_PROXY) {
