@@ -27,6 +27,8 @@
   <symbol id="i-repeat1" viewBox="0 0 24 24"><path d="M7 7h10v3l4-4-4-4v3H5v6h2zm10 10H7v-3l-4 4 4 4v-3h12v-6h-2zm-4-2V9h-1l-2 1v1h1.5v4z"/></symbol>
   <symbol id="i-vol" viewBox="0 0 24 24"><path d="M3 9v6h4l5 5V4L7 9zm13.5 3A4.5 4.5 0 0014 7.97v8.05c1.48-.73 2.5-2.25 2.5-4.02z"/></symbol>
   <symbol id="i-explore" viewBox="0 0 24 24"><path d="M12 10.9a1.1 1.1 0 100 2.2 1.1 1.1 0 000-2.2zM12 2a10 10 0 100 20 10 10 0 000-20zm2.2 12.2L6 18l3.8-8.2L18 6z"/></symbol>
+  <symbol id="i-bot" viewBox="0 0 24 24"><path d="M20 9V7a2 2 0 00-2-2h-3a3 3 0 00-6 0H6a2 2 0 00-2 2v2a3 3 0 000 6v4a2 2 0 002 2h12a2 2 0 002-2v-4a3 3 0 000-6zM7.5 11.5a1.5 1.5 0 113 0 1.5 1.5 0 01-3 0zM16 17H8v-2h8zm-1-4a1.5 1.5 0 110-3 1.5 1.5 0 010 3z"/></symbol>
+  <symbol id="i-stop" viewBox="0 0 24 24"><path d="M6 6h12v12H6z"/></symbol>
   <symbol id="i-lib" viewBox="0 0 24 24"><path d="M4 6H2v14a2 2 0 002 2h14v-2H4zm16-4H8a2 2 0 00-2 2v12a2 2 0 002 2h12a2 2 0 002-2V4a2 2 0 00-2-2zm-2 9.5l-4-2.2V14a2.5 2.5 0 11-1.5-2.3V5h2.5l3 2z"/></symbol>
   <symbol id="i-search" viewBox="0 0 24 24"><path d="M15.5 14h-.79l-.28-.27A6.47 6.47 0 0016 9.5 6.5 6.5 0 109.5 16c1.61 0 3.09-.59 4.23-1.57l.27.28v.79l5 4.99L20.49 19zm-6 0C7.01 14 5 11.99 5 9.5S7.01 5 9.5 5 14 7.01 14 9.5 11.99 14 9.5 14z"/></symbol>
   <symbol id="i-down" viewBox="0 0 24 24"><path d="M7.41 8.59L12 13.17l4.59-4.58L18 10l-6 6-6-6z"/></symbol>
@@ -68,6 +70,7 @@
   <button class="navitem" data-view="playlists"><svg><use href="#i-playlist"/></svg>播放清單</button>
   <button class="navitem" data-view="offline"><svg><use href="#i-offline"/></svg>離線歌曲</button>
   <button class="navitem needs-online" data-view="online" hidden><svg><use href="#i-explore"/></svg>線上搜尋</button>
+  <button class="navitem" data-view="bots"><svg><use href="#i-bot"/></svg>Bot 正在播放</button>
   <button class="navitem subtle" id="helpBtn" title="鍵盤快捷鍵 (?)"><svg><use href="#i-keyboard"/></svg>鍵盤快捷鍵</button>
 </aside>
 
@@ -126,6 +129,15 @@
       </div>
       <ul class="quick" id="offList"></ul>
       <div class="empty" id="offEmpty" hidden><svg><use href="#i-offline"/></svg><b id="offEmptyText"></b><span id="offEmptyHint">在播放清單按下載鈕整份下載,或在歌曲的「⋮」選單選擇「下載離線」。<br>下載後沒有網路也能播放。</span><button class="btn btn-primary" id="offGoPl"><svg><use href="#i-playlist"/></svg>前往播放清單</button></div>
+    </section>
+  </div>
+
+  <div id="viewBots" hidden>
+    <section style="margin-top:0">
+      <div class="sec-head"><h2>Bot 正在播放<small id="botsCount"></small></h2></div>
+      <div class="hint" id="botsHint" hidden></div>
+      <div id="botsList"></div>
+      <div class="empty" id="botsEmpty" hidden><svg><use href="#i-bot"/></svg><b>目前沒有 Bot 連上</b><span>Bot 設定好 MUSIC_LIB_URL 指向這個服務後,就會出現在這裡。<br>可以看到各伺服器正在播的歌、遠端控制,並從音樂庫點歌給 Bot。</span></div>
     </section>
   </div>
 
@@ -217,6 +229,7 @@
   <button data-view="playlists"><svg><use href="#i-playlist"/></svg>播放清單</button>
   <button data-view="offline"><svg><use href="#i-offline"/></svg>離線</button>
   <button class="needs-online" data-view="online" hidden><svg><use href="#i-explore"/></svg>線上搜尋</button>
+  <button data-view="bots"><svg><use href="#i-bot"/></svg>Bot</button>
 </nav>
 
 <div class="full" id="full" data-tab="player">
@@ -259,6 +272,16 @@
       <button class="btn btn-secondary" id="pickNew" type="button"><svg><use href="#i-plus"/></svg>新增播放清單</button>
       <button class="btn btn-secondary" id="pickClose" type="button">取消</button>
     </div>
+  </div>
+</div>
+
+<div class="dialog" id="botPick">
+  <div class="box" role="dialog" aria-modal="true" aria-labelledby="botPickTitle">
+    <p class="ttl" id="botPickTitle">點給 Bot 播放</p>
+    <p class="msg" id="botPickSong"></p>
+    <ul class="pick-list" id="botPickList"></ul>
+    <label class="check-line"><input type="checkbox" id="botPickNext">下一首播放(插到 Bot 佇列最前面)</label>
+    <div class="dlg-actions"><button class="btn btn-secondary" id="botPickClose" type="button">取消</button></div>
   </div>
 </div>
 
@@ -320,6 +343,7 @@
 <script src="/player-assets/playerDebug.js"></script>
 <script src="/player-assets/playerPlatform.js"></script>
 <script src="/player-assets/playerGestures.js"></script>
+<script src="/player-assets/playerBots.js"></script>
 <script src="/player-assets/player.js"></script>
 </body>
 </html>

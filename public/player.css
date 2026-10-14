@@ -351,3 +351,32 @@ body.pl-detail header .search{visibility:hidden}
   .pl-listcol{grid-area:list;min-width:0}
   #plItems{margin-top:0}
 }
+
+/* ── Bot 正在播放(playerBots.js)── */
+.bot-card{background:var(--surface-1);border:1px solid var(--border);border-radius:14px;padding:16px;margin-bottom:16px;display:flex;flex-direction:column;gap:14px}
+.bot-card.offline{opacity:.6}
+.bot-head{display:flex;align-items:center;gap:10px;min-width:0}
+.bot-head b{font-size:17px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.bot-head > svg{color:var(--text-2)}
+.bot-dot{display:inline-flex;align-items:center;gap:6px;font-size:12px;color:var(--text-3);margin-left:auto;flex-shrink:0}
+.bot-dot::before{content:"";width:8px;height:8px;border-radius:50%;background:var(--text-3)}
+.bot-dot.on{color:var(--text-2)}
+.bot-dot.on::before{background:#1db954}
+.bot-guild{display:flex;flex-direction:column;gap:12px;padding-top:14px;border-top:1px solid var(--border)}
+.bot-guild-head{display:flex;align-items:baseline;gap:10px;flex-wrap:wrap;min-width:0}
+.bot-guild-head b{font-size:15px}
+.bot-vc{font-size:13px;color:var(--text-3)}
+.bot-guild .hint{padding:0}
+.bot-now{display:flex;align-items:center;gap:14px;min-width:0}
+.bot-now .cover{width:64px;flex-shrink:0}
+.bot-now .info{flex:1;min-width:0}
+.bot-now .t{font-weight:600}
+.bot-prog{display:flex;align-items:center;gap:10px;margin-top:8px;font-size:12px;color:var(--text-3);font-variant-numeric:tabular-nums}
+.bot-prog .bar{flex:1;height:4px;border-radius:2px;background:var(--surface-3);overflow:hidden}
+.bot-prog .bar i{display:block;height:100%;background:var(--text);border-radius:2px;transition:width 1s linear}
+.bot-prog .dur:empty{display:none}
+.bot-ctrls,.bot-modes{display:flex;gap:8px;flex-wrap:wrap}
+.bot-queue-head{display:flex;align-items:center;justify-content:space-between;gap:12px}
+.bot-queue-head h4{font-size:14px;font-weight:600;color:var(--text-2)}
+.check-line{display:flex;align-items:center;gap:8px;color:var(--text-2);font-size:14px;cursor:pointer}
+.check-line input{width:18px;height:18px;min-width:18px;padding:0;border:0;accent-color:var(--accent)}

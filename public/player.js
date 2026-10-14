@@ -7,7 +7,8 @@
 //   → 控制項 → 頁籤 → 線上搜尋/串流 → 播放清單 + 離線下載 → 音樂庫管理(收藏/改名/刪除) → 初始化
 // 相依腳本（player.html 中需先載入，sw.js 的 SHELL_URLS 也要列出）：
 //   offlineStore.js（IndexedDB）、downloader.js（下載引擎）、playerUi.js（提示訊息、返回鍵層級、對話框）、
-//   playerDebug.js（除錯模式與面板）、playerPlatform.js（Android 判斷、靜音保活）、playerGestures.js（手機手勢）
+//   playerDebug.js（除錯模式與面板）、playerPlatform.js（Android 判斷、靜音保活）、playerGestures.js（手機手勢）、
+//   playerBots.js（「Bot 正在播放」頁籤與點歌給 Bot）
 (() => {
   const { $, enc, fmt, fmtSize, setIcon, setStatus, pushLayer, dropLayer, askText, askConfirm } = window.MLUi; // playerUi.js
   const { DEBUG_UI, dbg, setupDebugPanel } = window.MLDebug;                                                // playerDebug.js
@@ -161,7 +162,7 @@
     setSession('none');
     await fetch('/web/logout', { method: 'POST' }).catch(() => {});
     all = []; view = []; queue = []; history = []; byFile = new Map();
-    playlists = []; plOpen = null; playlistCtx = null; clearDataCaches();
+    playlists = []; plOpen = null; playlistCtx = null; clearDataCaches(); bots.hide();
     currentFile = null; onlineCurrent = null;
     dropPreload(); keepOff();
     $('onlineResults').textContent = '';
@@ -211,6 +212,12 @@
     if (onClick) li.addEventListener('click', onClick);
     return li;
   }
+
+  // ── Bot 正在播放(頁籤畫面與遠端控制在 playerBots.js)──
+  const bots = window.MLBots.createBots({
+    $, setStatus, askConfirm, pushLayer, dropLayer, fmt, makeRow, showLogin,
+    libInfo: (fn) => { const f = byFile.get(fn); return f ? { name: f.name, duration: f.duration || 0 } : null; },
+  });
 
   const folderOf = (f) => f.filename.includes('/') ? f.filename.split('/')[0] : '';
   const libSub = (f) => folderOf(f) || '音樂庫';
@@ -344,6 +351,7 @@
     applyFilter();
     loadCapabilities();
     loadPlaylists();
+    bots.refresh();
     scheduleDurations(j.durationsPending);
   }
 
@@ -1116,10 +1124,14 @@
     $('viewOnline').hidden = m !== 'online';
     $('viewPlaylists').hidden = m !== 'playlists';
     $('viewOffline').hidden = m !== 'offline';
+    $('viewBots').hidden = m !== 'bots';
+    if (m === 'bots') bots.show(); else bots.hide();
     document.body.classList.toggle('pl-detail', m === 'playlists' && !!plOpen && !!plById(plOpen));
     document.querySelectorAll('[data-view]').forEach(b => b.classList.toggle('active', b.dataset.view === m));
     const s = $('search');
-    if (m === 'online') { s.placeholder = '搜尋 YouTube / Bilibili,或貼上影片網址,按 Enter'; s.value = onlineQuery; }
+    s.disabled = m === 'bots'; // Bot 頁籤沒有可搜尋的內容:找歌請到音樂庫／線上搜尋,再從「⋮」點給 Bot
+    if (m === 'bots') { s.placeholder = '到「音樂庫」或「線上搜尋」找歌,從「⋮」點給 Bot'; s.value = ''; }
+    else if (m === 'online') { s.placeholder = '搜尋 YouTube / Bilibili,或貼上影片網址,按 Enter'; s.value = onlineQuery; }
     else if (m === 'playlists') { s.placeholder = '搜尋播放清單…'; s.value = plQuery; renderPlaylists(); }
     else if (m === 'offline') { s.placeholder = '搜尋離線歌曲…'; s.value = offQuery; renderOffline(); updateQuota(); }
     else { s.placeholder = '搜尋歌名…'; s.value = libQuery; markPlaying(); }
@@ -1181,6 +1193,7 @@
   function queueMenuItems(it) {
     menuItem('play-next', '下一首播放', () => queueItem(it, true));
     menuItem('queue-add', '加入佇列', () => queueItem(it, false));
+    if (bots.hasTargets()) menuItem('bot', '點給 Bot 播放', () => bots.sendToBot(it));
   }
 
   $('searchForm').addEventListener('submit', async (e) => {
@@ -1207,6 +1220,7 @@
           btn: [
             { icon: 'plus', title: '加入佇列', onClick: () => addToQueue(r) },
             { icon: 'playlist-add', title: '加入播放清單', onClick: () => pickPlaylist([onlineItem(r)]) },
+            ...(bots.hasTargets() ? [{ icon: 'bot', title: '點給 Bot 播放', onClick: () => bots.sendToBot(onlineItem(r)) }] : []),
           ],
         }));
       }
@@ -2204,5 +2218,7 @@
   window.MLGestures.setupGestures({ $, libSel, plSel, setLibSelecting, setPlSelecting, isFullOpen, openFull, closeFull, advance, prev });
 
   offlineInit().finally(() => { updateNetState(); loadList(listReq); });
+  // 「點給 Bot 播放」選單項目只在有 Bot 在語音頻道時出現:頁面開著時每分鐘更新一次(Bot 頁籤開著時由 SSE 即時更新)
+  setInterval(() => { if (!document.hidden && mode !== 'bots' && $('logoutBtn').hidden === false) bots.refresh(); }, 60 * 1000);
   registerSW();
 })();

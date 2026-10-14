@@ -20,6 +20,7 @@
 //   uploadRoutes.js    受控音檔上傳（/upload?upload=1、/web/api/upload?upload=1）
 //   durationStore.js   歌曲長度快取（ffprobe 讀取，/web/api/list 會帶上 duration）
 //   libraryManageRoutes.js  音樂庫管理：移動（收藏到資料夾）／重新命名／刪除（/web/api/library/*）
+//   ../botSync/routes.js    Bot 正在播放＋遠端控制（/web/api/bots/*）
 //
 // 本檔路由：
 //   GET  /player             播放器頁面（純靜態，不含任何音樂庫資料）
@@ -36,8 +37,9 @@ const { mountPlaylists } = require('./playlistRoutes');
 const { mountUploadRoutes } = require('./uploadRoutes');
 const { mountLibraryManageRoutes } = require('./libraryManageRoutes');
 const durationStore = require('./durationStore');
+const { mountWebApi: mountBotWebApi } = require('../botSync/routes');
 
-function mountWebPlayer(app, { store, libSecret, status }) {
+function mountWebPlayer(app, { store, libSecret, status, botHub }) {
   const auth = mountWebAuth(app, { libSecret });
   if (!auth) return false;
   const { requireWebAuth } = auth;
@@ -101,6 +103,7 @@ function mountWebPlayer(app, { store, libSecret, status }) {
   mountPlaylists(app, { requireWebAuth, online });
   mountUploadRoutes(app, { store, requireWebAuth });
   mountLibraryManageRoutes(app, { store, requireWebAuth });
+  if (botHub) mountBotWebApi(app, { hub: botHub, requireWebAuth, store, isAllowedUrl: online.isAllowedUrl, cleanUrl: online.cleanUrl });
 
   if (status) {
     app.get('/web/api/status', requireWebAuth, async (req, res) => {

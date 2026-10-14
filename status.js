@@ -6,6 +6,7 @@
 
 const store = require('./musicStore');
 const online = require('./ytdlp/onlineStream');
+const { hub: botHub } = require('./botSync');
 
 const startedAt = Date.now();
 
@@ -21,6 +22,7 @@ async function collect() {
     memory: { rssMB: Math.round(mem.rss / 1048576), heapUsedMB: Math.round(mem.heapUsed / 1048576) },
     library,
     online: online.getStats(),
+    bots: botHub.snapshot().map((b) => ({ id: b.id, name: b.name, online: b.online, guilds: b.guilds.length })),
   };
 }
 

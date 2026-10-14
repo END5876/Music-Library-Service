@@ -21,6 +21,9 @@ header（未設定 `MUSIC_LIB_SECRET` 時不驗證，僅建議在完全信任的
 | GET | `/api/music/file/*` | 下載檔案 |
 | PUT | `/api/music/file/*` | 上傳／覆寫檔案（原始位元組 body；僅限音訊副檔名，單檔上限 `MAX_UPLOAD_MB`，預設 512） |
 | GET | `/api/music/status` | 服務狀態（見下方「服務狀態與記錄」） |
+| PUT | `/api/music/bots/:botId/state` | Bot 推送「正在播放」（見下方「Bot 正在播放」） |
+| GET | `/api/music/bots/:botId/commands?wait=25` | Bot 長輪詢拿網頁送來的控制指令 |
+| POST | `/api/music/bots/:botId/commands/:id/result` | Bot 回報指令執行結果 |
 
 > 🔒 有設定 `WEB_PLAYER_PASSWORD`（代表服務有公開網域）卻沒設 `MUSIC_LIB_SECRET` 時，
 > `/api/music/*` 預設**停用**（一律回 `503`），避免整個音樂庫對公網開放讀寫。
@@ -60,6 +63,27 @@ header（未設定 `MUSIC_LIB_SECRET` 時不驗證，僅建議在完全信任的
 | POST | `/web/api/library/move` | `{ from, to }` 移動／重新命名（`to` 可省略副檔名；播放清單跟著改路徑） |
 | DELETE | `/web/api/library/file/*` | 從音樂庫刪除檔案 |
 | GET | `/web/api/status` | 服務狀態（需登入，內容同 `/api/music/status`） |
+| GET | `/web/api/bots` | 各 Bot、各伺服器的播放狀態 |
+| GET | `/web/api/bots/events` | SSE：Bot 狀態有變就推送（`event: state`） |
+| POST | `/web/api/bots/:botId/command` | 遠端控制 Bot，等 Bot 回報結果 `{ ok, message }` |
+
+### Bot 正在播放（Bot ↔ 網頁同步）
+
+播放器的 **Bot 正在播放** 頁籤即時顯示各 Bot、各伺服器正在播的歌、播放進度、循環模式與佇列，並可以：
+
+- 跳過、停止、切換循環（不循環／單曲／列表）、隨機連播、清空佇列、移除佇列中的某首。
+- 在音樂庫、播放清單歌曲的「⋮」選單，或線上搜尋結果的 Bot 圖示選「**點給 Bot 播放**」，挑一個 Bot 所在的伺服器送過去
+  （可勾選「下一首播放」插到佇列最前面）。只有 Bot 目前在語音頻道裡的伺服器可以點歌。
+- 每個網頁操作都會在該伺服器最近點歌的文字頻道留一行「🌐 網頁播放器：…」紀錄（Bot 端 `WEB_SYNC_ANNOUNCE=0` 可關閉）。
+
+運作方式：連線方向只有「Bot → 這個服務」，Bot 不需要對外開 port，沿用 `MUSIC_LIB_URL` 與 `MUSIC_LIB_SECRET`。
+
+- Bot 在播放、佇列、循環模式變動時推送整份狀態，另外每 30 秒心跳一次；超過 90 秒沒消息就顯示為離線。
+- Bot 用長輪詢（每次最多等 25 秒）拿網頁送來的指令，執行完回報結果，網頁最多等 20 秒；
+  沒被拿走的指令 30 秒後丟棄。
+- 網頁只在這個頁籤開著時連 SSE；狀態只存在記憶體，服務重啟後 Bot 下一次推送就會補回來。
+- Bot 端實作在 Mousebot／Mousebot-lite 的 `handlers/musicplayer/unifiedQueue/webSync.js`（兩邊相同），
+  有設 `MUSIC_LIB_URL` 就自動啟用，`WEB_SYNC=0` 可關閉。
 
 ### 收藏、重新命名、刪除
 

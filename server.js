@@ -23,6 +23,7 @@
 //   GET  /api/music/file/*                          下載檔案內容（* 是相對於音樂庫根目錄的路徑）
 //   PUT  /api/music/file/*                          上傳／覆寫檔案內容（原始位元組，不做任何解析）
 //   GET  /api/music/status                          服務狀態（快取用量、串流、yt-dlp 版本…，見 status.js）
+//   PUT  /api/music/bots/:botId/state 等             Bot ↔ 網頁「正在播放」同步（見 botSync/routes.js）
 //
 // 網頁播放器（設定 WEB_PLAYER_PASSWORD 才啟用）：路由完整清單見 README，
 // 各組路由的實作分在 webplayer/ 底下（入口是 webplayer/webPlayer.js）。
@@ -40,6 +41,7 @@ const store = require('./musicStore');
 const status = require('./status');
 const { mountLibraryRoutes, isInsecureLocked } = require('./libraryRoutes');
 const { mountWebPlayer } = require('./webplayer/webPlayer');
+const botSync = require('./botSync');
 
 const PORT = process.env.PORT || 4100;
 const SECRET = process.env.MUSIC_LIB_SECRET || '';
@@ -68,9 +70,11 @@ app.get('/health', (req, res) => res.json({ ok: true }));
 
 // Bot 用的內部 API（/api/music/*，需帶 x-music-lib-key）
 mountLibraryRoutes(app, { store, secret: SECRET, status });
+// Bot 推送「正在播放」、拿網頁送來的控制指令（/api/music/bots/*，同樣受上面的金鑰保護）
+botSync.mountBotApi(app, { hub: botSync.hub });
 
 // 網頁播放器：走自己的 Cookie 驗證，不影響上面 Bot 用的 /api/music/*
-const webPlayerEnabled = mountWebPlayer(app, { store, libSecret: SECRET, status });
+const webPlayerEnabled = mountWebPlayer(app, { store, libSecret: SECRET, status, botHub: botSync.hub });
 
 // 統一錯誤處理：不把堆疊或 HTML 錯誤頁回給客戶端
 app.use((err, req, res, next) => {

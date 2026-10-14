@@ -29,7 +29,8 @@ function installConsoleTimestamps(env = process.env) {
 }
 
 // 長時間傳輸是正常的路徑（音檔、串流），不算慢請求
-const LONG_RUNNING = /^\/(web\/stream|web\/play|api\/music\/file|web\/api\/upload)\b/;
+// （Bot 的長輪詢與網頁的 SSE 本來就會掛著；送指令給 Bot 要等 Bot 回報結果）
+const LONG_RUNNING = /^\/(web\/stream|web\/play|api\/music\/file|web\/api\/upload|api\/music\/bots\/[^/]+\/commands$|web\/api\/bots\/)/;
 const SLOW_MS = 3000;
 
 function requestId() {
