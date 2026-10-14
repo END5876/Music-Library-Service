@@ -19,11 +19,13 @@
 //   playlistRoutes.js  播放清單 API（/web/api/playlists/*）
 //   uploadRoutes.js    受控音檔上傳（/upload?upload=1、/web/api/upload?upload=1）
 //   durationStore.js   歌曲長度快取（ffprobe 讀取，/web/api/list 會帶上 duration）
+//   libraryManageRoutes.js  音樂庫管理：移動（收藏到資料夾）／重新命名／刪除（/web/api/library/*）
 //
 // 本檔路由：
 //   GET  /player             播放器頁面（純靜態，不含任何音樂庫資料）
 //   GET  /web/api/list       曲目清單（需登入）
 //   GET  /web/stream/*       串流音檔，支援 Range 拖曳進度（需登入）
+//   GET  /web/api/status     服務狀態（需登入；內容同 /api/music/status，見 status.js）
 
 const path = require('path');
 const express = require('express');
@@ -32,9 +34,10 @@ const { mountWebAuth } = require('./webAuth');
 const { mountOnlineRoutes } = require('./onlineRoutes');
 const { mountPlaylists } = require('./playlistRoutes');
 const { mountUploadRoutes } = require('./uploadRoutes');
+const { mountLibraryManageRoutes } = require('./libraryManageRoutes');
 const durationStore = require('./durationStore');
 
-function mountWebPlayer(app, { store, libSecret }) {
+function mountWebPlayer(app, { store, libSecret, status }) {
   const auth = mountWebAuth(app, { libSecret });
   if (!auth) return false;
   const { requireWebAuth } = auth;
@@ -80,6 +83,7 @@ function mountWebPlayer(app, { store, libSecret }) {
     try {
       const absPath = store.resolveForRead(req.params[0]);
       if (!absPath) return res.status(404).json({ error: '找不到檔案' });
+      store.touchCache(absPath); // 播放＝使用中，延後被快取清理（LRU）
       res.sendFile(absPath, { headers: { 'Cache-Control': 'private, max-age=3600' } }, (err) => {
         if (err && !res.headersSent) {
           if (store.isNotFoundError(err)) return res.status(404).json({ error: '找不到檔案' });
@@ -96,6 +100,14 @@ function mountWebPlayer(app, { store, libSecret }) {
 
   mountPlaylists(app, { requireWebAuth, online });
   mountUploadRoutes(app, { store, requireWebAuth });
+  mountLibraryManageRoutes(app, { store, requireWebAuth });
+
+  if (status) {
+    app.get('/web/api/status', requireWebAuth, async (req, res) => {
+      res.set('Cache-Control', 'no-store');
+      res.json(await status.collect());
+    });
+  }
 
   return true;
 }

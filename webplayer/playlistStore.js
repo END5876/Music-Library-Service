@@ -229,4 +229,22 @@ function reorder(id, order) {
   return p;
 }
 
-module.exports = { HttpError, FILE, list, create, rename, remove, addItems, removeItem, removeItems, reorder };
+// 音樂庫檔案被移動／重新命名後，所有播放清單裡指向舊路徑的項目跟著改。
+// 同一份清單裡新路徑已經存在時，移除舊的那筆（維持「同一清單不重複歌曲」）。回傳受影響的清單數。
+function renameLibFile(from, to) {
+  if (!from || !to || from === to) return 0;
+  let changed = 0;
+  for (const p of load().playlists) {
+    if (!p.items.some((it) => it.kind === 'lib' && it.filename === from)) continue;
+    const hasTo = p.items.some((it) => it.kind === 'lib' && it.filename === to);
+    p.items = hasTo
+      ? p.items.filter((it) => !(it.kind === 'lib' && it.filename === from))
+      : p.items.map((it) => (it.kind === 'lib' && it.filename === from ? { ...it, filename: to } : it));
+    p.updatedAt = now();
+    changed += 1;
+  }
+  if (changed) save();
+  return changed;
+}
+
+module.exports = { HttpError, FILE, list, create, rename, remove, addItems, removeItem, removeItems, reorder, renameLibFile };

@@ -51,14 +51,14 @@ function getCacheFilename(url, title) {
   return safeTitle ? `${safeTitle} [${idSuffix}].mp3` : `${idSuffix}.mp3`;
 }
 
-// 檢查快取是否存在，回傳路徑或 null
+// 檢查快取是否存在，回傳路徑或 null（非同步 stat，不卡住同時進行的串流）
 async function getCachedPath(url, title) {
   ensureCacheDir();
   const filename = getCacheFilename(url, title);
   const filePath = path.join(CACHE_DIR, filename);
 
-  if (fs.existsSync(filePath)) return filePath;
-  return null;
+  const st = await fs.promises.stat(filePath).catch(() => null);
+  return st && st.isFile() ? filePath : null;
 }
 
 // 不知道標題時，只用影片 ID 找快取檔（播放前不必為了算檔名先跑一次 yt-dlp 取標題）。

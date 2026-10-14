@@ -1,108 +1,21 @@
 'use strict';
-// player.js — 網頁播放器前端（單一 IIFE，所有區塊共用同一組閉包狀態，因此不再往下拆）
+// player.js — 網頁播放器前端的核心（單一 IIFE：佇列、播放、清單、播放清單、離線下載共用同一組閉包狀態）。
+// 不碰這些狀態的部分已拆成獨立檔案，透過 window.ML* 取用（見下方「相依腳本」）。
 // 區塊索引（依序，搜尋 "// ── " 或 "//  " 標題可跳轉）：
 //   狀態與偏好 → 背景播放 helper → 登入 → 列表元件(makeRow) → 音樂庫清單 → 目前播放資訊
 //   → 隨機佇列 → 佇列畫面 → 拖曳排序 → 播放(play/advance/prev) → audio 事件 → 補救機制 → 預載
-//   → 控制項 → 頁籤 → 線上搜尋/串流 → 播放清單 + 離線下載 → 初始化
-// 相依腳本（player.html 中需先載入）：offlineStore.js（IndexedDB）、downloader.js（下載引擎）
+//   → 控制項 → 頁籤 → 線上搜尋/串流 → 播放清單 + 離線下載 → 音樂庫管理(收藏/改名/刪除) → 初始化
+// 相依腳本（player.html 中需先載入，sw.js 的 SHELL_URLS 也要列出）：
+//   offlineStore.js（IndexedDB）、downloader.js（下載引擎）、playerUi.js（提示訊息、返回鍵層級、對話框）、
+//   playerDebug.js（除錯模式與面板）、playerPlatform.js（Android 判斷、靜音保活）、playerGestures.js（手機手勢）
 (() => {
-  const $ = (id) => document.getElementById(id);
-  const lsFlag = (k) => { try { return localStorage.getItem(k); } catch { return null; } };
-  // 針對「Android 鎖屏背景換歌被系統暫停」的補救:預設只在 Android 啟用,
-  // 電腦與 iOS 瀏覽器維持原本的播放行為(可用除錯面板手動開關覆寫)。
-  // Android 平板的 Chrome 常預設「電腦版網站」,UA 會偽裝成 "X11; Linux x86_64"、不含 Android,
-  // 所以除了 UA / Client Hints 之外,再用「Linux(非 ChromeOS)+ 主要輸入是觸控、無滑鼠懸停」判斷。
-  // 觸控螢幕的 Linux 筆電主要輸入是觸控板/滑鼠(pointer: fine、hover: hover),不會被誤判;iPad 的 UA 是 Macintosh,不受影響。
-  const ANDROID_BY = (() => {
-    const ua = navigator.userAgent || '';
-    if (/Android/i.test(ua)) return 'ua';
-    try { if (navigator.userAgentData && navigator.userAgentData.platform === 'Android') return 'uach'; } catch {}
-    try {
-      if (/\bLinux\b/i.test(ua) && !/CrOS/i.test(ua) && navigator.maxTouchPoints > 0
-        && matchMedia('(pointer: coarse)').matches && matchMedia('(hover: none)').matches) return 'desktop-mode';
-    } catch {}
-    return '';
-  })();
-  const IS_ANDROID = !!ANDROID_BY;
-  const flagOn = (k, def) => { const v = lsFlag(k); return v === null ? def : v !== '0'; };
-  // 除錯功能預設完全關閉。用 /player?debug=1 開啟一次後會記在這個瀏覽器(ml_debug_ui),之後安裝成 PWA 也看得到;
-  // /player?debug=0 關閉並清除日誌。沒開啟時不會建立按鈕、不掛任何除錯監聽、不寫日誌。
-  const DEBUG_UI = (() => {
-    let param = null;
-    try { param = new URLSearchParams(location.search).get('debug'); } catch {}
-    try {
-      if (param === '1') localStorage.setItem('ml_debug_ui', '1');
-      else if (param === '0') ['ml_debug_ui', 'ml_debug', 'ml_log'].forEach((k) => localStorage.removeItem(k));
-      return localStorage.getItem('ml_debug_ui') === '1';
-    } catch { return param === '1'; }
-  })();
-  // 靜音保活:Android 預設開啟(只有在除錯面板裡手動關掉才會關)
-  const KEEP = IS_ANDROID && (!DEBUG_UI || flagOn('ml_keep', true));
+  const { $, enc, fmt, fmtSize, setIcon, setStatus, pushLayer, dropLayer, askText, askConfirm } = window.MLUi; // playerUi.js
+  const { DEBUG_UI, dbg, setupDebugPanel } = window.MLDebug;                                                // playerDebug.js
+  const { ANDROID_BY, IS_ANDROID, KEEP, keep, keepOn, keepOff } = window.MLPlatform;                         // playerPlatform.js
   const audio = $('audio');
 
-  // ── 靜音保活元素 ──
-  // 日誌顯示:Android 鎖屏、連續背景換歌時,換音源的瞬間(abort/emptied)播放中的媒體會短暫歸零,
-  // 約 0.1~0.3 秒後系統就把這首暫停,同時背景網路請求也失敗(整個程序被降級)。
-  // 做法:另開一個永遠不換音源、循環播放靜音 WAV 的 <audio>,讓換歌空窗期間頁面仍有媒體在播放。
-  // 使用者暫停／播放結束時一併停止,不會一直佔著。
-  let silentUrl = null;
-  function silentWavUrl() {
-    const rate = 8000, n = rate; // 1 秒、8-bit 單聲道
-    const buf = new ArrayBuffer(44 + n), v = new DataView(buf);
-    const w = (o, str) => { for (let i = 0; i < str.length; i++) v.setUint8(o + i, str.charCodeAt(i)); };
-    w(0, 'RIFF'); v.setUint32(4, 36 + n, true); w(8, 'WAVE'); w(12, 'fmt ');
-    v.setUint32(16, 16, true); v.setUint16(20, 1, true); v.setUint16(22, 1, true);
-    v.setUint32(24, rate, true); v.setUint32(28, rate, true); v.setUint16(32, 1, true); v.setUint16(34, 8, true);
-    w(36, 'data'); v.setUint32(40, n, true);
-    new Uint8Array(buf, 44).fill(128); // 8-bit PCM 的 128 = 靜音
-    return (silentUrl = silentUrl || URL.createObjectURL(new Blob([buf], { type: 'audio/wav' })));
-  }
-  const keep = new Audio();
-  keep.loop = true; keep.preload = 'auto'; keep.setAttribute('playsinline', '');
-  let keepReady = false;
-  function keepOn() {
-    if (!KEEP) return;
-    if (!keepReady) { keep.src = silentWavUrl(); keepReady = true; }
-    if (!keep.paused) return;
-    const p = keep.play();
-    if (p && p.catch) p.catch((err) => dbg('保活元素 play 失敗', err));
-  }
-  function keepOff() { try { if (!keep.paused) keep.pause(); } catch {} }
-  for (const ev of ['play', 'pause', 'error']) keep.addEventListener(ev, () => dbg('keep:' + ev, 'hidden=' + document.hidden));
   const REPEATS = ['all', 'one', 'off'];
   const REPEAT_LABEL = { all: '循環:全部', one: '循環:單曲', off: '不循環' };
-
-  // ── 除錯模式 ──
-  // 網址加 ?debug=1 後,右上角出現 🐞 面板。開啟後記錄播放流程,
-  // 日誌存在記憶體並同步寫入 localStorage.ml_log(最多 500 行,鎖屏／重新整理後仍在),可在面板複製或匯出。
-  let DEBUG = false;
-  if (DEBUG_UI) { try { DEBUG = localStorage.getItem('ml_debug') === '1'; } catch {} }
-  const LOG_MAX = 500;
-  let logBuf = [];
-  if (DEBUG_UI) { try { const l = JSON.parse(localStorage.getItem('ml_log') || '[]'); if (Array.isArray(l)) logBuf = l.slice(-LOG_MAX); } catch {} }
-  let logLive = null;   // 面板開著時的即時刷新函式
-  let logSaveTimer = 0;
-  const pad = (n, w = 2) => String(n).padStart(w, '0');
-  const stamp = () => { const d = new Date(); return `${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}.${pad(d.getMilliseconds(), 3)}`; };
-  const logStr = (v) => {
-    if (typeof v === 'string') return v;
-    if (v instanceof Error) return v.name + ': ' + v.message;
-    try { return String(JSON.stringify(v)); } catch { return String(v); }
-  };
-  function saveLog() {
-    clearTimeout(logSaveTimer); logSaveTimer = 0;
-    try { localStorage.setItem('ml_log', JSON.stringify(logBuf)); } catch {}
-  }
-  function dbg(...a) {
-    if (!DEBUG) return;
-    const line = stamp() + (document.hidden ? ' [背景]' : '') + ' ' + a.map(logStr).join(' ');
-    logBuf.push(line);
-    if (logBuf.length > LOG_MAX) logBuf.splice(0, logBuf.length - LOG_MAX);
-    console.log('[player]', line);
-    // 背景／鎖屏時頁面隨時可能被凍結:立刻寫入;前景則合併寫入
-    if (document.hidden) saveLog(); else if (!logSaveTimer) logSaveTimer = setTimeout(saveLog, 500);
-    if (logLive) logLive();
-  }
 
   // 拖曳排序的提示線(CSS 檔不用再改)
   const st = document.createElement('style');
@@ -171,73 +84,17 @@
     try { localStorage.setItem('ml_prefs', JSON.stringify({ volume: audio.volume, shuffle, repeat })); } catch {}
   }
 
-  const enc = encodeURIComponent;
   const streamUrl = (f) => '/web/stream/' + f.split('/').map(enc).join('/');
-  const fmt = (s) => { s = Math.max(0, Math.floor(s || 0)); return Math.floor(s / 60) + ':' + String(s % 60).padStart(2, '0'); };
   const libDur = (f) => (f && f.duration ? fmt(f.duration) : ''); // 音樂庫曲目的歌曲長度(伺服器還沒讀到時為空)
-  const fmtSize = (b) => b >= 1073741824 ? (b / 1073741824).toFixed(1) + ' GB' : b >= 1048576 ? (b / 1048576).toFixed(1) + ' MB' : Math.max(1, Math.round(b / 1024)) + ' KB';
-  const setIcon = (btn, name) => btn.querySelector('use').setAttribute('href', '#i-' + name);
-
-  let toastTimer = null;
-  // action:{ label, fn } 在訊息旁放一個按鈕(例如「復原」),按下後執行並關閉訊息
-  function setStatus(text, sticky = false, action = null) {
-    const el = $('toast');
-    clearTimeout(toastTimer);
-    if (!text) { el.classList.remove('show', 'has-action'); return; }
-    el.textContent = '';
-    const msg = document.createElement('span'); msg.textContent = text; el.appendChild(msg);
-    el.classList.toggle('has-action', !!action);
-    if (action) {
-      const b = document.createElement('button');
-      b.className = 'toast-act'; b.textContent = action.label;
-      b.addEventListener('click', () => { el.classList.remove('show', 'has-action'); action.fn(); });
-      el.appendChild(b);
-    }
-    el.classList.add('show');
-    if (!sticky) toastTimer = setTimeout(() => el.classList.remove('show', 'has-action'), action ? 8000 : 6000);
-  }
-
-  // ── 返回鍵(瀏覽器／Android 返回)──
-  // 每打開一層(全螢幕播放頁、播放清單內頁、多選、對話框、選單)就 pushState 一筆;
-  // 按返回 → popstate 關掉最上面那層。從畫面上關閉時(按 ✕、取消)呼叫 dropLayer,
-  // 稍後用 window.history.go(-n) 把那幾筆消耗掉,讓歷史筆數與開著的層數保持一致。
-  // 注意:這個檔案的 history 變數是「播放歷史」,瀏覽器的要寫 window.history。
-  // 關掉一層後馬上又打開另一層(選單 → 對話框、對話框 → 對話框)時,新的一層直接沿用剛關掉那筆
-  // (replaceState),不在 back() 還沒完成前又 pushState —— 那樣瀏覽器的處理順序不可靠。
-  const layers = [];        // [{ name, close }]
-  let layerPopping = false; // popstate 正在關閉某一層:這時 dropLayer 不要再動歷史
-  let skipPops = 0;         // 自己呼叫 go(-n) 觸發的 popstate 要忽略
-  let pendingDrops = 0;     // 已從畫面關閉、還沒從歷史消耗掉的筆數
-  function pushLayer(name, close) {
-    if (layers.some((l) => l.name === name)) return;
-    layers.push({ name, close });
-    try {
-      if (pendingDrops > 0) { pendingDrops--; window.history.replaceState({ mlLayer: layers.length }, ''); }
-      else window.history.pushState({ mlLayer: layers.length }, '');
-    } catch {}
-  }
-  function dropLayer(name) {
-    const i = layers.map((l) => l.name).lastIndexOf(name);
-    if (i < 0) return;
-    layers.splice(i, 1);
-    if (layerPopping) return;
-    pendingDrops++;
-    setTimeout(flushDrops, 0);
-  }
-  function flushDrops() {
-    if (!pendingDrops) return;
-    const n = pendingDrops; pendingDrops = 0;
-    skipPops++;
-    window.history.go(-n);
-  }
-  window.addEventListener('popstate', () => {
-    if (skipPops) { skipPops--; return; }
-    const top = layers[layers.length - 1];
-    if (!top) return;
-    layerPopping = true;
-    try { top.close(); } finally { layerPopping = false; }
-    if (layers[layers.length - 1] === top) layers.pop(); // 保險:close 沒有自己 dropLayer 時
-  });
+  // 線上即時串流要不要請伺服器直接送 WebM/Opus(YouTube 只換封裝、不重新編碼,見 streamPlayer.js)。
+  // Apple 的 WebKit(Safari、iOS 上所有瀏覽器)對 <audio> 直接播 WebM 串流不可靠,一律維持 mp3。
+  // 離線下載(downloader.js)不帶這個參數:WebM 串流沒有索引,存成檔案後不好拖曳進度。
+  const WEBM_OK = (() => {
+    const ua = navigator.userAgent || '';
+    const appleWebKit = /iPhone|iPad|iPod/.test(ua) || (/Macintosh/.test(ua) && navigator.maxTouchPoints > 1)
+      || (/Safari\//.test(ua) &&!/Chrome|Chromium|CriOS|Edg|OPR|Firefox|FxiOS|Android/.test(ua));
+    try { return !appleWebKit && audio.canPlayType('audio/webm; codecs="opus"') !== ''; } catch { return false; }
+  })();
 
   // ── 背景播放穩定性 helper ──
   function setSession(state) {
@@ -754,7 +611,6 @@
     window.addEventListener('pointercancel', end);
     frame();
   }
-
 
   function startDrag(ev, li) {
     const ul = $('nextList');
@@ -1370,7 +1226,7 @@
     onlineCurrent = item;
     endHandled = false;
     const okey = 'on:' + (item.srcUrl || item.url);
-    loadSource(okey, '/web/play?url=' + enc(item.srcUrl || item.url));
+    loadSource(okey, '/web/play?url=' + enc(item.srcUrl || item.url) + (WEBM_OK ? '&fmt=webm' : ''));
     if (!offlineKeys.has(okey)) setStatus('線上串流準備中…', true);
     setNow({ title: item.title, sub: onlineSub(item) });
   }
@@ -1799,54 +1655,6 @@
     renderOffline();
   });
 
-  // ── 文字輸入對話框 ────────────────────────────────────
-  function askText(title, initial = '') {
-    return new Promise((resolve) => {
-      $('nameTitle').textContent = title;
-      const inp = $('nameInput'), dlg = $('nameDlg'), form = $('nameForm'), cancel = $('nameCancel');
-      inp.value = initial;
-      dlg.classList.add('show');
-      pushLayer('nameDlg', () => done(null));
-      setTimeout(() => { inp.focus(); inp.select(); }, 50);
-      const done = (v) => {
-        dlg.classList.remove('show');
-        form.removeEventListener('submit', onSubmit); cancel.removeEventListener('click', onCancel);
-        dropLayer('nameDlg');
-        resolve(v);
-      };
-      const onSubmit = (e) => { e.preventDefault(); done(inp.value.trim() || null); };
-      const onCancel = () => done(null);
-      form.addEventListener('submit', onSubmit); cancel.addEventListener('click', onCancel);
-    });
-  }
-
-  // ── 確認對話框(取代瀏覽器原生 confirm)──────────────
-  // danger:確定鍵改成紅色;Esc／點遮罩 = 取消
-  function askConfirm(title, msg = '', { ok = '確定', danger = false } = {}) {
-    return new Promise((resolve) => {
-      const dlg = $('confirmDlg'), okBtn = $('confirmOk'), cancel = $('confirmCancel');
-      $('confirmTitle').textContent = title;
-      $('confirmMsg').textContent = msg; $('confirmMsg').hidden = !msg;
-      okBtn.textContent = ok; okBtn.classList.toggle('danger', danger);
-      dlg.classList.add('show');
-      pushLayer('confirmDlg', () => done(false));
-      setTimeout(() => okBtn.focus(), 50);
-      const done = (v) => {
-        dlg.classList.remove('show');
-        okBtn.removeEventListener('click', onOk); cancel.removeEventListener('click', onCancel);
-        dlg.removeEventListener('click', onBackdrop); window.removeEventListener('keydown', onKey, true);
-        dropLayer('confirmDlg');
-        resolve(v);
-      };
-      const onOk = () => done(true), onCancel = () => done(false);
-      const onBackdrop = (e) => { if (e.target === dlg) done(false); };
-      // 對話框開著時攔下按鍵,避免空白鍵等全域快捷鍵同時觸發
-      const onKey = (e) => { e.stopPropagation(); if (e.key === 'Escape') { e.preventDefault(); done(false); } };
-      okBtn.addEventListener('click', onOk); cancel.addEventListener('click', onCancel);
-      dlg.addEventListener('click', onBackdrop); window.addEventListener('keydown', onKey, true);
-    });
-  }
-
   function toggleHelp(show) {
     if (show === $('helpDlg').classList.contains('show')) return;
     $('helpDlg').classList.toggle('show', show);
@@ -2184,13 +1992,95 @@
       isOff ? '移除離線檔案' : (dlState.has(key) ? '下載中…' : '下載離線'),
       () => toggleOffline(item));
     menuItem('playlist-add', '加入播放清單', () => pickPlaylist([item]));
+    if (!isOffline()) {
+      if (!folderOf(f)) menuItem('downloaded', '收藏(移到資料夾)', () => moveLibFile(f, 'folder'));
+      else menuItem('lib', '移到其他資料夾', () => moveLibFile(f, 'folder'));
+      menuItem('edit', '重新命名', () => moveLibFile(f, 'rename'));
+      menuItem('delete', '從音樂庫刪除', () => deleteLibFile(f), 'danger');
+    }
     menuInfo([
       ['資料夾:', folderOf(f) || '(音樂庫根目錄)'],
       ...(f.duration ? [['長度:', fmt(f.duration)]] : []),
       ['檔案大小:', fmtSize(f.size)],
       ['離線狀態:', isOff ? '已下載到此裝置' : (dlState.has(key) ? '下載中' : '未下載')],
+      ...(!folderOf(f) ? [['提醒:', '根目錄的歌是快取,空間不夠時會被自動清掉;收藏到資料夾就會保留']] : []),
     ]);
     placeMenu(anchor);
+  }
+
+  // ── 音樂庫管理:收藏到資料夾 / 重新命名 / 刪除(伺服器 /web/api/library/*)──────
+  async function libApi(method, url, body) {
+    let r;
+    try {
+      r = await fetch(url, {
+        method,
+        headers: body ? { 'Content-Type': 'application/json' } : undefined,
+        body: body ? JSON.stringify(body) : undefined,
+      });
+    } catch { throw new Error('連線失敗'); }
+    if (r.status === 401) { showLogin('登入已過期,請重新登入'); throw new Error('請先登入'); }
+    const j = await r.json().catch(() => ({}));
+    if (!r.ok) throw new Error(j.error || 'HTTP ' + r.status);
+    return j;
+  }
+
+  // 檔名改了:佇列、播放歷史、目前播放、播放中的清單、離線檔都跟著換成新路徑(伺服器端的播放清單已由 API 改好)
+  async function renameLocalRefs(from, to) {
+    const fix = (e) => { if (e && e.kind === 'lib' && e.filename === from) e.filename = to; };
+    queue.forEach(fix); history.forEach(fix);
+    if (playlistCtx) playlistCtx.items.forEach(fix);
+    if (currentFile === from) currentFile = to;
+    if (preload && preload.key === 'lib:' + from) dropPreload();
+    const oldKey = 'lib:' + from, newKey = 'lib:' + to;
+    if (!offlineKeys.has(oldKey)) return;
+    try {
+      const blob = await offlineGet(oldKey);
+      if (!blob) return;
+      const meta = offlineMeta.get(oldKey) || {};
+      await offlinePut({ key: newKey, blob, size: blob.size, ...meta });
+      await offlineDel(oldKey);
+      offlineKeys.delete(oldKey); offlineKeys.add(newKey);
+      offlineSizes.set(newKey, offlineSizes.get(oldKey) || blob.size); offlineSizes.delete(oldKey);
+      offlineMeta.set(newKey, meta); offlineMeta.delete(oldKey);
+    } catch (err) { dbg('離線檔改名失敗', err); }
+  }
+
+  // how:'folder' 移到資料夾(保留檔名)／'rename' 改檔名(保留資料夾)
+  async function moveLibFile(f, how) {
+    const parts = f.filename.split('/');
+    const file = parts.pop();
+    const ext = (file.match(/\.[^.]+$/) || [''])[0];
+    const stem = file.slice(0, file.length - ext.length);
+    const dir = parts.join('/');
+    let to;
+    if (how === 'folder') {
+      const folders = [...new Set(all.map(folderOf).filter(Boolean))];
+      const hint = folders.length ? '(現有:' + folders.slice(0, 5).join('、') + (folders.length > 5 ? '…' : '') + ')' : '';
+      const d = await askText('移到哪個資料夾?' + hint, dir || 'favorites');
+      if (d === null) return;
+      const clean = d.replace(/\\/g, '/').replace(/^\/+|\/+$/g, '');
+      if (!clean) return setStatus('請輸入資料夾名稱(根目錄的歌會被快取清理)');
+      to = clean + '/' + stem;
+    } else {
+      const n = await askText('新的檔名', stem);
+      if (n === null || n === stem) return;
+      to = (dir ? dir + '/' : '') + n;
+    }
+    try {
+      const j = await libApi('POST', '/web/api/library/move', { from: f.filename, to });
+      await renameLocalRefs(j.from, j.to);
+      setStatus(how === 'folder' ? '已收藏到「' + j.to.split('/').slice(0, -1).join('/') + '」' : '已重新命名');
+      loadList();
+    } catch (err) { setStatus('移動失敗:' + err.message); }
+  }
+
+  async function deleteLibFile(f) {
+    if (!await askConfirm('從音樂庫刪除這首歌?', f.name + '\n伺服器上的檔案會被刪除,所有裝置與 Bot 都無法再播放,無法復原。', { ok: '刪除', danger: true })) return;
+    try {
+      await libApi('DELETE', streamUrl(f.filename).replace('/web/stream/', '/web/api/library/file/'));
+      setStatus('已刪除');
+      loadList();
+    } catch (err) { setStatus('刪除失敗:' + err.message); }
   }
 
   document.addEventListener('pointerdown', (e) => {
@@ -2299,125 +2189,7 @@
     return li;
   }
 
-  // ── 除錯面板:🐞 按鈕 → 開關除錯模式、檢視／複製／匯出／清除日誌(只有 ?debug=1 才建立)──
-  function setupDebugPanel() {
-  const _fetch = window.fetch.bind(window);
-  window.fetch = (input, init) => {
-    const u = typeof input === 'string' ? input : (input && input.url) || '';
-    const path = u.split('?')[0];
-    const t = Date.now();
-    return _fetch(input, init).then((r) => {
-      if (DEBUG && (!r.ok || path.includes('/web/play'))) dbg('fetch', r.status, path, (Date.now() - t) + 'ms');
-      return r;
-    }, (err) => {
-      if (DEBUG && !(err && err.name === 'AbortError')) dbg('fetch 失敗', err, path, (Date.now() - t) + 'ms');
-      throw err;
-    });
-  };
-  window.addEventListener('error', (e) => dbg('JS 錯誤', e.message, (e.filename || '').split('/').pop() + ':' + e.lineno));
-  window.addEventListener('unhandledrejection', (e) => dbg('未處理的 Promise 錯誤', e.reason));
-  window.addEventListener('online', () => dbg('網路:online'));
-  window.addEventListener('offline', () => dbg('網路:offline'));
-  window.addEventListener('pagehide', () => { dbg('pagehide'); saveLog(); });
-  document.addEventListener('visibilitychange', () => { dbg('visibility', document.visibilityState); if (document.hidden) saveLog(); });
-  document.addEventListener('freeze', () => { dbg('頁面被凍結(freeze)'); saveLog(); });
-  document.addEventListener('resume', () => dbg('頁面解除凍結(resume)'));
-
-  function logEnv() {
-    const c = navigator.connection || {};
-    dbg('── 除錯模式開啟 ──');
-    dbg('環境', 'standalone=' + (matchMedia('(display-mode: standalone)').matches || navigator.standalone === true),
-      'onLine=' + navigator.onLine, 'net=' + (c.effectiveType || '?'),
-      'sw=' + (navigator.serviceWorker && navigator.serviceWorker.controller ? '已控制' : '無'),
-      'audioSession=' + ('audioSession' in navigator), 'mediaSession=' + ('mediaSession' in navigator),
-      'android=' + IS_ANDROID + (ANDROID_BY ? '(' + ANDROID_BY + ')' : ''), 'keep=' + KEEP);
-    dbg('UA', navigator.userAgent);
-  }
-  const fullLog = () =>
-    `# 裊器音樂 除錯日誌\n# 匯出時間 ${new Date().toString()}\n# 頁面 ${location.href}\n# UA ${navigator.userAgent}\n# 除錯模式 ${DEBUG ? '開' : '關'}　共 ${logBuf.length} 行\n\n` +
-    logBuf.join('\n') + '\n';
-
-  const dbgStyle = document.createElement('style');
-  dbgStyle.textContent = '.dbg-btn{width:36px;height:36px;border-radius:50%;background:var(--surface2);flex-shrink:0;margin-left:auto;font-size:16px}' +
-    '.dbg-btn.on{box-shadow:inset 0 0 0 2px var(--accent)}.dbg-btn + #logoutBtn{margin-left:0}' +
-    '#dbgDlg .box{max-width:560px;max-height:calc(100dvh - 32px);overflow:hidden}' +
-    '#dbgText{width:100%;height:45vh;min-height:140px;background:#101010;color:#cfcfcf;border:1px solid #2a2a2a;border-radius:10px;padding:8px;font:11px/1.5 ui-monospace,Menlo,Consolas,monospace;resize:none;overflow:auto;white-space:pre;-webkit-appearance:none;appearance:none}' +
-    '#dbgDlg .row2{display:flex;gap:8px}#dbgDlg .row2 .go{flex:1;padding:10px 4px;font-size:14px}';
-  document.head.appendChild(dbgStyle);
-
-  const dbgBtn = document.createElement('button');
-  dbgBtn.className = 'dbg-btn'; dbgBtn.id = 'dbgBtn'; dbgBtn.textContent = '🐞';
-  dbgBtn.title = '除錯模式'; dbgBtn.setAttribute('aria-label', '除錯模式');
-  $('logoutBtn').before(dbgBtn);
-
-  const dlg = document.createElement('div');
-  dlg.className = 'login'; dlg.id = 'dbgDlg';
-  dlg.innerHTML = '<div class="box"><p class="ttl">除錯模式</p><p id="dbgInfo"></p>' +
-    '<button class="go alt" id="dbgToggle" type="button"></button>' +
-    '<textarea id="dbgText" readonly spellcheck="false" placeholder="尚無日誌。開啟除錯模式後重現問題,再回來複製或匯出。"></textarea>' +
-    '<div class="row2"><button class="go ghost" id="dbgKeep" type="button"></button></div>' +
-    '<div class="row2"><button class="go alt" id="dbgCopy" type="button">複製</button><button class="go alt" id="dbgExport" type="button">匯出</button><button class="go ghost" id="dbgClear" type="button">清除</button></div>' +
-    '<button class="go ghost" id="dbgClose" type="button">關閉</button></div>';
-  document.body.appendChild(dlg);
-  const ta = $('dbgText');
-
-  function paintDbg() {
-    dbgBtn.classList.toggle('on', DEBUG);
-    $('dbgKeep').textContent = '靜音保活:' + (KEEP ? '開' : '關');
-    $('dbgToggle').textContent = DEBUG ? '● 除錯模式:開(點此關閉)' : '○ 除錯模式:關(點此開啟)';
-    $('dbgInfo').textContent = `共 ${logBuf.length} 行(最多保留 ${LOG_MAX} 行,鎖屏後仍會保留)`;
-  }
-  let liveTimer = 0;
-  function showLog() {
-    const stick = ta.scrollTop + ta.clientHeight >= ta.scrollHeight - 30;
-    ta.value = logBuf.join('\n');
-    if (stick) ta.scrollTop = ta.scrollHeight;
-    paintDbg();
-  }
-  logLive = () => { if (dlg.classList.contains('show') && !liveTimer) liveTimer = setTimeout(() => { liveTimer = 0; showLog(); }, 300); };
-
-  dbgBtn.addEventListener('click', () => { dlg.classList.add('show'); showLog(); ta.scrollTop = ta.scrollHeight; });
-  $('dbgClose').addEventListener('click', () => dlg.classList.remove('show'));
-  const flipFlag = (k, on) => { try { localStorage.setItem(k, on ? '0' : '1'); } catch {} location.reload(); };
-  $('dbgKeep').addEventListener('click', () => flipFlag('ml_keep', KEEP));
-  $('dbgToggle').addEventListener('click', () => {
-    DEBUG = !DEBUG;
-    try { localStorage.setItem('ml_debug', DEBUG ? '1' : '0'); } catch {}
-    if (DEBUG) logEnv(); else { logBuf.push(stamp() + ' ── 除錯模式關閉 ──'); saveLog(); }
-    showLog();
-  });
-  $('dbgClear').addEventListener('click', () => { logBuf = []; saveLog(); showLog(); setStatus('已清除日誌'); });
-  $('dbgCopy').addEventListener('click', async () => {
-    if (!logBuf.length) return setStatus('目前沒有日誌');
-    const text = fullLog();
-    try { await navigator.clipboard.writeText(text); setStatus('已複製日誌(' + logBuf.length + ' 行)'); return; } catch {}
-    // 後備:選取文字框後用 execCommand(沒有 Clipboard API／非 HTTPS 時)
-    const old = ta.value; ta.value = text; ta.focus(); ta.select();
-    let ok = false; try { ok = document.execCommand('copy'); } catch {}
-    ta.value = old; ta.setSelectionRange(0, 0);
-    setStatus(ok ? '已複製日誌(' + logBuf.length + ' 行)' : '複製失敗,請改用「匯出」');
-  });
-  $('dbgExport').addEventListener('click', async () => {
-    if (!logBuf.length) return setStatus('目前沒有日誌');
-    const d = new Date();
-    const name = `player-log-${d.getFullYear()}${pad(d.getMonth() + 1)}${pad(d.getDate())}-${pad(d.getHours())}${pad(d.getMinutes())}${pad(d.getSeconds())}.txt`;
-    const file = new File([fullLog()], name, { type: 'text/plain' });
-    // 手機優先用系統分享(可直接傳到 LINE／雲端);不支援或取消就改成下載
-    if (navigator.canShare && navigator.canShare({ files: [file] })) {
-      try { await navigator.share({ files: [file], title: name }); return; }
-      catch (err) { if (err && err.name === 'AbortError') return; }
-    }
-    const url = URL.createObjectURL(file);
-    const a = document.createElement('a'); a.href = url; a.download = name;
-    document.body.appendChild(a); a.click(); a.remove();
-    setTimeout(() => URL.revokeObjectURL(url), 10000);
-    setStatus('已匯出 ' + name);
-  });
-
-  paintDbg();
-  if (DEBUG) { logEnv(); dbg('頁面載入'); }
-  }
-  if (DEBUG_UI) setupDebugPanel();
+  if (DEBUG_UI) setupDebugPanel({ $, setStatus, IS_ANDROID, ANDROID_BY, KEEP });
   // 切到背景時預載下一首(只在 Android 生效,見 preloadNext)
   document.addEventListener('visibilitychange', () => { if (document.hidden) preloadNext(); });
 
@@ -2429,104 +2201,7 @@
   // 清單請求與離線清單掃描同時進行;等離線清單讀完才畫畫面,才能正確標示已下載的歌
   const listReq = fetch('/web/api/list');
   listReq.catch(() => {}); // 失敗交給 loadList 處理,這裡只避免「未處理的 Promise 錯誤」
-  // ── 手機手勢(只對觸控生效,滑鼠操作不受影響)──
-  //   長按歌曲列     → 進入多選並選取這首(音樂庫、播放清單內頁)
-  //   全螢幕播放頁   → 往下滑收合
-  //   底部迷你播放列 → 左滑下一首、右滑上一首、上滑展開
-  const buzz = () => { try { if (navigator.vibrate) navigator.vibrate(15); } catch {} };
-  // 手勢結束後瀏覽器可能還會補一個 click(例如長按放開):只吃掉落在同一個元素裡的那一次
-  let swallow = null; // { el, until }
-  const swallowClick = (el) => { swallow = { el, until: Date.now() + 700 }; };
-  document.addEventListener('click', (e) => {
-    if (!swallow) return;
-    const s = swallow; swallow = null;
-    if (Date.now() < s.until && s.el.contains(e.target)) { e.stopPropagation(); e.preventDefault(); }
-  }, true);
-
-  document.addEventListener('pointerdown', (e) => {
-    if (e.pointerType === 'mouse') return;
-    const row = e.target.closest('#list .row[data-key], #plItems .row[data-iid]');
-    if (!row || e.target.closest('.rbtn, .grip')) return;
-    const inLib = !!row.closest('#list');
-    if (inLib ? libSel.on : plSel.on) return; // 已經在多選:點一下就能切換
-    const x0 = e.clientX, y0 = e.clientY;
-    const cleanup = () => {
-      clearTimeout(timer);
-      window.removeEventListener('pointermove', move);
-      window.removeEventListener('pointerup', cleanup);
-      window.removeEventListener('pointercancel', cleanup);
-    };
-    const move = (ev) => { if (Math.abs(ev.clientX - x0) > 10 || Math.abs(ev.clientY - y0) > 10) cleanup(); };
-    const timer = setTimeout(() => {
-      cleanup(); buzz();
-      if (inLib) { setLibSelecting(true); libSel.toggle(row.dataset.key.slice(4)); swallowClick($('list')); }
-      else { setPlSelecting(true); plSel.toggle(row.dataset.iid); swallowClick($('plItems')); }
-    }, 500);
-    window.addEventListener('pointermove', move);
-    window.addEventListener('pointerup', cleanup);
-    window.addEventListener('pointercancel', cleanup);
-  });
-  // 觸控裝置長按不要跳出系統的選單／選字
-  document.addEventListener('contextmenu', (e) => {
-    if (matchMedia('(hover: none)').matches && e.target.closest('.row')) e.preventDefault();
-  });
-
-  (() => {
-    const full = $('full');
-    let active = false, y0 = 0, dy = 0, t0 = 0;
-    full.addEventListener('pointerdown', (e) => {
-      if (e.pointerType === 'mouse' || !isFullOpen()) return;
-      if (e.target.closest('input, button, .queue')) return; // 進度條、按鈕、佇列照常操作
-      active = true; y0 = e.clientY; dy = 0; t0 = Date.now();
-    });
-    full.addEventListener('pointermove', (e) => {
-      if (!active) return;
-      dy = Math.max(0, e.clientY - y0);
-      full.style.transition = 'none';
-      full.style.transform = `translateY(${dy}px)`;
-    });
-    const end = () => {
-      if (!active) return;
-      active = false;
-      full.style.transition = '';
-      full.style.transform = ''; // 收合時直接從手指放開的位置接著滑下去,否則彈回原位
-      const fast = dy > 40 && dy / Math.max(1, Date.now() - t0) > 0.5;
-      if (dy > 10) swallowClick(full);
-      if (dy > 120 || fast) closeFull();
-    };
-    full.addEventListener('pointerup', end);
-    full.addEventListener('pointercancel', end);
-  })();
-
-  (() => {
-    const mini = $('miniOpen');
-    let active = false, x0 = 0, y0 = 0, dx = 0, dy = 0;
-    mini.addEventListener('pointerdown', (e) => {
-      if (e.pointerType === 'mouse' || e.target.closest('button')) return;
-      active = true; x0 = e.clientX; y0 = e.clientY; dx = 0; dy = 0;
-    });
-    mini.addEventListener('pointermove', (e) => {
-      if (!active) return;
-      dx = e.clientX - x0; dy = e.clientY - y0;
-      if (Math.abs(dx) > Math.abs(dy)) {
-        mini.style.transition = 'none';
-        mini.style.transform = `translateX(${dx}px)`;
-        mini.style.opacity = String(Math.max(0.3, 1 - Math.abs(dx) / 300));
-      }
-    });
-    const end = () => {
-      if (!active) return;
-      active = false;
-      mini.style.transition = 'transform .2s, opacity .2s';
-      mini.style.transform = ''; mini.style.opacity = '';
-      const horiz = Math.abs(dx) > Math.abs(dy);
-      if (Math.abs(dx) > 10 || Math.abs(dy) > 10) swallowClick(mini);
-      if (horiz && Math.abs(dx) > 80) { buzz(); if (dx < 0) advance(); else prev(); }
-      else if (!horiz && dy < -50) openFull();
-    };
-    mini.addEventListener('pointerup', end);
-    mini.addEventListener('pointercancel', end);
-  })();
+  window.MLGestures.setupGestures({ $, libSel, plSel, setLibSelecting, setPlSelecting, isFullOpen, openFull, closeFull, advance, prev });
 
   offlineInit().finally(() => { updateNetState(); loadList(listReq); });
   registerSW();

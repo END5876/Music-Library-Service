@@ -3,8 +3,13 @@
 //   查快取 → 命中直接送檔；未命中 → yt-dlp 即時串流（ffmpeg 轉 mp3）＋背景下載快取＋正規化；
 //   錯誤 → 連續錯誤計數 + 重試。從 onlineStream.js 拆出，邏輯與常數不變（同 Bot）。
 //
-// 共用可變狀態（errorCount / downloadingUrls）只在這個模組內讀寫。
-// ctx = { req, res, item, procs, closed, started }，由 onlineStream.js 的 handlePlayRequest 建立。
+// 共用可變狀態（errorCounts / downloadingUrls / recentFailures）只在這個模組內讀寫。
+// ctx = { req, res, item, procs, closed, started, copy }，由 onlineStream.js 的 handlePlayRequest 建立。
+//
+// 即時串流的輸出格式：
+//   ctx.copy=true（瀏覽器支援 WebM/Opus，且是 YouTube）→ yt-dlp 優先挑 Opus 音軌，ffmpeg 只換封裝（-c:a copy），
+//     不重新編碼：省 CPU，也少一次有損壓縮。來源不是 Opus（放不進 WebM）時，自動改回轉 mp3 重來一次，不算錯誤。
+//   其餘 → ffmpeg 轉 mp3 192k（同以往）。
 
 const { spawn } = require('child_process');
 const path = require('path');
@@ -14,6 +19,7 @@ const cache      = require('./musicCache');
 const antiBot    = require('./musicAntiBot');
 const normalizer = require('./musicNormalizer');
 const potProvider = require('./potProvider');
+const { touchCache } = require('../musicStore');
 
 // ── 重試配置（同 Bot）────────────────────────────────────
 const MAX_RETRIES            = 3;
@@ -26,11 +32,44 @@ const MAX_CACHE_DURATION_SEC = 7 * 60; // 420 秒
 // 背景下載同時數上限：連續跳歌時，串流會被砍掉，但各首的背景下載仍會繼續，不限制的話會堆出一堆 yt-dlp
 const MAX_BG_DOWNLOADS = parseInt(process.env.WEB_MAX_DOWNLOADS || '2', 10);
 
-const WEB_KEY = 'web'; // 取代 Bot 的 guildId：YouTube client 輪換 & 連續錯誤計數
+const WEB_KEY = 'web'; // 取代 Bot 的 guildId：YouTube client 輪換（被擋是以 IP 為準，所以全站共用）
 
 // ── 狀態 ──────────────────────────────────────────────────
-let errorCount = 0;                 // 對應 Bot 的 errorCounts.get(guildId)
+// 連續錯誤計數：Bot 是每個伺服器（guild）一份；網頁版改成每個網址一份，
+// 否則某個人播到壞掉的影片，會把其他人正常的串流也算進「連續錯誤」。
+const errorCounts = new Map();      // url -> 連續錯誤次數
+const ERROR_COUNTS_MAX = 500;
 const downloadingUrls = new Set();  // 下載鎖（防止同一 URL 同時下載兩次）
+
+// 最近一小時的串流失敗紀錄（狀態頁用；連續失敗通常代表 yt-dlp 需要更新或 IP 被擋）
+const FAILURE_WINDOW_MS = 60 * 60 * 1000;
+const recentFailures = [];          // [{ at, platform, message }]
+function recordFailure(platform, message) {
+  const now = Date.now();
+  recentFailures.push({ at: now, platform, message: String(message || '').slice(0, 200) });
+  while (recentFailures.length && (now - recentFailures[0].at > FAILURE_WINDOW_MS || recentFailures.length > 100)) recentFailures.shift();
+}
+
+function resetErrorCount(url) { errorCounts.delete(url); }
+function bumpErrorCount(url) {
+  const n = (errorCounts.get(url) || 0) + 1;
+  errorCounts.delete(url); // 重新插入到尾端，超過上限時從最舊的開始丟
+  errorCounts.set(url, n);
+  if (errorCounts.size > ERROR_COUNTS_MAX) errorCounts.delete(errorCounts.keys().next().value);
+  return n;
+}
+
+function getStats() {
+  const now = Date.now();
+  const fails = recentFailures.filter((f) => now - f.at <= FAILURE_WINDOW_MS);
+  const last = fails[fails.length - 1];
+  return {
+    backgroundDownloads: downloadingUrls.size,
+    maxBackgroundDownloads: MAX_BG_DOWNLOADS,
+    failuresLastHour: fails.length,
+    lastFailure: last ? { ...last, at: new Date(last.at).toISOString() } : null,
+  };
+}
 
 function cleanupProcess(ctx) {
   const procs = ctx.procs;
@@ -143,6 +182,7 @@ async function playStream(ctx, retryCount = 0) {
 function _playFromFile(ctx, filePath) {
   const { res } = ctx;
   ctx.started = true;
+  touchCache(filePath);
   res.sendFile(filePath, { headers: { 'Cache-Control': 'private, no-cache' } }, (err) => {
     if (!err) return;
     if (res.headersSent) return; // 瀏覽器中途取消（ECONNABORTED）等，不需處理
@@ -150,7 +190,7 @@ function _playFromFile(ctx, filePath) {
     ctx.started = false;
     _handleStreamError(ctx, 0, err.message);
   });
-  errorCount = 0;
+  resetErrorCount(ctx.item.url);
   console.log(`🎵 [OnlineMusic] 本地播放: ${path.basename(filePath)}`);
 }
 
@@ -168,6 +208,7 @@ function _fallbackStream(ctx, retryCount) {
     const { strategy } = antiBot.getYtClientStrategy(WEB_KEY);
     console.log(`🎯 [YouTube] 使用 client: ${strategy.name} (${strategy.desc})`);
     streamArgs = antiBot.buildYouTubeArgs(item.url, strategy, true);
+    if (ctx.copy) streamArgs = preferOpus(streamArgs);
   } else {
     streamArgs = antiBot.buildBilibiliArgs(item.url, true);
   }
@@ -177,12 +218,16 @@ function _fallbackStream(ctx, retryCount) {
     windowsHide: true,
   });
 
-  // Bot 把 stdout 交給 Discord（內部用 ffmpeg 解碼）；瀏覽器需要可直接播放的格式，這裡轉成 mp3
+  // Bot 把 stdout 交給 Discord（內部用 ffmpeg 解碼）；瀏覽器需要可直接播放的格式：
+  // 支援 WebM 的瀏覽器＋YouTube → 只換封裝（不重新編碼）；否則轉成 mp3
+  const copy = !!(ctx.copy && isYT);
+  const output = copy
+    ? { args: ['-vn', '-c:a', 'copy', '-f', 'webm'], type: 'audio/webm' }
+    : { args: ['-vn', '-c:a', 'libmp3lame', '-b:a', '192k', '-f', 'mp3'], type: 'audio/mpeg' };
   const ffmpeg = spawn('ffmpeg', [
     '-hide_banner', '-loglevel', 'error',
     '-i', 'pipe:0',
-    '-vn', '-c:a', 'libmp3lame', '-b:a', '192k',
-    '-f', 'mp3', 'pipe:1',
+    ...output.args, 'pipe:1',
   ], { stdio: ['pipe', 'pipe', 'pipe'], windowsHide: true });
 
   const mine = { ytdlp, ffmpeg, done: false };
@@ -248,11 +293,11 @@ function _fallbackStream(ctx, retryCount) {
       ctx.started = true;
       res.status(200);
       res.set({
-        'Content-Type': 'audio/mpeg',
+        'Content-Type': output.type,
         'Cache-Control': 'no-store',
         'X-Accel-Buffering': 'no',
       });
-      errorCount = 0; // 對應 Bot：player.play(resource) 後 errorCounts.set(guildId, 0)
+      resetErrorCount(item.url); // 對應 Bot：player.play(resource) 後 errorCounts.set(guildId, 0)
     }
     if (!res.write(chunk)) {
       ffmpeg.stdout.pause();
@@ -270,6 +315,14 @@ function _fallbackStream(ctx, retryCount) {
       // yt-dlp 有輸出資料但 ffmpeg 一個位元組都沒產出（格式無法解碼等）
       mine.done = true;
       killTree(ytdlp, 'SIGKILL');
+      if (copy && dataReceived) {
+        // 來源音軌放不進 WebM（例如拿到的是 AAC）：改回轉 mp3 立刻重來，不算一次錯誤
+        console.warn(`⚠️ [${platform}] 音軌無法直接封裝成 WebM，改為轉 mp3: ${item.title}`);
+        ctx.copy = false;
+        cleanupProcess(ctx);
+        _fallbackStream(ctx, retryCount);
+        return;
+      }
       _handleStreamError(ctx, retryCount, `ffmpeg 轉檔失敗 (code ${code})`);
     }
     // 否則交給 yt-dlp 的 close 事件判斷（含 client 輪換）
@@ -287,12 +340,13 @@ function _fallbackStream(ctx, retryCount) {
 function _handleStreamError(ctx, retryCount, errorMessage) {
   if (ctx.closed) return;
 
-  errorCount += 1;
+  const url = ctx.item.url;
+  const errorCount = bumpErrorCount(url);
   console.error(`❌ 串流錯誤 (${errorCount}/${MAX_CONSECUTIVE_ERRORS}): ${errorMessage}`);
 
   if (errorCount >= MAX_CONSECUTIVE_ERRORS) {
     console.error('❌ 連續錯誤過多，停止播放');
-    errorCount = 0; // 對應 Bot：stopAll → clearErrorCount
+    resetErrorCount(url); // 對應 Bot：stopAll → clearErrorCount
     _failResponse(ctx, `連續發生 ${MAX_CONSECUTIVE_ERRORS} 次錯誤，已停止播放`);
     return;
   }
@@ -308,6 +362,10 @@ function _handleStreamError(ctx, retryCount, errorMessage) {
 }
 
 function _failResponse(ctx, message) {
+  recordFailure(antiBot.isYouTubeUrl(ctx.item.url) ? 'YouTube' : 'Bilibili', message);
+  if (getStats().failuresLastHour === 5) {
+    console.warn('⚠️ [OnlineMusic] 最近一小時串流失敗已達 5 次：常見原因是 yt-dlp 過舊（見 ytdlpUpdater.js）或 IP 被 YouTube 擋（需要 cookies／WARP_PROXY_URL）');
+  }
   cleanupProcess(ctx);
   const { res } = ctx;
   if (res.writableEnded) return;
@@ -318,4 +376,12 @@ function _failResponse(ctx, message) {
   }
 }
 
-module.exports = { playStream, cleanupProcess, WEB_KEY };
+// 直接封裝模式：讓 yt-dlp 優先挑 Opus 音軌（YouTube 的 251/250），沒有才退回原本的 bestaudio/best
+function preferOpus(args) {
+  const out = args.slice();
+  const i = out.indexOf('-f');
+  if (i >= 0 && out[i + 1] === 'bestaudio/best') out[i + 1] = 'bestaudio[acodec=opus]/bestaudio/best';
+  return out;
+}
+
+module.exports = { playStream, cleanupProcess, getStats, preferOpus, WEB_KEY };

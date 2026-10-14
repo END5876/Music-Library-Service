@@ -13,6 +13,8 @@
 //   MUSIC_LIB_SECRET   保護 API 的共用金鑰，呼叫端要帶相同的值
 //   MAX_CACHE_SIZE_MB  cache/ 子資料夾的容量上限，預設 2048
 //   WEB_PLAYER_PASSWORD  網頁播放器登入密碼（不設定＝不啟用網頁播放器）
+//   ALLOW_INSECURE_LIBRARY_API  設 1 才允許「啟用網頁播放器卻沒設 MUSIC_LIB_SECRET」時開放 /api/music/*
+//   LOG_TIMESTAMPS     設 0 關閉 log 前面的時間（部署平台已經會加時間時）
 //
 // API：
 //   GET  /health                                   健康檢查（不驗證金鑰）
@@ -20,6 +22,7 @@
 //   GET  /api/music/exists?filename=                檢查指定 filename 是否已存在
 //   GET  /api/music/file/*                          下載檔案內容（* 是相對於音樂庫根目錄的路徑）
 //   PUT  /api/music/file/*                          上傳／覆寫檔案內容（原始位元組，不做任何解析）
+//   GET  /api/music/status                          服務狀態（快取用量、串流、yt-dlp 版本…，見 status.js）
 //
 // 網頁播放器（設定 WEB_PLAYER_PASSWORD 才啟用）：路由完整清單見 README，
 // 各組路由的實作分在 webplayer/ 底下（入口是 webplayer/webPlayer.js）。
@@ -30,9 +33,12 @@
 // filename 的路徑分隔一律使用 '/'。
 
 require('dotenv').config();
+const logger = require('./logger');
+logger.installConsoleTimestamps();
 const express = require('express');
 const store = require('./musicStore');
-const { mountLibraryRoutes } = require('./libraryRoutes');
+const status = require('./status');
+const { mountLibraryRoutes, isInsecureLocked } = require('./libraryRoutes');
 const { mountWebPlayer } = require('./webplayer/webPlayer');
 
 const PORT = process.env.PORT || 4100;
@@ -40,6 +46,7 @@ const SECRET = process.env.MUSIC_LIB_SECRET || '';
 
 const app = express();
 app.disable('x-powered-by');
+app.use(logger.requestId());
 
 // 基本安全標頭（播放器為純自家資源：腳本／樣式／音訊都來自同源或 blob:）
 app.use((req, res, next) => {
@@ -60,33 +67,31 @@ app.use((req, res, next) => {
 app.get('/health', (req, res) => res.json({ ok: true }));
 
 // Bot 用的內部 API（/api/music/*，需帶 x-music-lib-key）
-mountLibraryRoutes(app, { store, secret: SECRET });
+mountLibraryRoutes(app, { store, secret: SECRET, status });
 
 // 網頁播放器：走自己的 Cookie 驗證，不影響上面 Bot 用的 /api/music/*
-const webPlayerEnabled = mountWebPlayer(app, { store, libSecret: SECRET });
+const webPlayerEnabled = mountWebPlayer(app, { store, libSecret: SECRET, status });
 
 // 統一錯誤處理：不把堆疊或 HTML 錯誤頁回給客戶端
 app.use((err, req, res, next) => {
   if (res.headersSent) return next(err);
-  const status = err && (err.status || err.statusCode) >= 400 && (err.status || err.statusCode) < 600
+  const code = err && (err.status || err.statusCode) >= 400 && (err.status || err.statusCode) < 600
     ? (err.status || err.statusCode) : 500;
-  if (status >= 500) console.error('❌ [Server] 未處理的錯誤:', err);
-  res.status(status).json({ error: status >= 500 ? '伺服器錯誤' : '請求不合法' });
+  if (code >= 500) console.error(`❌ [Server] 未處理的錯誤（${req.id}）:`, err);
+  res.status(code).json({ error: code >= 500 ? '伺服器錯誤' : '請求不合法' });
 });
 
 store.cleanupStaleTemps().catch(() => {});
 
 app.listen(PORT, () => {
   console.log(`✅ [MusicLibrary] 共用音樂庫服務已啟動，監聽埠 ${PORT}（音樂庫路徑: ${store.MUSIC_DIR}）`);
-  if (!SECRET) {
+  if (isInsecureLocked({ secret: SECRET })) {
+    console.error('🔒 [MusicLibrary] 網頁播放器已啟用（服務有公開網域）但沒有設定 MUSIC_LIB_SECRET：/api/music/* 已停用（回 503）。'
+      + '請設定 MUSIC_LIB_SECRET；確定要在沒有金鑰的情況下開放，才設 ALLOW_INSECURE_LIBRARY_API=1');
+  } else if (!SECRET) {
     console.warn('⚠️ [MusicLibrary] 尚未設定 MUSIC_LIB_SECRET，任何連得到這個服務的請求都能讀寫音樂庫，僅建議在完全信任的內網環境這樣使用');
   }
-  if (webPlayerEnabled) {
-    console.log('🎧 [MusicLibrary] 網頁播放器已啟用: /player');
-    if (!SECRET) {
-      console.warn('⚠️ [MusicLibrary] 網頁播放器已啟用但沒有設定 MUSIC_LIB_SECRET：公開網域下 /api/music/* 會完全開放讀寫，請務必設定');
-    }
-  }
+  if (webPlayerEnabled) console.log('🎧 [MusicLibrary] 網頁播放器已啟用: /player');
 });
 
 // 部署平台重新部署會送 SIGTERM：立即結束，由各模組的 'exit' 處理器砍掉殘留的 yt-dlp / ffmpeg 子行程。

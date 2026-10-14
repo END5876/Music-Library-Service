@@ -19,7 +19,8 @@
 //   - 第一個位元組送出前才寫 response header，因此串流一開始就失敗時，重試／輪換 client
 //     的行為和 Bot 一樣，對瀏覽器來說只是「等比較久」
 //   - 此服務本身就是共用音樂庫，下載＋正規化完的檔案已在庫內，沒有 pushToSharedLibrary 這一步
-//   - 「guildId」換成固定 key 'web'（YouTube client 輪換與連續錯誤計數）
+//   - 「guildId」換成固定 key 'web'（YouTube client 輪換）；連續錯誤計數改成每個網址一份
+//   - ?fmt=webm（瀏覽器支援 WebM/Opus 時由前端帶上）：YouTube 即時串流只換封裝不重新編碼，見 streamPlayer.js
 //   - 不註冊 process.on('uncaughtException')（會吞掉整個服務的未捕捉錯誤，不應由網頁模組決定）
 //
 // 檔案分工（本檔只負責環境檢查與 HTTP 入口，其餘拆在同資料夾）：
@@ -37,8 +38,10 @@ const potProvider = require('./potProvider');
 const logger     = require('../logger');
 const { cleanUrl, isAllowedUrl } = require('./urlUtils');
 const { getInfoCached, searchMulti } = require('./videoLookup');
-const { playStream, cleanupProcess, WEB_KEY } = require('./streamPlayer');
+const { playStream, cleanupProcess, getStats: getStreamStats, WEB_KEY } = require('./streamPlayer');
+const { touchCache } = require('../musicStore');
 const { killTree } = require('./procTree');
+const ytdlpUpdater = require('./ytdlpUpdater');
 
 const execAsync = promisify(exec);
 
@@ -57,7 +60,7 @@ let initPromise = null;
 async function checkYtDlp() {
   try {
     const { stdout } = await execAsync(`${antiBot.YTDLP_PATH} --version`);
-    logger.debug('OnlineMusic', `yt-dlp 版本: ${stdout.trim()}`);
+    logger.info('OnlineMusic', `yt-dlp 版本: ${stdout.trim()}`);
     return true;
   } catch {
     logger.error('OnlineMusic', 'yt-dlp 未安裝');
@@ -82,6 +85,7 @@ function init() {
     cache.ensureCacheDir();
     const [ytdlpOk, ffmpegOk] = await Promise.all([checkYtDlp(), checkFFmpeg()]);
     available = ytdlpOk && ffmpegOk;
+    if (ytdlpOk) ytdlpUpdater.start();
     if (available) {
       const { bilibili, youtube, poToken, potProvider: pot } = antiBot.getCookieStatus();
       const potLabel = pot === 'local' ? '✓（bgutil 本機）' : pot === 'external' ? '✓（bgutil 外部）' : poToken ? '✓（固定）' : '✗';
@@ -96,6 +100,17 @@ function init() {
 }
 
 function isAvailable() { return available; }
+
+function getStats() {
+  return {
+    available,
+    activeStreams: activeCtxs.size,
+    maxStreams: MAX_WEB_STREAMS,
+    ...getStreamStats(),
+    ytdlp: ytdlpUpdater.getStatus(),
+    poToken: potProvider.getMode(),
+  };
+}
 
 // ════════════════════════════════════════════════════════
 //  HTTP 入口：GET /web/play?url=...
@@ -128,7 +143,7 @@ async function handlePlayRequest(req, res, rawUrl) {
     return res.status(503).json({ error: '目前串流人數已滿，請稍後再試' });
   }
 
-  const ctx = { req, res, item, procs: null, closed: false, started: false };
+  const ctx = { req, res, item, procs: null, closed: false, started: false, copy: req.query && req.query.fmt === 'webm' };
   activeCtxs.add(ctx);
 
   res.on('close', () => {
@@ -146,6 +161,7 @@ async function handlePlayRequest(req, res, rawUrl) {
 // 回傳 true = 已處理（送出或中途斷線）；false = 還沒送出任何東西（例如檔案剛被快取清理刪掉），呼叫端改走完整流程
 function sendCachedFile(res, filePath) {
   console.log(`✅ [Cache] 依影片 ID 命中快取，直接播放: ${path.basename(filePath)}`);
+  touchCache(filePath);
   return new Promise((resolve) => {
     res.sendFile(filePath, { headers: { 'Cache-Control': 'private, no-cache' } }, (err) => {
       resolve(!err || res.headersSent);
@@ -171,4 +187,5 @@ module.exports = {
   getInfo: getInfoCached,
   searchMulti,
   handlePlayRequest,
+  getStats,
 };

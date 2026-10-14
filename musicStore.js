@@ -14,6 +14,7 @@
 const fs = require('fs');
 const fsp = require('fs/promises');
 const path = require('path');
+const crypto = require('crypto');
 const { pipeline } = require('stream');
 
 const MUSIC_DIR = process.env.MUSIC_DIR || path.join(__dirname, 'data', 'music');
@@ -160,6 +161,19 @@ async function listAll() {
   return listInflight;
 }
 
+// 清單內容的 ETag：每次掃描結果（同一個陣列物件）只算一次 hash。
+// /api/music/list 用它自己判斷 304 —— Node 的 fetch 帶 If-None-Match 時會自動加 Cache-Control: no-cache，
+// Express 內建的新鮮度判斷看到就一律回 200，用 fetch 的 Bot 永遠拿不到 304。
+const listEtags = new WeakMap();
+function listEtag(files) {
+  let etag = listEtags.get(files);
+  if (!etag) {
+    etag = `"${crypto.createHash('sha1').update(JSON.stringify(files)).digest('base64url')}"`;
+    listEtags.set(files, etag);
+  }
+  return etag;
+}
+
 // 只有「音訊檔」才會經由 API 讀取／覆寫：暫存檔、JSON、其他任意檔案一律不碰
 function isServableName(relPath) {
   const base = path.posix.basename(relPath);
@@ -258,7 +272,75 @@ function writeFileFromStream(rawRelPath, readableStream) {
 }
 
 // ════════════════════════════════════════════════════════
-//  快取容量控制
+//  移動／重新命名／刪除（網頁播放器的音樂庫管理用）
+//  把快取歌曲（根目錄第一層）移進子資料夾＝收藏，之後不會被快取清理刪掉。
+// ════════════════════════════════════════════════════════
+class StoreError extends Error {
+  constructor(status, message) { super(message); this.status = status; }
+}
+
+// from / to 都是相對路徑；to 沒有副檔名時沿用 from 的（不允許改副檔名：檔案內容不會被轉檔）
+async function moveFile(rawFrom, rawTo) {
+  let from, to;
+  try {
+    from = toSafeRelPath(rawFrom);
+    let toRaw = normalizeSlashes(rawTo).trim();
+    const fromExt = path.posix.extname(from.relPath);
+    if (path.posix.extname(toRaw).toLowerCase() !== fromExt.toLowerCase()) toRaw += fromExt;
+    to = toSafeRelPath(toRaw);
+  } catch (err) {
+    throw new StoreError(400, err.message);
+  }
+  if (!isServableName(from.relPath) || !isServableName(to.relPath)) throw new StoreError(400, '只能移動音訊檔');
+  if (from.relPath === to.relPath) return { from: from.relPath, to: to.relPath };
+
+  const st = await fsp.stat(from.absPath).catch(() => null);
+  if (!st || !st.isFile()) throw new StoreError(404, '找不到檔案');
+  // 只差大小寫（Windows / macOS 不分大小寫）時目標「存在」的就是自己，允許改名
+  const sameFile = from.relPath.toLowerCase() === to.relPath.toLowerCase();
+  if (!sameFile && await fsp.stat(to.absPath).then(() => true, () => false)) {
+    throw new StoreError(409, '目標位置已有同名檔案');
+  }
+  await fsp.mkdir(path.dirname(to.absPath), { recursive: true });
+  await fsp.rename(from.absPath, to.absPath);
+  touchedAt.delete(from.absPath);
+  invalidateList();
+  console.log(`📦 [MusicLibrary] 已移動: ${from.relPath} → ${to.relPath}`);
+  if (isCachePath(to.relPath)) scheduleEvict();
+  return { from: from.relPath, to: to.relPath };
+}
+
+async function deleteFile(rawRelPath) {
+  let relPath, absPath;
+  try { ({ relPath, absPath } = toSafeRelPath(rawRelPath)); } catch (err) { throw new StoreError(400, err.message); }
+  if (!isServableName(relPath)) throw new StoreError(400, '只能刪除音訊檔');
+  try {
+    await fsp.unlink(absPath);
+  } catch (err) {
+    if (['ENOENT', 'ENOTDIR', 'EISDIR'].includes(err.code)) throw new StoreError(404, '找不到檔案');
+    throw err;
+  }
+  touchedAt.delete(absPath);
+  invalidateList();
+  console.log(`🗑️ [MusicLibrary] 已刪除: ${relPath}`);
+  return { filename: relPath };
+}
+
+// 狀態頁用：曲目數、總大小、快取（根目錄第一層）佔用
+async function summary() {
+  const files = await listAll();
+  let totalBytes = 0, cacheBytes = 0, cacheFiles = 0;
+  for (const f of files) {
+    totalBytes += f.size;
+    if (isCachePath(f.filename)) { cacheBytes += f.size; cacheFiles += 1; }
+  }
+  return { files: files.length, totalBytes, cacheFiles, cacheBytes, cacheLimitBytes: MAX_CACHE_SIZE_MB * 1024 * 1024 };
+}
+
+// ════════════════════════════════════════════════════════
+//  快取容量控制（LRU）
+//  - 「最後使用時間」= max(atime, mtime)：播放／被 Bot 下載時由 touchCache() 更新 atime，
+//    所以常聽的舊歌不會被先刪。刻意不動 mtime：清單、Bot、歌曲長度快取都以 mtime 判斷檔案是否變更。
 //  - 不遞迴：只處理 CACHE_DIR 第一層的檔案，子資料夾（例如 favorites/）完全不碰
 //  - 只處理音訊副檔名：.gitkeep、說明文件、.part 殘留檔等不會被刪
 //  - 排除暫存檔：避免把正在下載／正規化／上傳的檔案當成舊檔刪掉
@@ -280,9 +362,9 @@ async function evictOnce() {
   const stats = await statBatched(paths);
   const files = [];
   paths.forEach((fp, k) => {
-    if (stats[k]) files.push({ fp, mtime: stats[k].mtimeMs, size: stats[k].size }); // null = 掃描途中被刪除，略過
+    if (stats[k]) files.push({ fp, usedAt: lastUsedMs(stats[k]), size: stats[k].size }); // null = 掃描途中被刪除，略過
   });
-  files.sort((a, b) => a.mtime - b.mtime); // 最舊排前面
+  files.sort((a, b) => a.usedAt - b.usedAt); // 最久沒用的排前面
 
   let totalMB = files.reduce((sum, f) => sum + f.size, 0) / 1024 / 1024;
   let removed = 0;
@@ -297,6 +379,31 @@ async function evictOnce() {
     console.log(`🗑️ [MusicLibrary] 快取已滿，刪除舊檔: ${path.basename(oldest.fp)}`);
   }
   if (removed) invalidateList();
+}
+
+function lastUsedMs(stat) {
+  return Math.max(stat.atimeMs || 0, stat.mtimeMs || 0);
+}
+
+// 標記快取檔「剛被使用」（只更新 atime）。同一個檔案 TOUCH_INTERVAL_MS 內只寫一次，
+// 拖曳進度的每個 Range 請求都會呼叫到這裡。非快取範圍（子資料夾）的檔案不會被清理，直接略過。
+// 不會 throw、不必 await（回傳的 Promise 不會 reject，測試用）。
+const TOUCH_INTERVAL_MS = 60 * 60 * 1000;
+const TOUCH_MEMO_MAX = 5000;
+const touchedAt = new Map(); // absPath -> 上次 touch 的時間
+function touchCache(absPath) {
+  if (!absPath) return;
+  const rel = normalizeSlashes(path.relative(MUSIC_DIR, absPath));
+  if (!rel || rel.startsWith('..') || !isCachePath(rel)) return;
+  const now = Date.now();
+  const last = touchedAt.get(absPath);
+  if (last && now - last < TOUCH_INTERVAL_MS) return;
+  touchedAt.delete(absPath); // 重新插入到尾端，超過上限時從最舊的開始丟
+  touchedAt.set(absPath, now);
+  if (touchedAt.size > TOUCH_MEMO_MAX) touchedAt.delete(touchedAt.keys().next().value);
+  return fsp.stat(absPath)
+    .then((st) => fsp.utimes(absPath, new Date(now), st.mtime))
+    .catch(() => {}); // 檔案剛被刪除等：不影響播放
 }
 
 // 同一時間只跑一份；執行期間又被要求時，結束後再補跑一次（確保看得到期間新增的檔案）。
@@ -346,6 +453,7 @@ async function cleanupStaleTemps(dir = MUSIC_DIR, depth = 0) {
 }
 
 module.exports = {
+  StoreError,
   MUSIC_DIR,
   CACHE_DIR,
   SUPPORTED_EXTENSIONS,
@@ -354,9 +462,14 @@ module.exports = {
   invalidateList,
   cleanupStaleTemps,
   listAll,
+  listEtag,
   exists,
   resolveForRead,
   isNotFoundError,
   writeTempFileFromStream,
   writeFileFromStream,
+  touchCache,
+  moveFile,
+  deleteFile,
+  summary,
 };

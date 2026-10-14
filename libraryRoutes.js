@@ -8,10 +8,11 @@
 // 但仍建議設定 MUSIC_LIB_SECRET，避免同專案內其他服務、或設定失誤時
 // 被誤用。（原 auth.js 的內容，只被這裡使用，所以併入此檔）
 //
-//   GET  /api/music/list                           列出整個音樂庫
+//   GET  /api/music/list                           列出整個音樂庫（支援 ETag / If-None-Match → 304）
 //   GET  /api/music/exists?filename=                檢查指定 filename 是否已存在
 //   GET  /api/music/file/*                          下載檔案內容
 //   PUT  /api/music/file/*                          上傳／覆寫檔案內容（原始位元組）
+//   GET  /api/music/status                          服務狀態（見 status.js）
 
 const crypto = require('crypto');
 
@@ -19,8 +20,19 @@ const crypto = require('crypto');
 const sha = (v) => crypto.createHash('sha256').update(String(v)).digest();
 const keyEquals = (a, b) => crypto.timingSafeEqual(sha(a), sha(b));
 
-function createLibraryKeyMiddleware(secret) {
+// 什麼情況下「沒有金鑰」也放行：
+//   - 沒設 MUSIC_LIB_SECRET 且沒有啟用網頁播放器 → 視為純內網部署，維持舊行為
+//   - 啟用了網頁播放器（代表服務有公開網域）卻沒設金鑰 → 預設鎖住 /api/music/*（回 503），
+//     除非明確設定 ALLOW_INSECURE_LIBRARY_API=1
+function isInsecureLocked({ secret, env = process.env }) {
+  return !secret && !!env.WEB_PLAYER_PASSWORD && env.ALLOW_INSECURE_LIBRARY_API !== '1';
+}
+
+function createLibraryKeyMiddleware(secret, { locked = false } = {}) {
   return function libraryKeyMiddleware(req, res, next) {
+    if (locked) {
+      return res.status(503).json({ error: '服務已公開（啟用網頁播放器）但未設定 MUSIC_LIB_SECRET，內部 API 已停用' });
+    }
     if (!secret) return next(); // 未設定金鑰時不驗證（僅建議在完全信任的內網環境這樣用）
     const provided = req.get('x-music-lib-key');
     if (!provided || !keyEquals(provided, secret)) {
@@ -30,13 +42,27 @@ function createLibraryKeyMiddleware(secret) {
   };
 }
 
-function mountLibraryRoutes(app, { store, secret }) {
-  app.use('/api/music', createLibraryKeyMiddleware(secret));
+function mountLibraryRoutes(app, { store, secret, status }) {
+  const locked = isInsecureLocked({ secret });
+  app.use('/api/music', createLibraryKeyMiddleware(secret, { locked }));
+
+  // ── 服務狀態（快取用量、串流／下載數、yt-dlp 版本…，見 status.js）──
+  if (status) {
+    app.get('/api/music/status', async (req, res) => {
+      res.set('Cache-Control', 'no-store');
+      res.json(await status.collect());
+    });
+  }
 
   // ── 清單 ──────────────────────────────────────────────────
+  // 帶 If-None-Match 且清單沒變 → 304（Bot 定期輪詢時大多只拿到空回應）
   app.get('/api/music/list', async (req, res) => {
     try {
       const files = await store.listAll();
+      const etag = store.listEtag(files);
+      res.set('ETag', etag);
+      const inm = req.get('if-none-match');
+      if (inm && inm.split(',').some((t) => t.trim().replace(/^W\//, '') === etag)) return res.status(304).end();
       res.json({ files });
     } catch (err) {
       console.error('❌ [MusicLibrary] /list 失敗:', err);
@@ -59,6 +85,7 @@ function mountLibraryRoutes(app, { store, secret }) {
     try {
       const absPath = store.resolveForRead(req.params[0]);
       if (!absPath) return res.status(404).json({ error: '找不到檔案' });
+      store.touchCache(absPath); // Bot 拿快取檔去播＝使用中，延後被快取清理
       res.sendFile(absPath, (err) => {
         if (err && !res.headersSent) {
           if (store.isNotFoundError(err)) return res.status(404).json({ error: '找不到檔案' });
@@ -82,4 +109,4 @@ function mountLibraryRoutes(app, { store, secret }) {
   });
 }
 
-module.exports = { mountLibraryRoutes };
+module.exports = { mountLibraryRoutes, isInsecureLocked };

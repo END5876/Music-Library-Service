@@ -1,0 +1,38 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  # 每週一重建一次映像：確認 Dockerfile 仍可建置（上游 yt-dlp / bgutil 版本會變）
+  schedule:
+    - cron: '0 3 * * 1'
+  workflow_dispatch:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: npm run lint
+      - run: npm test
+
+  docker:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build image
+        run: docker build -t music-library-service:ci .
+      - name: Smoke test
+        run: |
+          docker run -d --name mls -p 4100:4100 -e MUSIC_LIB_SECRET=ci-secret music-library-service:ci
+          for i in $(seq 1 20); do curl -fs localhost:4100/health && break; sleep 1; done
+          curl -fs -H 'x-music-lib-key: ci-secret' localhost:4100/api/music/status
+          docker exec mls yt-dlp --version
+          docker logs mls
+          docker rm -f mls
