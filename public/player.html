@@ -94,6 +94,7 @@
         <span class="sel-count"></span>
         <button class="btn btn-sm btn-secondary sel-all">全選</button>
         <button class="btn btn-sm btn-primary sel-act" id="selAdd" disabled><svg><use href="#i-playlist-add"/></svg>加入播放清單</button>
+        <button class="btn btn-sm btn-secondary sel-act" id="selBot" disabled hidden><svg><use href="#i-bot"/></svg>點給 Bot</button>
         <button class="btn btn-sm btn-secondary" id="selCancel">取消</button>
       </div>
       <ul class="quick" id="list"></ul>
@@ -166,6 +167,7 @@
         <button class="btn-icon btn-lg" id="plMoreBtn" title="更多" aria-label="更多"><svg><use href="#i-more"/></svg></button>
         <div class="pl-menu" id="plMenu">
           <button id="plSelect"><svg><use href="#i-select"/></svg>選取歌曲</button>
+          <button id="plToBot"><svg><use href="#i-bot"/></svg>整份點給 Bot</button>
           <button id="plRename"><svg><use href="#i-edit"/></svg>重新命名</button>
           <hr>
           <button class="danger" id="plDelete"><svg><use href="#i-delete"/></svg>刪除播放清單</button>
@@ -177,6 +179,7 @@
         <span class="sel-count"></span>
         <button class="btn btn-sm btn-secondary sel-all">全選</button>
         <button class="btn btn-sm btn-secondary sel-act" id="plSelAdd" disabled><svg><use href="#i-playlist-add"/></svg>加入其他清單</button>
+        <button class="btn btn-sm btn-secondary sel-act" id="plSelBot" disabled hidden><svg><use href="#i-bot"/></svg>點給 Bot</button>
         <button class="btn btn-sm btn-secondary danger sel-act" id="plSelRemove" disabled><svg><use href="#i-close"/></svg>移出</button>
         <button class="btn btn-sm btn-secondary" id="plSelCancel">取消</button>
       </div>

@@ -291,6 +291,7 @@
   function setLibSelecting(on) {
     libSel.setMode(on);
     $('selectBtn').hidden = on;
+    $('selBot').hidden = !bots.hasTargets(); // 有 Bot 在語音頻道才顯示「點給 Bot」
     render();
   }
   $('selectBtn').addEventListener('click', () => setLibSelecting(true));
@@ -300,6 +301,13 @@
       .map((fn) => ({ kind: 'lib', filename: fn, title: byFile.get(fn).name }));
     if (!items.length) return setStatus('選取的歌曲已不在音樂庫中');
     pickPlaylist(items, () => setLibSelecting(false));
+  });
+  // 多選後一次點給 Bot（依音樂庫目前的排序送出）
+  $('selBot').addEventListener('click', () => {
+    const items = view.filter((f) => libSel.set.has(f.filename))
+      .map((f) => ({ kind: 'lib', filename: f.filename, title: f.name }));
+    if (!items.length) return setStatus('選取的歌曲已不在音樂庫中');
+    bots.sendToBot(items, () => setLibSelecting(false));
   });
   // 非隨機模式下佇列畫面裡「接下來播什麼」的預覽列:可以拖曳
   const previewRow = (f) => makeRow({
@@ -1913,7 +1921,7 @@
     ids: () => { const p = plOpen && plById(plOpen); return p ? plVisible(p).map((it) => it.id) : []; },
     rowId: (r) => r.dataset.iid || null,
   });
-  function setPlSelecting(on) { plSel.setMode(on); renderPlaylists(); }
+  function setPlSelecting(on) { plSel.setMode(on); $('plSelBot').hidden = !bots.hasTargets(); renderPlaylists(); }
   const plSelItems = () => {
     const p = plOpen && plById(plOpen); if (!p) return [];
     const byId = new Map(p.items.map((it) => [it.id, it]));
@@ -1932,6 +1940,21 @@
       : { kind: 'online', url: it.url, title: it.title, author: it.author, platform: it.platform, duration: it.duration });
     pickPlaylist(its, () => setPlSelecting(false));
   });
+  // 播放清單 → 點給 Bot：多選的幾首，或整份（依清單順序；音樂庫已刪除的歌由伺服器略過）
+  const plToBotItem = (it) => (it.kind === 'lib'
+    ? { kind: 'lib', filename: it.filename, title: it.title }
+    : { kind: 'online', url: it.url, title: it.title, author: it.author, platform: it.platform, duration: it.duration });
+  $('plSelBot').addEventListener('click', () => {
+    const p = plOpen && plById(plOpen); if (!p) return;
+    const sel = new Set(plSelItems().map((it) => it.id));
+    bots.sendToBot(p.items.filter((it) => sel.has(it.id)).map(plToBotItem), () => setPlSelecting(false));
+  });
+  $('plToBot').addEventListener('click', () => {
+    const p = plOpen && plById(plOpen); if (!p) return;
+    if (!p.items.length) return setStatus('這個播放清單是空的');
+    bots.sendToBot(p.items.map(plToBotItem));
+  });
+
   $('plRename').addEventListener('click', async () => {
     const p = plOpen && plById(plOpen); if (!p) return;
     const name = await askText('重新命名', p.name);

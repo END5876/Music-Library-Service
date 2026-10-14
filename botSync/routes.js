@@ -16,11 +16,14 @@
 //     action：skip | stop | clearQueue
 //             loop { mode: off|one|all } | randomPlay { on } | removeQueue { index, key }
 //             enqueue { item: { kind:'lib', filename } | { kind:'online', url, title?... }, next? }
+//             enqueueMany { items:[...同上], next? }   一次最多 500 首；找不到的檔案、不支援的網址略過不計
+//               （線上歌曲直接用帶來的標題／作者／長度，Bot 不逐首跑 yt-dlp，同 /play 匯入播放清單的做法）
 
 const express = require('express');
 const { LOOP_MODES } = require('./hub');
 
 const MAX_SSE_CLIENTS = 50;
+const MAX_BATCH = 500;
 const SSE_PING_MS = 20 * 1000;
 
 function mountBotApi(app, { hub }) {
@@ -62,7 +65,23 @@ function mountBotApi(app, { hub }) {
 }
 
 function mountWebApi(app, { hub, requireWebAuth, store, isAllowedUrl, cleanUrl }) {
-  const json = express.json({ limit: '16kb' });
+  const json = express.json({ limit: '256kb' }); // 批量點歌最多 500 首
+  const s = (v, max) => String(v || '').slice(0, max);
+
+  // 網頁點的一首歌 → 送給 Bot 的乾淨格式；不存在的檔案、不支援的網址回傳 null
+  async function cleanRequestItem(it) {
+    if (!it || typeof it !== 'object') return null;
+    if (it.kind === 'lib') {
+      const info = await store.exists(s(it.filename, 1000)).catch(() => ({ exists: false }));
+      return info.exists ? { kind: 'lib', filename: info.filename, title: s(it.title, 200) } : null;
+    }
+    if (it.kind === 'online') {
+      const url = cleanUrl(s(it.url, 500));
+      if (!isAllowedUrl(url)) return null;
+      return { kind: 'online', url, title: s(it.title, 200), author: s(it.author, 100), duration: s(it.duration, 20) };
+    }
+    return null;
+  }
 
   app.get('/web/api/bots', requireWebAuth, (req, res) => {
     res.set('Cache-Control', 'no-store');
@@ -103,18 +122,19 @@ function mountWebApi(app, { hub, requireWebAuth, store, isAllowedUrl, cleanUrl }
       }
       case 'enqueue': {
         const it = b.item || {};
-        const next = !!b.next;
-        if (it.kind === 'lib') {
-          const info = await store.exists(String(it.filename || '')).catch(() => ({ exists: false }));
-          if (!info.exists) throw new Error('音樂庫裡找不到這首歌');
-          return { item: { kind: 'lib', filename: info.filename, title: String(it.title || '').slice(0, 200) }, next };
+        const item = await cleanRequestItem(it);
+        if (!item) throw new Error(it.kind === 'lib' ? '音樂庫裡找不到這首歌' : it.kind === 'online' ? '只支援 YouTube / Bilibili 網址' : '不支援的歌曲格式');
+        return { item, next: !!b.next };
+      }
+      case 'enqueueMany': {
+        if (!Array.isArray(b.items) || !b.items.length) throw new Error('沒有要加入的歌曲');
+        if (b.items.length > MAX_BATCH) throw new Error(`一次最多 ${MAX_BATCH} 首`);
+        const items = [];
+        for (let i = 0; i < b.items.length; i += 64) { // 分批並行 stat，維持原本順序
+          for (const it of await Promise.all(b.items.slice(i, i + 64).map(cleanRequestItem))) if (it) items.push(it);
         }
-        if (it.kind === 'online') {
-          const url = cleanUrl(String(it.url || '').slice(0, 500));
-          if (!isAllowedUrl(url)) throw new Error('只支援 YouTube / Bilibili 網址');
-          return { item: { kind: 'online', url, title: String(it.title || '').slice(0, 200) }, next };
-        }
-        throw new Error('不支援的歌曲格式');
+        if (!items.length) throw new Error('找不到可加入的歌曲（檔案不存在或網址不支援）');
+        return { items, next: !!b.next, skipped: b.items.length - items.length };
       }
       default:
         throw new Error('不支援的操作');

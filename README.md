@@ -65,7 +65,7 @@ header（未設定 `MUSIC_LIB_SECRET` 時不驗證，僅建議在完全信任的
 | GET | `/web/api/status` | 服務狀態（需登入，內容同 `/api/music/status`） |
 | GET | `/web/api/bots` | 各 Bot、各伺服器的播放狀態 |
 | GET | `/web/api/bots/events` | SSE：Bot 狀態有變就推送（`event: state`） |
-| POST | `/web/api/bots/:botId/command` | 遠端控制 Bot，等 Bot 回報結果 `{ ok, message }` |
+| POST | `/web/api/bots/:botId/command` | 遠端控制 Bot（含批量點歌 `enqueueMany`，最多 500 首），等 Bot 回報結果 `{ ok, message }` |
 
 ### Bot 正在播放（Bot ↔ 網頁同步）
 
@@ -73,7 +73,10 @@ header（未設定 `MUSIC_LIB_SECRET` 時不驗證，僅建議在完全信任的
 
 - 跳過、停止、切換循環（不循環／單曲／列表）、隨機連播、清空佇列、移除佇列中的某首。
 - 在音樂庫、播放清單歌曲的「⋮」選單，或線上搜尋結果的 Bot 圖示選「**點給 Bot 播放**」，挑一個 Bot 所在的伺服器送過去
-  （可勾選「下一首播放」插到佇列最前面）。只有 Bot 目前在語音頻道裡的伺服器可以點歌。
+  （可勾選「下一首播放」插到佇列最前面）。只有 Bot 目前在語音頻道裡的伺服器可以點歌（autojoin 進去待命的也可以）。
+- **批量點歌**：音樂庫或播放清單內頁按「多選」選好後按「點給 Bot」，或在播放清單的「⋯」選單選「整份點給 Bot」。
+  一次最多 500 首，依畫面上的順序加入；勾「下一首播放」會整批插到 Bot 佇列最前面。已從音樂庫刪除、或這台 Bot 清單裡還沒有的歌會略過並告訴你幾首。
+  批量加入的線上歌曲直接用播放清單裡存的標題／長度，Bot 不逐首查影片資訊（同 `/play` 匯入播放清單，避免觸發平台反爬蟲），輪到播放時才取得完整資訊。
 - 每個網頁操作都會在該伺服器最近點歌的文字頻道留一行「🌐 網頁播放器：…」紀錄（Bot 端 `WEB_SYNC_ANNOUNCE=0` 可關閉）。
 
 運作方式：連線方向只有「Bot → 這個服務」，Bot 不需要對外開 port，沿用 `MUSIC_LIB_URL` 與 `MUSIC_LIB_SECRET`。

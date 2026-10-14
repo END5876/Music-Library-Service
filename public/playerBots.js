@@ -5,6 +5,8 @@
 // 伺服器端協定見 botSync/routes.js：GET /web/api/bots、SSE /web/api/bots/events、POST /web/api/bots/:id/command。
 //
 // createBots(deps) 回傳 { show, hide, refresh, hasTargets, sendToBot }；deps 由 player.js 傳入：
+//   sendToBot(items, onDone)：items 可以是一首或多首（多選、整份播放清單）；一首走 enqueue（Bot 會查完整影片資訊），
+//   多首走 enqueueMany（一次最多 MAX_BATCH 首，線上歌曲直接用帶過去的資訊）。onDone 在送出成功後呼叫（例如結束多選）。
 //   $ / setStatus / askConfirm / pushLayer / dropLayer / fmt / makeRow   畫面工具
 //   libInfo(filename) → { name, duration } | null           音樂庫曲目的名稱與長度（Bot 不知道本地檔的長度）
 //   showLogin(msg)                                          登入過期時叫出登入框
@@ -21,7 +23,9 @@
     const busy = new Set();    // 送出中的「botId|guildId」：避免連點
 
     const LOOP_LABEL = { off: '不循環', one: '單曲循環', all: '列表循環' };
-    const STATUS_LABEL = { paused: '已暫停', autopaused: '已暫停（沒有人在聽）', buffering: '緩衝中…' };
+    // autopaused：@discordjs/voice 在「沒有可用的語音連線」時自動暫停（例如 Bot 被踢出、連線重建中）
+    const STATUS_LABEL = { paused: '已暫停', autopaused: '已暫停（語音連線中斷）', buffering: '緩衝中…' };
+    const VOICE_LABEL = { connecting: '連線中…', disconnected: '連線中斷,重新連線中…' };
 
     const el = (tag, cls, text) => {
       const e = document.createElement(tag);
@@ -37,7 +41,8 @@
       : [it.platform, it.author].filter(Boolean).join(' · ') || '線上歌曲';
     const itemTitle = (it) => (it.kind === 'lib' && libInfo(it.filename)?.name) || it.title;
     const itemDur = (it) => (it.kind === 'lib' ? (libInfo(it.filename)?.duration || 0) : (it.durationSec || parseDur(it.duration)));
-    const targets = () => bots.filter((b) => b.online).flatMap((b) => b.guilds.map((g) => ({ bot: b, g })));
+    // 可以點歌的目標：在線的 Bot、且在語音頻道裡（被踢出但還留著播放狀態的不算；用 voiceChannel 判斷，舊版 Bot 也有這個欄位）
+    const targets = () => bots.filter((b) => b.online).flatMap((b) => b.guilds.filter((g) => g.voiceChannel).map((g) => ({ bot: b, g })));
     // 好幾台 Bot 同名（例如同一套程式部署多份、都叫 Mouse）時，名稱後面加 ID 末 4 碼區分；建議 Bot 端設 WEB_SYNC_BOT_NAME
     const botLabel = (b) => (bots.filter((x) => x.name === b.name).length > 1 ? b.name + '（…' + b.id.slice(-4) + '）' : b.name);
 
@@ -100,7 +105,8 @@
 
       const head = el('div', 'bot-guild-head');
       head.append(el('b', '', g.guildName));
-      if (g.voiceChannel) head.append(el('span', 'bot-vc', '🔊 ' + g.voiceChannel));
+      if (g.voiceChannel) head.append(el('span', 'bot-vc', '🔊 ' + g.voiceChannel + (VOICE_LABEL[g.voice] ? '(' + VOICE_LABEL[g.voice] + ')' : '')));
+      else if (g.current) head.append(el('span', 'bot-vc', '已不在語音頻道'));
       box.append(head);
 
       if (!g.current) {
@@ -231,36 +237,46 @@
     }
 
     // ── 點給 Bot 播放 ───────────────────────────────────
-    let pickItem = null;
+    const MAX_BATCH = 500; // 與伺服器 botSync/routes.js 的上限一致
+    let pickItems = null, pickDone = null;
     function closePick() {
       if (!$('botPick').classList.contains('show')) return;
       $('botPick').classList.remove('show');
-      pickItem = null;
+      pickItems = null; pickDone = null;
       dropLayer('botPick');
     }
+    const toPayload = (it) => (it.kind === 'lib'
+      ? { kind: 'lib', filename: it.filename, title: it.title }
+      : { kind: 'online', url: it.srcUrl || it.url, title: it.title, author: it.author || '', duration: it.duration || '' });
     $('botPickClose').addEventListener('click', closePick);
     $('botPick').addEventListener('click', (e) => { if (e.target === $('botPick')) closePick(); });
 
-    async function sendToBot(item) {
+    async function sendToBot(items, onDone) {
+      const list = (Array.isArray(items) ? items : [items]).filter(Boolean);
+      if (!list.length) return;
       await refresh();
       const ts = targets();
       if (!ts.length) return setStatus('沒有可以點歌的 Bot:Bot 要先在 Discord 的語音頻道裡');
-      pickItem = item;
-      $('botPickSong').textContent = itemTitle(item);
+      pickItems = list.slice(0, MAX_BATCH); pickDone = onDone || null;
+      $('botPickTitle').textContent = list.length > 1 ? `點給 Bot 播放(${pickItems.length} 首)` : '點給 Bot 播放';
+      $('botPickSong').textContent = list.length > 1
+        ? `「${itemTitle(list[0])}」等 ${list.length} 首` + (list.length > MAX_BATCH ? `\n一次最多 ${MAX_BATCH} 首,只會送出前 ${MAX_BATCH} 首` : '')
+        : itemTitle(list[0]);
+      $('botPickNext').parentElement.lastChild.textContent = list.length > 1 ? '下一首播放(整批插到 Bot 佇列最前面)' : '下一首播放(插到 Bot 佇列最前面)';
       const ul = $('botPickList');
       ul.textContent = '';
       for (const { bot, g } of ts) {
         ul.append(makeRow({
           title: g.guildName + (g.voiceChannel ? ' · 🔊 ' + g.voiceChannel : ''),
           sub: botLabel(bot) + ' · ' + (g.current ? '正在播:' + itemTitle(g.current) : '待命中'),
-          onClick: () => {
-            const it = pickItem, next = $('botPickNext').checked;
+          onClick: async () => {
+            const its = pickItems, done = pickDone, next = $('botPickNext').checked;
             closePick();
-            const payload = it.kind === 'lib'
-              ? { kind: 'lib', filename: it.filename, title: it.title }
-              : { kind: 'online', url: it.srcUrl || it.url, title: it.title };
-            setStatus('已送給 Bot,處理中…', true);
-            command(bot.id, g.guildId, 'enqueue', { item: payload, next });
+            setStatus(its.length > 1 ? `已送出 ${its.length} 首給 Bot,處理中…` : '已送給 Bot,處理中…', true);
+            const r = its.length > 1
+              ? await command(bot.id, g.guildId, 'enqueueMany', { items: its.map(toPayload), next })
+              : await command(bot.id, g.guildId, 'enqueue', { item: toPayload(its[0]), next });
+            if (r && r.ok && done) done();
           },
         }));
       }
