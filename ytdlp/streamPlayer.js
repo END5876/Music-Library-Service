@@ -183,7 +183,7 @@ function _playFromFile(ctx, filePath) {
   const { res } = ctx;
   ctx.started = true;
   touchCache(filePath);
-  res.sendFile(filePath, { headers: { 'Cache-Control': 'private, no-cache' } }, (err) => {
+  res.sendFile(filePath, { dotfiles: 'allow', headers: { 'Cache-Control': 'private, no-cache' } }, (err) => {
     if (!err) return;
     if (res.headersSent) return; // 瀏覽器中途取消（ECONNABORTED）等，不需處理
     console.error('❌ [OnlineMusic] 本地播放失敗:', err);
@@ -226,6 +226,7 @@ function _fallbackStream(ctx, retryCount) {
     : { args: ['-vn', '-c:a', 'libmp3lame', '-b:a', '192k', '-f', 'mp3'], type: 'audio/mpeg' };
   const ffmpeg = spawn('ffmpeg', [
     '-hide_banner', '-loglevel', 'error',
+    '-protocol_whitelist', 'pipe', // 輸入只會是 yt-dlp 的 stdout：不讓媒體內容引用本機檔案或其他網址
     '-i', 'pipe:0',
     ...output.args, 'pipe:1',
   ], { stdio: ['pipe', 'pipe', 'pipe'], windowsHide: true });

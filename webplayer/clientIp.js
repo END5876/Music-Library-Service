@@ -59,4 +59,20 @@ function clientIp(req) {
   return normalizeIp(hop) || hop;
 }
 
-module.exports = { clientIp, isCloudflareIp, CLOUDFLARE_IPV4, CLOUDFLARE_IPV6 };
+// 限流計數用的 key：IPv4 用完整位址；IPv6 用前 64 位元（/64）。
+// 一般使用者／一台主機通常就分到一整個 /64，以單一 IPv6 位址計數的話，換位址就能無限重試。
+function rateLimitKey(ip) {
+  const v = normalizeIp(ip);
+  if (!v) return String(ip || '');
+  if (!net.isIPv6(v)) return v;
+  const addr = v.split('%')[0].toLowerCase();
+  const [head, tail] = addr.split('::');
+  // 結尾內嵌 IPv4（例如 64:ff9b::1.2.3.4）佔兩組
+  const groups = (s) => (s ? s.split(':').flatMap((g) => (g.includes('.') ? ['0', '0'] : [g])) : []);
+  const h = groups(head);
+  const t = addr.includes('::') ? groups(tail) : [];
+  const full = addr.includes('::') ? [...h, ...Array(Math.max(0, 8 - h.length - t.length)).fill('0'), ...t] : h;
+  return `${full.slice(0, 4).map((g) => parseInt(g, 16).toString(16)).join(':')}::/64`;
+}
+
+module.exports = { clientIp, rateLimitKey, isCloudflareIp, CLOUDFLARE_IPV4, CLOUDFLARE_IPV6 };

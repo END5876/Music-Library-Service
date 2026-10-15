@@ -90,6 +90,7 @@ function createHub({ now = () => Date.now(), resultTimeoutMs = RESULT_TIMEOUT_MS
   const pending = new Map();     // botId -> [command]
   const waiters = new Map();     // botId -> resolve（同一個 Bot 只保留最新一條長輪詢）
   const results = new Map();     // commandId -> { botId, resolve, timer }
+  const taken = new Map();       // commandId -> 已交給長輪詢的指令原件（連線來不及送出時放回佇列用）
   const subscribers = new Set(); // (snapshot) => void
   let broadcastTimer = null;
   const lastOnline = new Map();  // botId -> 上次廣播時的 online，用來偵測「變成離線」
@@ -186,12 +187,14 @@ function createHub({ now = () => Date.now(), resultTimeoutMs = RESULT_TIMEOUT_MS
   }
 
   // 長輪詢：有指令就立刻回傳（並從佇列移除），沒有就等到有指令或逾時
-  function takeCommands(botId, waitMs = 0) {
+  // token：呼叫端自己的識別物件，之後 cancelWait(botId, token) 只會結束「這一條」長輪詢
+  function takeCommands(botId, waitMs = 0, token = null) {
     if (!isBotId(botId)) return Promise.reject(Object.assign(new Error('不合法的 Bot ID'), { status: 400 }));
     touch(botId);
     const take = () => {
       const q = dropExpired(botId);
       pending.set(botId, []);
+      for (const c of q) taken.set(c.id, c);
       return q.map(({ id, guildId, action, args }) => ({ id, guildId, action, ...args }));
     };
     const ready = take();
@@ -209,20 +212,41 @@ function createHub({ now = () => Date.now(), resultTimeoutMs = RESULT_TIMEOUT_MS
         resolve(cmds);
       };
       const wake = (cmds) => done(cmds || take());
+      wake.token = token;
       waiters.set(botId, wake);
     });
   }
 
-  // 長輪詢連線被客戶端中斷時呼叫，避免之後的指令被送進已關閉的連線
-  function cancelWait(botId) {
+  // 長輪詢連線被客戶端中斷時呼叫，避免之後的指令被送進已關閉的連線。
+  // 帶 token 時只結束同一條連線：舊連線晚一點才斷，不會把 Bot 剛開的新長輪詢一起結束。
+  function cancelWait(botId, token) {
     const w = waiters.get(botId);
-    if (w) { waiters.delete(botId); w([]); }
+    if (!w || (token && w.token !== token)) return;
+    waiters.delete(botId);
+    w([]);
+  }
+
+  // 指令已從佇列取出、但連線在送出前就斷了：放回佇列最前面（保持順序），等下一條長輪詢再送。
+  // 已經結束（逾時、Bot 已回報）的指令不放回。
+  function requeue(botId, ids) {
+    const back = [];
+    for (const id of ids || []) {
+      const c = taken.get(id);
+      taken.delete(id);
+      if (c && results.has(id) && results.get(id).botId === botId) back.push(c);
+    }
+    if (!back.length) return 0;
+    pending.set(botId, [...back, ...(pending.get(botId) || [])]);
+    const w = waiters.get(botId);
+    if (w) w();
+    return back.length;
   }
 
   function finish(id, result) {
     const r = results.get(id);
     if (!r) return false;
     results.delete(id);
+    taken.delete(id);
     clearTimeout(r.timer);
     r.resolve(result);
     return true;
@@ -279,7 +303,7 @@ function createHub({ now = () => Date.now(), resultTimeoutMs = RESULT_TIMEOUT_MS
   }
 
   return {
-    putState, markOffline, takeCommands, cancelWait, submitCommand, reportResult, snapshot, subscribe, close,
+    putState, markOffline, takeCommands, cancelWait, requeue, submitCommand, reportResult, snapshot, subscribe, close,
     subscriberCount: () => subscribers.size,
   };
 }

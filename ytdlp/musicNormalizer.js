@@ -8,7 +8,7 @@ const { spawn } = require('child_process');
 const fs   = require('fs');
 const path = require('path');
 const logger = require('../logger');
-const { invalidateList } = require('../musicStore');
+const { invalidateList, SAFE_INPUT_ARGS } = require('../musicStore');
 
 const TARGET_LUFS = -16;   // -t -16
 const TARGET_LRA  = 20;    // -lrt 20
@@ -97,6 +97,7 @@ function _analyzeLoudness(filePath, outputArgs = []) {
   return new Promise((resolve, reject) => {
     const args = [
       '-hide_banner', '-nostats',
+      ...SAFE_INPUT_ARGS,
       '-i', filePath,
       ...outputArgs,
       '-af', `loudnorm=I=${TARGET_LUFS}:LRA=${TARGET_LRA}:TP=${TARGET_TP}:print_format=json`,
@@ -133,6 +134,7 @@ function _applyLoudnorm(inputPath, outputPath, measured, outputArgs = []) {
 
     const args = [
       '-hide_banner', '-nostats', '-y',
+      ...SAFE_INPUT_ARGS,
       '-i', inputPath,
       ...outputArgs,
       '-af', af,

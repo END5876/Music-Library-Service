@@ -163,7 +163,7 @@ function sendCachedFile(res, filePath) {
   console.log(`✅ [Cache] 依影片 ID 命中快取，直接播放: ${path.basename(filePath)}`);
   touchCache(filePath);
   return new Promise((resolve) => {
-    res.sendFile(filePath, { headers: { 'Cache-Control': 'private, no-cache' } }, (err) => {
+    res.sendFile(filePath, { dotfiles: 'allow', headers: { 'Cache-Control': 'private, no-cache' } }, (err) => {
       resolve(!err || res.headersSent);
     });
   });

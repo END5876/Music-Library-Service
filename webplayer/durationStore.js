@@ -14,6 +14,7 @@ const fs = require('fs');
 const fsp = require('fs/promises');
 const path = require('path');
 const { execFile } = require('child_process');
+const { SAFE_INPUT_ARGS } = require('../musicStore');
 
 const FILE = process.env.DURATIONS_FILE || path.join(__dirname, '..', 'data', 'durations.json');
 const CONCURRENCY = 2;            // ffprobe 很輕，但上千首第一次掃描時不要搶走正規化／串流的 CPU
@@ -30,7 +31,7 @@ const idleWaiters = [];
 
 function ffprobe(absPath) {
   return new Promise((resolve, reject) => {
-    execFile('ffprobe', ['-v', 'error', '-show_entries', 'format=duration', '-of', 'default=nw=1:nk=1', absPath],
+    execFile('ffprobe', ['-v', 'error', ...SAFE_INPUT_ARGS, '-show_entries', 'format=duration', '-of', 'default=nw=1:nk=1', absPath],
       { timeout: PROBE_TIMEOUT_MS, windowsHide: true },
       (err, stdout) => {
         if (err) return reject(err);

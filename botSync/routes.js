@@ -47,10 +47,15 @@ function mountBotApi(app, { hub }) {
     const { botId } = req.params;
     // Bot 中斷這條長輪詢（重啟、逾時）：結束等待，之後的指令留給下一條連線
     // （用 res 的 close：新版 Node 的 req 在請求本體讀完時就可能觸發 close）
-    res.on('close', () => { if (!res.writableEnded) hub.cancelWait(botId); });
+    const token = {};
+    res.on('close', () => { if (!res.writableEnded) hub.cancelWait(botId, token); });
     try {
-      const commands = await hub.takeCommands(botId, Number(req.query.wait) * 1000);
-      if (res.destroyed) return;
+      const commands = await hub.takeCommands(botId, Number(req.query.wait) * 1000, token);
+      if (res.destroyed) {
+        // 指令已經從佇列拿出來、連線卻斷了：放回去，否則這些指令就默默消失，網頁只會等到逾時
+        hub.requeue(botId, commands.map((c) => c.id));
+        return;
+      }
       res.set('Cache-Control', 'no-store');
       res.json({ commands });
     } catch (err) {
@@ -67,18 +72,21 @@ function mountBotApi(app, { hub }) {
 function mountWebApi(app, { hub, requireWebAuth, store, isAllowedUrl, cleanUrl }) {
   const json = express.json({ limit: '256kb' }); // 批量點歌最多 500 首
   const s = (v, max) => String(v || '').slice(0, max);
+  // 送給 Bot 的文字（歌名、作者）可能被 Bot 原樣貼到 Discord：在 @ 後面插入零寬空白，
+  // 讓「@everyone」「<@使用者ID>」之類的字不會變成真的提及（畫面上看起來不變）
+  const t = (v, max) => s(v, max).replace(/@/g, '@\u200b');
 
   // 網頁點的一首歌 → 送給 Bot 的乾淨格式；不存在的檔案、不支援的網址回傳 null
   async function cleanRequestItem(it) {
     if (!it || typeof it !== 'object') return null;
     if (it.kind === 'lib') {
       const info = await store.exists(s(it.filename, 1000)).catch(() => ({ exists: false }));
-      return info.exists ? { kind: 'lib', filename: info.filename, title: s(it.title, 200) } : null;
+      return info.exists ? { kind: 'lib', filename: info.filename, title: t(it.title, 200) } : null;
     }
     if (it.kind === 'online') {
       const url = cleanUrl(s(it.url, 500));
       if (!isAllowedUrl(url)) return null;
-      return { kind: 'online', url, title: s(it.title, 200), author: s(it.author, 100), duration: s(it.duration, 20) };
+      return { kind: 'online', url, title: t(it.title, 200), author: t(it.author, 100), duration: s(it.duration, 20) };
     }
     return null;
   }

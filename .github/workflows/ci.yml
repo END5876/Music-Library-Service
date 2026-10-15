@@ -33,6 +33,10 @@ jobs:
           docker run -d --name mls -p 4100:4100 -e MUSIC_LIB_SECRET=ci-secret music-library-service:ci
           for i in $(seq 1 20); do curl -fs localhost:4100/health && break; sleep 1; done
           curl -fs -H 'x-music-lib-key: ci-secret' localhost:4100/api/music/status
+          # 服務以 node（非 root）身分執行，且能寫入音樂庫
+          test "$(docker exec mls sh -c 'stat -c %U /proc/$(cat /proc/1/task/1/children | cut -d" " -f1)')" = node
+          curl -fs -X PUT -H 'x-music-lib-key: ci-secret' --data-binary 'x' localhost:4100/api/music/file/ci/test.mp3
+          curl -fs -H 'x-music-lib-key: ci-secret' localhost:4100/api/music/file/ci/test.mp3
           docker exec mls yt-dlp --version
           docker logs mls
           docker rm -f mls

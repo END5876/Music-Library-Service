@@ -86,7 +86,8 @@ function mountLibraryRoutes(app, { store, secret, status }) {
       const absPath = store.resolveForRead(req.params[0]);
       if (!absPath) return res.status(404).json({ error: '找不到檔案' });
       store.touchCache(absPath); // Bot 拿快取檔去播＝使用中，延後被快取清理
-      res.sendFile(absPath, (err) => {
+      // 路徑已由 resolveForRead 驗證；dotfiles: 'allow' 讓以 . 開頭的檔名（例如標題本身以 . 開頭）也能下載，不會只回 404
+      res.sendFile(absPath, { dotfiles: 'allow' }, (err) => {
         if (err && !res.headersSent) {
           if (store.isNotFoundError(err)) return res.status(404).json({ error: '找不到檔案' });
           console.error('❌ [MusicLibrary] 下載檔案失敗:', err.message);

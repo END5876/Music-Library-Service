@@ -42,8 +42,11 @@ header（未設定 `MUSIC_LIB_SECRET` 時不驗證，僅建議在完全信任的
 - 支援搜尋、資料夾篩選、上一首／下一首、隨機、循環（全部／單曲／不循環）、
   拖曳進度（HTTP Range）、鍵盤快速鍵（空白＝播放／暫停，N／P＝下一首／上一首，
   S＝隨機，R＝循環，←／→＝快退／快進 10 秒），也支援手機鎖定畫面的媒體控制。
-- 登入後由 HttpOnly Cookie 維持（預設 7 天，`WEB_SESSION_HOURS` 可調）；
-  登入失敗每個 IP 10 分鐘內最多 10 次。
+- 登入後由 HttpOnly Cookie 維持（預設 7 天，`WEB_SESSION_HOURS` 可調）；登出會讓該 Cookie 立即失效。
+  Cookie 的簽章金鑰：有設 `WEB_SESSION_SECRET` 就用它，否則第一次啟動時自動產生一組隨機金鑰存在
+  `/app/data/session-secret`（`WEB_SESSION_SECRET_FILE` 可改位置），再和密碼一起衍生（換密碼＝全部登出）。
+- 登入限流：每個 IP（IPv6 以 /64 為單位）10 分鐘內最多失敗 10 次；全站 10 分鐘內失敗超過 100 次時
+  暫停所有登入（已登入的裝置不受影響）。
 
 | 方法 | 路徑 | 說明 |
 |---|---|---|
@@ -51,7 +54,7 @@ header（未設定 `MUSIC_LIB_SECRET` 時不驗證，僅建議在完全信任的
 | GET | `/manifest.webmanifest` | PWA 安裝資訊（名稱、色彩、啟動頁、圖示） |
 | GET | `/player-sw.js` | PWA Service Worker（離線殼層與已登入資料快取） |
 | POST | `/web/login` | `{ "password": "..." }`，成功後設定 Cookie |
-| POST | `/web/logout` | 清除 Cookie |
+| POST | `/web/logout` | 清除 Cookie，並讓這個 Cookie 失效 |
 | GET | `/web/api/list` | 曲目清單（需登入） |
 | GET | `/web/stream/*` | 串流音檔，支援 Range（需登入） |
 | GET | `/upload?upload=1` | 受控的音檔上傳頁（需登入；未帶正確參數時不提供） |
@@ -101,7 +104,7 @@ header（未設定 `MUSIC_LIB_SECRET` 時不驗證，僅建議在完全信任的
 
 在已設定 `WEB_PLAYER_PASSWORD` 的前提下，開啟 `https://<你的公開網域>/upload?upload=1` 並登入，即可上傳 MP3、WAV、OGG、FLAC、M4A 或 AAC 音檔。未帶 `?upload=1`、值不是 `1` 或未登入時，頁面與上傳 API 都不會提供服務。
 
-上傳檔案會先寫入不會列出的暫存檔，再由 ffmpeg 轉為高品質 MP3（LAME VBR `-q:a 2`），接著沿用 `ytdlp/musicNormalizer.js` 的雙通道 EBU R128 loudnorm 處理（`-16 LUFS`、`LRA 20`、`TP -2.0`）。只有壓縮與正規化都成功後才會以原子化重新命名方式發布至音樂庫；若失敗，既有同名曲目不會被覆寫。
+上傳檔案會先寫入不會列出的暫存檔，再由 ffmpeg 轉為高品質 MP3（LAME VBR `-q:a 2`），接著沿用 `ytdlp/musicNormalizer.js` 的雙通道 EBU R128 loudnorm 處理（`-16 LUFS`、`LRA 20`、`TP -2.0`）。只有壓縮與正規化都成功後才會以原子操作發布至音樂庫。音樂庫已有同名檔案時回 `409`，不會覆寫既有曲目（換一個曲名或資料夾即可）。
 
 「儲存資料夾」留空時存到音樂庫根目錄（`MUSIC_DIR`），也可於頁面中指定子資料夾與曲名；單檔大小遵循 `MAX_UPLOAD_MB`（預設 `512`）。
 
@@ -117,6 +120,8 @@ header（未設定 `MUSIC_LIB_SECRET` 時不驗證，僅建議在完全信任的
 播放流程移植自 Mousebot 的 `onlineMusicHandler.js`，邏輯與常數相同：
 
 1. 先查快取（`<MUSIC_DIR>` 根目錄第一層，檔名格式與 Bot 相同，所以 Bot 與網頁的快取互相命中）。
+   影片 ID 依網址的平台判斷：YouTube 影片 ID 裡剛好含有 `av1`、`BV…` 時不會被誤認成 Bilibili
+   （Bot 端的 `getCacheFilename` 需要做同樣的修改，否則這類影片兩邊的快取不會互相命中）。
    命中 → 直接播放檔案（可拖曳進度）。網頁版會先用網址裡的影片 ID 找快取檔，命中時連取得影片資訊的 yt-dlp 都不跑。
 2. 未命中 → yt-dlp 即時串流（YouTube 沿用 client 輪換策略：default → mweb+po → tv → tv_simply → web_embedded）。
 3. 影片 ≤ 7 分鐘 → 同時背景下載快取，完成後自動響度正規化（loudnorm，-16 LUFS）；
@@ -133,18 +138,27 @@ header（未設定 `MUSIC_LIB_SECRET` 時不驗證，僅建議在完全信任的
   所以**第一次播放（未快取）時沒有總長度、不能拖曳進度**；下載完成後再播就是檔案，可以拖曳。
 - 這個服務本身就是共用音樂庫，下載＋正規化完的檔案已在庫內，沒有「上傳到共用音樂庫」那一步。
 - 只允許 YouTube / Bilibili 網域（其他網址一律 400），並限制同時串流／搜尋數量。
+- yt-dlp 一律驗證 TLS 憑證（帳號 Cookie 會隨請求送出），並排除 generic extractor（`--use-extractors default,-generic`）。
+- ffmpeg / ffprobe 讀檔時只允許一般音訊格式與本機檔案（`-format_whitelist`、`-protocol_whitelist`），
+  偽裝成音檔的播放清單（ffconcat、HLS）不會被拿來讀伺服器上的其他檔案或連內網。
 - 目前不支援播放清單網址（只播單支影片）。
 
 **伺服器需要安裝 `yt-dlp` 和 `ffmpeg`**，沒裝的話線上功能自動停用，音樂庫播放不受影響。
 專案的 [Dockerfile](Dockerfile) 已內建；自行建置其他 Debian／Ubuntu 系映像時可參考（`yt-dlp` 這個版本需要 python3）：
 
 ```dockerfile
-RUN apt-get update && apt-get install -y --no-install-recommends ffmpeg python3 ca-certificates curl tini \
- && curl -fL https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp -o /usr/local/bin/yt-dlp \
- && chmod a+rx /usr/local/bin/yt-dlp \
+ENV PATH=/opt/yt-dlp:$PATH
+RUN apt-get update && apt-get install -y --no-install-recommends ffmpeg python3 ca-certificates curl tini gosu \
+ && mkdir -p /opt/yt-dlp && cd /opt/yt-dlp \
+ && curl -fsSL https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp -o yt-dlp \
+ && curl -fsSL https://github.com/yt-dlp/yt-dlp/releases/latest/download/SHA2-256SUMS | grep -E ' yt-dlp$' | sha256sum -c - \
+ && chmod a+rx yt-dlp && chown -R node:node /opt/yt-dlp \
  && rm -rf /var/lib/apt/lists/*
-ENTRYPOINT ["/usr/bin/tini", "--"]
+ENTRYPOINT ["/usr/bin/tini", "--", "/app/docker-entrypoint.sh"]
 ```
+
+服務在容器裡以 `node` 使用者（非 root）執行：[docker-entrypoint.sh](docker-entrypoint.sh) 啟動時先把 `/app/data`
+（以及 `MUSIC_DIR` 等有設定的資料夾）交給 `node`，再降權啟動。從舊版（以 root 執行）升級時，Volume 裡既有的檔案會自動改擁有者。
 
 YouTube 需要的環境變數（`WARP_PROXY_URL`、`YOUTUBE_PO_TOKEN`、cookies 檔等）和 Bot 相同，見 `.env.example`。
 
@@ -158,7 +172,8 @@ server 裝在 `/opt/bgutil/server`，由 `ytdlp/potProvider.js` **按需啟動**
 
 - 想改用獨立的 bgutil 容器：設 `POT_PROVIDER_URL=http://<host>:4416`。
 - 想關閉：設 `POT_PROVIDER=0`。
-- 升級時修改 Dockerfile 的 `BGUTIL_VERSION`（server 與 plugin 版本須一致），並建議同時重建映像以更新 yt-dlp。
+- 升級時修改 Dockerfile 的 `BGUTIL_VERSION`（server 與 plugin 版本須一致）與兩個 SHA-256
+  （`BGUTIL_SRC_SHA256`、`BGUTIL_PLUGIN_SHA256`），並建議同時重建映像以更新 yt-dlp。
 - PO Token 不能解決以 IP 為準的「Sign in to confirm you're not a bot」；機房 IP 被擋時仍需要 cookies 或 `WARP_PROXY_URL`。
 
 #### yt-dlp 自動更新

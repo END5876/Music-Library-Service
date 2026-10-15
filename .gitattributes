@@ -1,0 +1,2 @@
+# 容器內執行的 shell 腳本必須是 LF（Windows 上 checkout 成 CRLF 會讓 /bin/sh 找不到直譯器）
+*.sh text eol=lf

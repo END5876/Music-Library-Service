@@ -26,15 +26,18 @@ function ensureCacheDir() {
 }
 
 // 快取檔名裡的影片 ID（BVxxx / avNNN / yt_xxx）；認不出平台 ID 時回傳 null
+// 先依網域決定平台再取 ID：YouTube 的影片 ID 是隨機英數字，可能剛好含有「av1」「bv…」，
+// 以前不分平台先比對 BV / av，會讓兩支不同的 YouTube 影片算出同一個快取檔（播到別首歌）。
+// ⚠️ Bot 端（unifiedQueue 的 musicCache.getCacheFilename）也要做同樣的修改，兩邊的快取才會互相命中。
 function getCacheId(url) {
+  if (isYouTubeUrl(url)) {
+    const ytMatch = url.match(/(?:[?&]v=|youtu\.be\/)([A-Za-z0-9_-]{11})/);
+    return ytMatch ? `yt_${ytMatch[1]}` : null;
+  }
   const bvMatch = url.match(/BV[\w]+/i);
-  const avMatch = url.match(/av(\d+)/i);
-  const ytMatch = url.match(/(?:v=|youtu\.be\/)([A-Za-z0-9_-]{11})/);
-
-  return bvMatch ? bvMatch[0]
-    : avMatch    ? `av${avMatch[1]}`
-    : ytMatch    ? `yt_${ytMatch[1]}`
-    : null;
+  if (bvMatch) return bvMatch[0];
+  const avMatch = url.match(/\/av(\d+)/i);
+  return avMatch ? `av${avMatch[1]}` : null;
 }
 
 // 格式：<清理後的標題> [<影片ID>].mp3
@@ -92,7 +95,8 @@ function downloadAndCache(url, title, ytdlpArgs, onProgress) {
     const tmpBase   = path.join(CACHE_DIR, filename.replace(/\.mp3$/, '.tmp'));
     const tmpActual = tmpBase + '.mp3'; // yt-dlp 轉檔後實際產生的路徑
 
-    const finalArgs = ytdlpArgs.map(a => a === '__OUTPUT__' ? tmpBase : a);
+    // -o 是 yt-dlp 的輸出範本：標題裡的 % 要寫成 %%，否則像「%(id)s」會被展開成別的檔名，下載完就找不到輸出檔
+    const finalArgs = ytdlpArgs.map(a => a === '__OUTPUT__' ? tmpBase.replace(/%/g, '%%') : a);
 
     const platform = isYouTubeUrl(url) ? 'YouTube' : 'Bilibili';
 

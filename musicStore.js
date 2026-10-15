@@ -23,6 +23,13 @@ const CACHE_DIR = CACHE_SUBDIR ? path.join(MUSIC_DIR, CACHE_SUBDIR) : MUSIC_DIR;
 const MAX_CACHE_SIZE_MB = parseInt(process.env.MAX_CACHE_SIZE_MB || '2048', 10);
 
 const SUPPORTED_EXTENSIONS = ['.mp3', '.wav', '.ogg', '.flac', '.m4a', '.aac'];
+// 用 ffmpeg / ffprobe 讀音樂庫裡的檔案時一律加在 -i 前面：ffmpeg 依「內容」判斷格式而不是副檔名，
+// 偽裝成 .mp3 的 ffconcat / HLS 播放清單會讓 ffmpeg 去讀伺服器上的其他檔案或連內網網址。
+// 只允許一般音訊容器（mov 系列＝m4a、matroska＝webm），也只允許本機檔案與管線。
+const SAFE_INPUT_ARGS = [
+  '-protocol_whitelist', 'file,pipe',
+  '-format_whitelist', 'mp3,wav,ogg,flac,aac,mov,mp4,m4a,3gp,3g2,mj2,matroska,webm',
+];
 const RESERVED_TOP_DIR = '.web';        // 舊版播放清單資料夾：仍不對外提供讀寫、不列入清單
 const MAX_UPLOAD_MB = parseInt(process.env.MAX_UPLOAD_MB || '512', 10);
 const LIST_TTL_MS = 3000;               // listAll 結果的短暫快取
@@ -57,11 +64,11 @@ function toSafeRelPath(rawRelPath) {
   const cleaned = raw.replace(/^\/+/, '');
   const normalized = path.posix.normalize(cleaned);
 
-  if (!normalized || normalized === '.' || normalized.startsWith('..') || path.isAbsolute(normalized)) {
+  if (!normalized || normalized === '.' || normalized === '..' || normalized.startsWith('../') || path.isAbsolute(normalized)) {
     throw new Error('不合法的檔案路徑');
   }
-  // 內部資料夾（播放清單 JSON 等）不可經由 API 讀寫
-  if (normalized.split('/')[0] === RESERVED_TOP_DIR) throw new Error('不合法的檔案路徑');
+  // 內部資料夾（播放清單 JSON 等）不可經由 API 讀寫（不分大小寫：Windows / macOS 上 .WEB 就是同一個資料夾）
+  if (isReservedTopDir(normalized.split('/')[0])) throw new Error('不合法的檔案路徑');
 
   const absPath = path.resolve(path.join(MUSIC_DIR, normalized));
   const rootPath = path.resolve(MUSIC_DIR);
@@ -71,6 +78,10 @@ function toSafeRelPath(rawRelPath) {
   }
 
   return { relPath: normalized, absPath };
+}
+
+function isReservedTopDir(name) {
+  return String(name).toLowerCase() === RESERVED_TOP_DIR;
 }
 
 // 與 Mousebot 過去 localMusicHandler.js 的 cleanLocalTitle() 完全相同的
@@ -97,7 +108,7 @@ async function walkFiles(dir, depth = 0) {
   for (const entry of entries) {
     const fullPath = path.join(dir, entry.name);
     if (entry.isDirectory()) {
-      if (depth === 0 && entry.name === RESERVED_TOP_DIR) continue;
+      if (depth === 0 && isReservedTopDir(entry.name)) continue;
       out.push(...await walkFiles(fullPath, depth + 1));
     } else if (entry.isFile() && !isTempName(entry.name)) {
       out.push(fullPath);
@@ -255,18 +266,39 @@ function writeTempFileFromStream(rawRelPath, readableStream, tempExtension = '')
   });
 }
 
+// 把處理完成的暫存檔發布成音樂庫裡的正式檔案，並通知清單／快取清理。
+//   overwrite=true   直接取代同名檔案（Bot 的 PUT：同一首歌重新上傳）
+//   overwrite=false  目標已存在就丟 409（網頁上傳：不可默默蓋掉別首歌）；用 hard link 讓「檢查＋建立」是原子操作
+// 失敗時 srcPath 留給呼叫端清理。
+function publishFile(srcPath, { relPath, absPath }, { overwrite = true } = {}) {
+  if (overwrite) {
+    fs.renameSync(srcPath, absPath);
+  } else {
+    try {
+      fs.linkSync(srcPath, absPath);
+      fs.unlinkSync(srcPath);
+    } catch (err) {
+      if (err.code === 'EEXIST') throw new StoreError(409, '目標位置已有同名檔案');
+      // 檔案系統不支援 hard link（例如部分網路磁碟）：退回「先檢查再 rename」
+      if (!['EPERM', 'ENOTSUP', 'EOPNOTSUPP', 'ENOSYS', 'EXDEV'].includes(err.code)) throw err;
+      if (fs.existsSync(absPath)) throw new StoreError(409, '目標位置已有同名檔案');
+      fs.renameSync(srcPath, absPath);
+    }
+  }
+  invalidateList();
+  if (isCachePath(relPath)) scheduleEvict();
+}
+
 function writeFileFromStream(rawRelPath, readableStream) {
   return writeTempFileFromStream(rawRelPath, readableStream)
     .then(({ relPath, absPath, tmpPath }) => {
       try {
-        fs.renameSync(tmpPath, absPath);
+        publishFile(tmpPath, { relPath, absPath });
       } catch (err) {
         try { fs.unlinkSync(tmpPath); } catch {}
         throw err;
       }
-      invalidateList();
       console.log(`✅ [MusicLibrary] 已寫入音樂庫: ${relPath}`);
-      if (isCachePath(relPath)) scheduleEvict();
       return { relPath, absPath };
     });
 }
@@ -294,11 +326,12 @@ async function moveFile(rawFrom, rawTo) {
   if (!isServableName(from.relPath) || !isServableName(to.relPath)) throw new StoreError(400, '只能移動音訊檔');
   if (from.relPath === to.relPath) return { from: from.relPath, to: to.relPath };
 
-  const st = await fsp.stat(from.absPath).catch(() => null);
+  const st = await fsp.stat(from.absPath, { bigint: true }).catch(() => null);
   if (!st || !st.isFile()) throw new StoreError(404, '找不到檔案');
-  // 只差大小寫（Windows / macOS 不分大小寫）時目標「存在」的就是自己，允許改名
-  const sameFile = from.relPath.toLowerCase() === to.relPath.toLowerCase();
-  if (!sameFile && await fsp.stat(to.absPath).then(() => true, () => false)) {
+  // 目標已存在 → 409；例外是「只差大小寫」且檔案系統不分大小寫（Windows / macOS），這時目標其實就是自己。
+  // 用 inode 判斷而不是比對小寫路徑：Linux 上 a.mp3 與 A.mp3 可以是兩個不同的檔，不能被 rename 蓋掉。
+  const toSt = await fsp.stat(to.absPath, { bigint: true }).catch(() => null);
+  if (toSt && !(toSt.ino === st.ino && toSt.dev === st.dev)) {
     throw new StoreError(409, '目標位置已有同名檔案');
   }
   await fsp.mkdir(path.dirname(to.absPath), { recursive: true });
@@ -439,7 +472,7 @@ async function cleanupStaleTemps(dir = MUSIC_DIR, depth = 0) {
   for (const e of entries) {
     const fp = path.join(dir, e.name);
     if (e.isDirectory()) {
-      if (depth === 0 && e.name === RESERVED_TOP_DIR) continue;
+      if (depth === 0 && isReservedTopDir(e.name)) continue;
       n += await cleanupStaleTemps(fp, depth + 1);
     } else if (e.isFile() && isTempName(e.name)) {
       try {
@@ -457,6 +490,7 @@ module.exports = {
   MUSIC_DIR,
   CACHE_DIR,
   SUPPORTED_EXTENSIONS,
+  SAFE_INPUT_ARGS,
   MAX_CACHE_SIZE_MB,
   evictCacheIfNeeded,
   invalidateList,
@@ -468,6 +502,7 @@ module.exports = {
   isNotFoundError,
   writeTempFileFromStream,
   writeFileFromStream,
+  publishFile,
   touchCache,
   moveFile,
   deleteFile,

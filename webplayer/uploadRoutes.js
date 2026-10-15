@@ -67,14 +67,25 @@ function mountUploadRoutes(app, { store, requireWebAuth }) {
         const folder = sanitizeFolder(req.get('x-upload-folder'));
         finalRelPath = folder ? `${folder}/${title}${OUTPUT_EXTENSION}` : `${title}${OUTPUT_EXTENSION}`;
 
+        // 同名檔案已存在就先擋下，不必等整個檔案傳完、轉檔完才失敗（發布時還會再原子檢查一次）
+        if ((await store.exists(finalRelPath)).exists) {
+          req.resume();
+          throw Object.assign(new Error('音樂庫已有同名檔案，請換一個標題或資料夾'), { status: 409 });
+        }
+
         const staged = await store.writeTempFileFromStream(finalRelPath, req, originalExtension);
         tempInputPath = staged.tmpPath;
         tempOutputPath = `${staged.absPath}.transcode_${Date.now()}_${Math.random().toString(36).slice(2, 8)}.tmp${OUTPUT_EXTENSION}`;
 
         await normalizer.normalizeToMp3(tempInputPath, tempOutputPath);
-        fs.renameSync(tempOutputPath, staged.absPath);
-        fs.unlinkSync(tempInputPath);
-        store.invalidateList();
+        try {
+          store.publishFile(tempOutputPath, staged, { overwrite: false });
+        } catch (err) {
+          if (err.status === 409) err.message = '音樂庫已有同名檔案，請換一個標題或資料夾';
+          throw err;
+        }
+        tempOutputPath = null;
+        try { fs.unlinkSync(tempInputPath); } catch {}
 
         console.log(`✅ [MusicLibrary] 已上傳、壓縮與正規化: ${finalRelPath}`);
         return res.status(201).json({ ok: true, filename: finalRelPath });
@@ -83,7 +94,8 @@ function mountUploadRoutes(app, { store, requireWebAuth }) {
           if (filePath) { try { fs.unlinkSync(filePath); } catch {} }
         }
         console.error('❌ [MusicLibrary] 網頁上傳失敗:', err.message);
-        if (!res.headersSent) return res.status(400).json({ error: err.message || '上傳失敗' });
+        const status = err.status >= 400 && err.status < 500 ? err.status : 400;
+        if (!res.headersSent) return res.status(status).json({ error: err.message || '上傳失敗' });
       }
     });
   });

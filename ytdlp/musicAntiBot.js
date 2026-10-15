@@ -16,6 +16,12 @@ const potProvider = require('./potProvider');
 // yt-dlp 執行檔（所有呼叫 yt-dlp 的模組共用這個常數）
 const YTDLP_PATH = 'yt-dlp';
 
+// 安全性（與 Bot 版本的差異）：
+//   - 不使用 --no-check-certificate：帳號 Cookie 會隨請求送出，不驗證憑證等於讓中間人能直接拿走
+//   - 排除 generic extractor：網域白名單內、但不是影片頁的網址，不會被 yt-dlp 當成「任意網頁」去解析、
+//     跟著頁面裡的連結抓到其他網站
+const NO_GENERIC = ['--use-extractors', 'default,-generic'];
+
 // ════════════════════════════════════════════════════════
 //  Proxy 設定 (Cloudflare WARP)
 // ════════════════════════════════════════════════════════
@@ -235,7 +241,7 @@ function buildYouTubeArgs(url, strategy, streamMode = true) {
     );
   }
 
-  args.push('--no-check-certificate', '--ignore-errors');
+  args.push('--ignore-errors', ...NO_GENERIC);
 
   args.push(url);
   return args;
@@ -268,7 +274,7 @@ function buildBilibiliArgs(url, streamMode = true) {
   }
 
   args.push(
-    '--no-check-certificate',
+    ...NO_GENERIC,
     '--extractor-args', 'bilibili:getcomments=false',
     '--extractor-args', 'bilibili:getdanmaku=false'
   );
@@ -288,7 +294,6 @@ function buildBilibiliSearchArgs() {
     '--referer',    BILIBILI_HEADERS['Referer'],
     '--add-header', `Origin:${BILIBILI_HEADERS['Origin']}`,
     '--add-header', `Accept:${BILIBILI_HEADERS['Accept']}`,
-    '--no-check-certificate',
   );
 
   return args;
@@ -307,7 +312,6 @@ function buildYouTubeSearchArgs() {
   args.push(
     '--user-agent',   YOUTUBE_HEADERS['User-Agent'],
     '--add-header',   `Accept-Language:${YOUTUBE_HEADERS['Accept-Language']}`,
-    '--no-check-certificate',
   );
 
   return args;
@@ -318,7 +322,7 @@ const INFO_FIELDS_TEMPLATE = '%(.{title,uploader,channel,creator,duration,thumbn
 
 function buildInfoArgs(url) {
   // 只輸出用得到的欄位：--dump-json 的完整 JSON（formats、字幕等）YouTube 動輒數 MB，Node 端得整份接收再解析
-  const base = ['-O', INFO_FIELDS_TEMPLATE, '--no-playlist', '--no-warnings', '--skip-download'];
+  const base = ['-O', INFO_FIELDS_TEMPLATE, '--no-playlist', '--no-warnings', '--skip-download', ...NO_GENERIC];
 
   if (isYouTubeUrl(url)) {
     if (WARP_PROXY) {
@@ -333,14 +337,13 @@ function buildInfoArgs(url) {
     if (strategy.name !== 'tv_simply') {
       _appendCookieArgs(base, YT_COOKIES_FILE, YT_COOKIE_HEADER);
     }
-    base.push('--user-agent', YOUTUBE_HEADERS['User-Agent'], '--no-check-certificate');
+    base.push('--user-agent', YOUTUBE_HEADERS['User-Agent']);
   } else {
     _appendCookieArgs(base, BILIBILI_COOKIES_FILE, BILIBILI_COOKIE_HEADER);
     base.push(
       '--user-agent', BILIBILI_HEADERS['User-Agent'],
       '--referer',    BILIBILI_HEADERS['Referer'],
       '--add-header', `Origin:${BILIBILI_HEADERS['Origin']}`,
-      '--no-check-certificate',
       '--extractor-args', 'bilibili:getcomments=false',
       '--extractor-args', 'bilibili:getdanmaku=false',
       '--sleep-requests',     '2',

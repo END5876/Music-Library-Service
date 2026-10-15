@@ -86,7 +86,7 @@ function mountWebPlayer(app, { store, libSecret, status, botHub }) {
       const absPath = store.resolveForRead(req.params[0]);
       if (!absPath) return res.status(404).json({ error: '找不到檔案' });
       store.touchCache(absPath); // 播放＝使用中，延後被快取清理（LRU）
-      res.sendFile(absPath, { headers: { 'Cache-Control': 'private, max-age=3600' } }, (err) => {
+      res.sendFile(absPath, { dotfiles: 'allow', headers: { 'Cache-Control': 'private, max-age=3600' } }, (err) => {
         if (err && !res.headersSent) {
           if (store.isNotFoundError(err)) return res.status(404).json({ error: '找不到檔案' });
           console.error('❌ [MusicLibrary] 串流失敗:', err.message);
