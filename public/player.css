@@ -294,8 +294,9 @@ body.pl-detail header .search{visibility:hidden}
 /* ── 斷點 ── */
 @media (max-width:1100px){.vol{display:none}}
 @media (max-width:900px){.bar-seek span{display:none}}
-/* 平板寬度:側邊欄縮成只有圖示+小字的窄欄(下方選單要到 700px 以下才出現) */
-@media (min-width:701px) and (max-width:900px){
+/* 平板寬度:側邊欄縮成只有圖示+小字的窄欄;700px 以下由下一條改成隱藏、換下方選單。
+   不寫 min-width:701px:Android 平板的寬度常是小數(如 700.5px),兩條斷點之間會出現縫隙 */
+@media (max-width:900px){
   aside{width:76px;padding:8px 4px}
   main{left:76px}
   .navitem,.navitem.subtle{flex-direction:column;justify-content:center;gap:4px;padding:10px 2px;font-size:10px;line-height:1.25;text-align:center}

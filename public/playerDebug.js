@@ -85,6 +85,9 @@
       'audioSession=' + ('audioSession' in navigator), 'mediaSession=' + ('mediaSession' in navigator),
       'android=' + IS_ANDROID + (ANDROID_BY ? '(' + ANDROID_BY + ')' : ''), 'keep=' + KEEP);
     dbg('UA', navigator.userAgent);
+    dbg('視窗', 'innerWidth=' + innerWidth + 'x' + innerHeight, 'clientWidth=' + document.documentElement.clientWidth,
+      'dpr=' + devicePixelRatio, 'screen=' + screen.width + 'x' + screen.height,
+      'hover=' + matchMedia('(hover: hover)').matches, 'pointer=' + (matchMedia('(pointer: coarse)').matches ? 'coarse' : 'fine'));
   }
   const fullLog = () =>
     `# 裊器音樂 除錯日誌\n# 匯出時間 ${new Date().toString()}\n# 頁面 ${location.href}\n# UA ${navigator.userAgent}\n# 除錯模式 ${DEBUG ? '開' : '關'}　共 ${logBuf.length} 行\n\n` +
