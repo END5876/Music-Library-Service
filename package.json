@@ -13,6 +13,7 @@
     "node": ">=20"
   },
   "dependencies": {
+    "compression": "^1.8.2",
     "dotenv": "^17.4.1",
     "express": "^4.22.3"
   },

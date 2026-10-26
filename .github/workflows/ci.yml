@@ -21,6 +21,8 @@ jobs:
       - run: npm ci
       - run: npm run lint
       - run: npm test
+      # 正式環境會裝到的套件（--omit=dev）有 high 以上的漏洞就讓 CI 失敗
+      - run: npm audit --omit=dev --audit-level=high
 
   docker:
     runs-on: ubuntu-latest

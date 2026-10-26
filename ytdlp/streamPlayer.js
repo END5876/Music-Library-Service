@@ -12,6 +12,7 @@
 //   其餘 → ffmpeg 轉 mp3 192k（同以往）。
 
 const { spawn } = require('child_process');
+const { alert } = require('../alert');
 const path = require('path');
 const { spawnTree, isAlive, killTree } = require('./procTree');
 
@@ -366,6 +367,7 @@ function _failResponse(ctx, message) {
   recordFailure(antiBot.isYouTubeUrl(ctx.item.url) ? 'YouTube' : 'Bilibili', message);
   if (getStats().failuresLastHour === 5) {
     console.warn('⚠️ [OnlineMusic] 最近一小時串流失敗已達 5 次：常見原因是 yt-dlp 過舊（見 ytdlpUpdater.js）或 IP 被 YouTube 擋（需要 cookies／WARP_PROXY_URL）');
+    alert('stream-failures', `網頁播放器最近一小時串流失敗已達 5 次（最後一次：${message.slice(0, 200)}）。常見原因是 yt-dlp 過舊或 IP 被 YouTube 擋`);
   }
   cleanupProcess(ctx);
   const { res } = ctx;

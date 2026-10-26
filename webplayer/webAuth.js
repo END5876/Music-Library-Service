@@ -34,6 +34,7 @@ const fs = require('fs');
 const path = require('path');
 const express = require('express');
 const { clientIp, rateLimitKey } = require('./clientIp');
+const { alert } = require('../alert');
 
 const COOKIE_NAME = 'ml_session';
 // 成功登入過的裝置：全站登入鎖定（見下方限流）不擋它，攻擊者灌錯誤密碼也鎖不住擁有者
@@ -213,6 +214,13 @@ function mountWebAuth(app, { libSecret }) {
       globalFails.count += 1;
       // 記憶體上限：表滿了就不再記新的來源（全站上限仍會計數），不刪舊紀錄——否則灌入大量 IP 就能把別人的失敗次數洗掉
       if (failures.has(ip) || failures.size < 10000) failures.set(ip, rec);
+      // 剛好達到上限的那一次通知維運：有人在猜播放器密碼
+      if (rec.count === MAX_FAILS) {
+        alert(`web-lock:${ip}`, `網頁播放器登入失敗 ${MAX_FAILS} 次，來源 ${ip} 已暫時鎖定 ${WINDOW_MS / 60000} 分鐘`);
+      }
+      if (globalFails.count === GLOBAL_MAX_FAILS) {
+        alert('web-lock:global', `網頁播放器 ${WINDOW_MS / 60000} 分鐘內登入失敗達 ${GLOBAL_MAX_FAILS} 次，全站登入暫時鎖定（登入過的裝置不受影響）`);
+      }
       return res.status(401).json({ error: '密碼錯誤' });
     }
 

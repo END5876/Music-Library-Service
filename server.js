@@ -15,6 +15,7 @@
 //   WEB_PLAYER_PASSWORD  網頁播放器登入密碼（不設定＝不啟用網頁播放器）
 //   ALLOW_INSECURE_LIBRARY_API  設 1 才允許沒設 MUSIC_LIB_SECRET 時開放 /api/music/*（只限完全信任的內網）
 //   LOG_TIMESTAMPS     設 0 關閉 log 前面的時間（部署平台已經會加時間時）
+//   ALERT_WEBHOOK_URL  Discord webhook：串流一小時內失敗太多次、播放器登入被鎖定時通知（未設定＝不送）
 //
 // API：
 //   GET  /health                                   健康檢查（不驗證金鑰）：音樂庫資料夾讀不到、或正式環境沒掛 Volume 時回 503
@@ -37,6 +38,7 @@ require('dotenv').config();
 const logger = require('./logger');
 logger.installConsoleTimestamps();
 const express = require('express');
+const compression = require('compression');
 const store = require('./musicStore');
 const status = require('./status');
 const { mountLibraryRoutes, isInsecureLocked } = require('./libraryRoutes');
@@ -63,6 +65,16 @@ app.use((req, res, next) => {
   });
   next();
 });
+
+// gzip：播放器的 js／css、清單與播放清單 JSON 都很適合壓縮（手機網路差很多）。
+// 一定要排除：SSE（事件會被壓縮緩衝卡住、不會即時送出），以及音訊串流與檔案傳輸
+// （本來就壓不小，還會拿掉 Content-Length、讓播放器不能拖曳進度）。
+const NO_COMPRESS_PATH = /^\/(web\/stream|web\/play|api\/music\/file|web\/api\/upload)/;
+app.use(compression({
+  filter: (req, res) => !NO_COMPRESS_PATH.test(req.path)
+    && !/^text\/event-stream/i.test(String(res.getHeader('Content-Type') || ''))
+    && compression.filter(req, res),
+}));
 
 // 健康檢查放在金鑰驗證之前 —— 部署平台的健康檢查探針不會帶金鑰，
 // 這條路由本身也不洩漏任何音樂庫內容（不回傳路徑或錯誤訊息）。

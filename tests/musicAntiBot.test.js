@@ -26,3 +26,18 @@ test('所有 yt-dlp 參數組合都不帶 --no-check-certificate；處理網址�
     assert.ok(!args.includes('--no-check-certificate'));
   }
 });
+
+test('錯誤分類只認真正的 HTTP 狀態碼：影片 ID／BV 號裡的數字不會被當成 403、412', () => {
+  // 影片 ID 剛好含 403、412：以前 includes('403') 會判成「禁止存取」並輪換 client
+  const ytNoise = 'ERROR: [youtube] abc403xyz12: Some other failure';
+  assert.equal(antiBot.classifyYouTubeError(ytNoise).type, 'UNKNOWN');
+  assert.equal(antiBot.classifyYouTubeError('ERROR: unable to download video data: HTTP Error 403: Forbidden').type, 'FORBIDDEN_403');
+  assert.equal(antiBot.classifyYouTubeError('ERROR: HTTP Error 429: Too Many Requests').type, 'RATE_LIMITED');
+  assert.equal(antiBot.classifyYouTubeError('ERROR: [youtube] x: Sign in to confirm you are not a bot').type, 'BOT_DETECTED');
+
+  assert.match(antiBot.classifyBilibiliError('ERROR: [BiliBili] BV1412xx403: HTTP Error 412: Precondition Failed').msg, /412/);
+  // 只有 BV 號含 412 時是未知錯誤，訊息取最後一行 ERROR
+  const bili = antiBot.classifyBilibiliError('[BiliBili] BV1412xx403: Downloading webpage\nERROR: [BiliBili] BV1412xx403: something broke');
+  assert.equal(bili.msg, '未知錯誤: ERROR: [BiliBili] BV1412xx403: something broke');
+  assert.equal(antiBot.classifyBilibiliError('ERROR: Unsupported URL: https://example.com').msg, '不支援的網址');
+});
