@@ -94,7 +94,7 @@ function mountUploadRoutes(app, { store, requireWebAuth }) {
           if (filePath) { try { fs.unlinkSync(filePath); } catch {} }
         }
         console.error('❌ [MusicLibrary] 網頁上傳失敗:', err.message);
-        const status = err.status >= 400 && err.status < 500 ? err.status : 400;
+        const status = err.code === 'ENOSPC' ? 507 : err.status >= 400 && err.status < 500 ? err.status : 400;
         if (!res.headersSent) return res.status(status).json({ error: err.message || '上傳失敗' });
       }
     });

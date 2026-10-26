@@ -21,6 +21,7 @@
 
 const express = require('express');
 const { LOOP_MODES } = require('./hub');
+const { CONTROL_CHARS } = require('../logger');
 
 const MAX_SSE_CLIENTS = 50;
 const MAX_BATCH = 500;
@@ -69,12 +70,14 @@ function mountBotApi(app, { hub }) {
   });
 }
 
-function mountWebApi(app, { hub, requireWebAuth, store, isAllowedUrl, cleanUrl }) {
+function mountWebApi(app, { hub, requireWebAuth, isAuthenticated, store, isAllowedUrl, cleanUrl }) {
   const json = express.json({ limit: '256kb' }); // 批量點歌最多 500 首
   const s = (v, max) => String(v || '').slice(0, max);
   // 送給 Bot 的文字（歌名、作者）可能被 Bot 原樣貼到 Discord：在 @ 後面插入零寬空白，
-  // 讓「@everyone」「<@使用者ID>」之類的字不會變成真的提及（畫面上看起來不變）
-  const t = (v, max) => s(v, max).replace(/@/g, '@\u200b');
+  // 讓「@everyone」「<@使用者ID>」之類的字不會變成真的提及（畫面上看起來不變）。
+  // 🔒 控制字元（換行、ESC…）換成空白：Bot 會把歌名寫進 log，換行可以在管理面板的日誌偽造一行
+  // 「登入成功」，ESC 序列可以在終端機裡改寫前面的輸出。
+  const t = (v, max) => s(v, max).replace(CONTROL_CHARS, ' ').replace(/@/g, '@\u200b');
 
   // 網頁點的一首歌 → 送給 Bot 的乾淨格式；不存在的檔案、不支援的網址回傳 null
   async function cleanRequestItem(it) {
@@ -108,8 +111,17 @@ function mountWebApi(app, { hub, requireWebAuth, store, isAllowedUrl, cleanUrl }
     const send = (snap) => res.write(`event: state\ndata: ${JSON.stringify({ bots: snap })}\n\n`);
     send(hub.snapshot());
     const unsubscribe = hub.subscribe(send);
-    // 註解行當心跳：讓反向代理不會因為閒置而切斷連線，也讓瀏覽器盡快發現斷線
-    const ping = setInterval(() => res.write(': ping\n\n'), SSE_PING_MS);
+    // 註解行當心跳：讓反向代理不會因為閒置而切斷連線，也讓瀏覽器盡快發現斷線。
+    // 🔒 每次心跳都重新檢查登入：Cookie 已登出或過期就關掉連線（瀏覽器的 EventSource 會自己重連，
+    // 重連時就會被擋下）。用內部金鑰連進來的（沒有 Cookie）不在這裡檢查。
+    const viaCookie = typeof isAuthenticated === 'function' && isAuthenticated(req);
+    const ping = setInterval(() => {
+      if (viaCookie && !isAuthenticated(req)) {
+        res.end();
+        return;
+      }
+      res.write(': ping\n\n');
+    }, SSE_PING_MS);
     res.on('close', () => { clearInterval(ping); unsubscribe(); });
   });
 

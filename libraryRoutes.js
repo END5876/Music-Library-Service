@@ -11,7 +11,8 @@
 //   GET  /api/music/list                           列出整個音樂庫（支援 ETag / If-None-Match → 304）
 //   GET  /api/music/exists?filename=                檢查指定 filename 是否已存在
 //   GET  /api/music/file/*                          下載檔案內容
-//   PUT  /api/music/file/*                          上傳／覆寫檔案內容（原始位元組）
+//   PUT  /api/music/file/*                          上傳檔案內容（原始位元組）；已有同名檔案回 409，
+//                                                   確定要取代時帶 ?overwrite=1
 //   GET  /api/music/status                          服務狀態（見 status.js）
 
 const crypto = require('crypto');
@@ -20,20 +21,20 @@ const crypto = require('crypto');
 const sha = (v) => crypto.createHash('sha256').update(String(v)).digest();
 const keyEquals = (a, b) => crypto.timingSafeEqual(sha(a), sha(b));
 
-// 什麼情況下「沒有金鑰」也放行：
-//   - 沒設 MUSIC_LIB_SECRET 且沒有啟用網頁播放器 → 視為純內網部署，維持舊行為
-//   - 啟用了網頁播放器（代表服務有公開網域）卻沒設金鑰 → 預設鎖住 /api/music/*（回 503），
-//     除非明確設定 ALLOW_INSECURE_LIBRARY_API=1
+// 🔒 沒有設定 MUSIC_LIB_SECRET 時預設鎖住 /api/music/*（回 503），不論有沒有啟用網頁播放器；
+// 只有明確設定 ALLOW_INSECURE_LIBRARY_API=1（完全信任的內網）才在沒有金鑰的情況下開放。
+// 以前「沒金鑰、沒播放器」視為純內網而直接開放：服務一旦被誤設成對外連得到，
+// 任何人都能讀取整個音樂庫、以同名上傳蓋掉 Bot 會播放的歌、上傳大檔塞滿 Volume。
 function isInsecureLocked({ secret, env = process.env }) {
-  return !secret && !!env.WEB_PLAYER_PASSWORD && env.ALLOW_INSECURE_LIBRARY_API !== '1';
+  return !secret && env.ALLOW_INSECURE_LIBRARY_API !== '1';
 }
 
 function createLibraryKeyMiddleware(secret, { locked = false } = {}) {
   return function libraryKeyMiddleware(req, res, next) {
     if (locked) {
-      return res.status(503).json({ error: '服務已公開（啟用網頁播放器）但未設定 MUSIC_LIB_SECRET，內部 API 已停用' });
+      return res.status(503).json({ error: '未設定 MUSIC_LIB_SECRET，內部 API 已停用' });
     }
-    if (!secret) return next(); // 未設定金鑰時不驗證（僅建議在完全信任的內網環境這樣用）
+    if (!secret) return next(); // ALLOW_INSECURE_LIBRARY_API=1：未設定金鑰時不驗證（僅限完全信任的內網環境）
     const provided = req.get('x-music-lib-key');
     if (!provided || !keyEquals(provided, secret)) {
       return res.status(401).json({ error: '缺少或錯誤的音樂庫金鑰' });
@@ -100,12 +101,15 @@ function mountLibraryRoutes(app, { store, secret, status }) {
   });
 
   // ── 上傳（原始位元組 body，不用 body-parser，直接串流寫檔）────
+  // 🔒 預設不覆寫：同名檔案已存在就回 409（快取檔名由影片 ID 決定，同一首歌本來就不必重傳）。
+  // 以前一律覆寫，算錯快取檔名的上傳就能把別首歌整個換掉；確定要取代時帶 ?overwrite=1。
   app.put('/api/music/file/*', (req, res) => {
-    store.writeFileFromStream(req.params[0], req)
+    const overwrite = req.query.overwrite === '1';
+    store.writeFileFromStream(req.params[0], req, { overwrite })
       .then(({ relPath }) => res.json({ ok: true, filename: relPath }))
       .catch((err) => {
         console.error('❌ [MusicLibrary] 寫入檔案失敗:', err.message);
-        if (!res.headersSent) res.status(400).json({ error: err.message });
+        if (!res.headersSent) res.status(store.writeErrorStatus(err)).json({ error: err.message });
       });
   });
 }

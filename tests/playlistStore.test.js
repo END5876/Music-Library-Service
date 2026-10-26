@@ -37,10 +37,10 @@ test('create：驗證項目、保留順序、去重，並寫入檔案', async ()
     null, 5, { kind: 'weird' },
   ], deps);
   assert.equal(p.name, '我的清單', '名稱去頭尾空白');
-  assert.deepEqual(p.items.map((x) => x.filename || x.url), ['b.mp3', 'https://youtu.be/dQw4w9WgXcQ', 'fav/c.flac']);
+  assert.deepEqual(p.items.map((x) => x.filename || x.url), ['b.mp3', 'https://www.youtube.com/watch?v=dQw4w9WgXcQ', 'fav/c.flac']);
   assert.equal(p.items[0].title, 'B');
   assert.equal(p.items[2].title, 'c', '沒有標題時用檔名');
-  assert.deepEqual(p.items[1], { id: p.items[1].id, kind: 'online', url: 'https://youtu.be/dQw4w9WgXcQ', title: 'Y', author: '', platform: 'YouTube', duration: '3:33' });
+  assert.deepEqual(p.items[1], { id: p.items[1].id, kind: 'online', url: 'https://www.youtube.com/watch?v=dQw4w9WgXcQ', title: 'Y', author: '', platform: 'YouTube', duration: '3:33' });
   assert.equal(new Set(p.items.map((x) => x.id)).size, 3, '每個項目都有不重複的 id');
   assert.equal(saved().playlists.find((x) => x.id === p.id).items.length, 3, '已寫入檔案');
 });

@@ -9,26 +9,24 @@
 ## API
 
 所有 `/api/music/*` 路由都需要帶 `x-music-lib-key: <MUSIC_LIB_SECRET>`
-header（未設定 `MUSIC_LIB_SECRET` 時不驗證，僅建議在完全信任的內網
-環境這樣用）。`filename` 一律是相對於音樂庫根目錄的路徑，用 `/` 分隔
+header（未設定 `MUSIC_LIB_SECRET` 時預設停用，見下方說明）。`filename` 一律是相對於音樂庫根目錄的路徑，用 `/` 分隔
 （例如 `favorites/歌名.mp3`；自動下載的快取檔直接放在根目錄）。
 
 | 方法 | 路徑 | 說明 |
 |---|---|---|
-| GET | `/health` | 健康檢查，不驗證金鑰 |
+| GET | `/health` | 健康檢查，不驗證金鑰。音樂庫資料夾讀不到，或正式環境（`NODE_ENV=production`）的音樂庫沒有掛 Volume 時回 `503`（`MUSIC_REQUIRE_VOLUME=0` 可關閉後者）；也回報剩餘空間 `freeMB` |
 | GET | `/api/music/list` | 列出整個音樂庫（回應帶 `ETag`；帶 `If-None-Match` 且清單沒變時回 `304`，適合 Bot 定期輪詢） |
 | GET | `/api/music/exists?filename=` | 檢查指定檔案是否存在 |
 | GET | `/api/music/file/*` | 下載檔案 |
-| PUT | `/api/music/file/*` | 上傳／覆寫檔案（原始位元組 body；僅限音訊副檔名，單檔上限 `MAX_UPLOAD_MB`，預設 512） |
+| PUT | `/api/music/file/*` | 上傳檔案（原始位元組 body；僅限音訊副檔名，單檔上限 `MAX_UPLOAD_MB`，預設 512）。同名檔案已存在回 `409`，確定要取代時帶 `?overwrite=1`；磁碟已滿回 `507` |
 | GET | `/api/music/status` | 服務狀態（見下方「服務狀態與記錄」） |
 | PUT | `/api/music/bots/:botId/state` | Bot 推送「正在播放」（見下方「Bot 正在播放」） |
 | GET | `/api/music/bots/:botId/commands?wait=25` | Bot 長輪詢拿網頁送來的控制指令 |
 | POST | `/api/music/bots/:botId/commands/:id/result` | Bot 回報指令執行結果 |
 
-> 🔒 有設定 `WEB_PLAYER_PASSWORD`（代表服務有公開網域）卻沒設 `MUSIC_LIB_SECRET` 時，
-> `/api/music/*` 預設**停用**（一律回 `503`），避免整個音樂庫對公網開放讀寫。
-> 確定要在沒有金鑰的情況下開放，才設定 `ALLOW_INSECURE_LIBRARY_API=1`。
-> 沒啟用網頁播放器（純內網部署）時維持原本行為：沒設金鑰就不驗證。
+> 🔒 沒設 `MUSIC_LIB_SECRET` 時，`/api/music/*` 預設**停用**（一律回 `503`），不論有沒有啟用網頁播放器，
+> 避免服務被誤設成對外連得到時整個音樂庫被讀寫。只有在完全信任的內網、確定要在沒有金鑰的情況下開放，
+> 才設定 `ALLOW_INSECURE_LIBRARY_API=1`。（以前沒啟用網頁播放器時，沒設金鑰就直接開放。）
 
 這個服務刻意不提供播放次數功能：每個呼叫端 Bot 各自計算、各自
 記錄自己的播放次數，不透過這裡同步或集中管理。
@@ -42,11 +40,19 @@ header（未設定 `MUSIC_LIB_SECRET` 時不驗證，僅建議在完全信任的
 - 支援搜尋、資料夾篩選、上一首／下一首、隨機、循環（全部／單曲／不循環）、
   拖曳進度（HTTP Range）、鍵盤快速鍵（空白＝播放／暫停，N／P＝下一首／上一首，
   S＝隨機，R＝循環，←／→＝快退／快進 10 秒），也支援手機鎖定畫面的媒體控制。
-- 登入後由 HttpOnly Cookie 維持（預設 7 天，`WEB_SESSION_HOURS` 可調）；登出會讓該 Cookie 立即失效。
+- 登入後由 HttpOnly、`SameSite=Strict` 的 Cookie 維持（預設 7 天，`WEB_SESSION_HOURS` 可調）。
+  從別的網站連過來的請求（`Sec-Fetch-Site: cross-site`）一律不接受 Cookie 登入（回 `403`），
+  別的網站不能讓已登入的使用者代為點歌、下載或改播放清單。播放器頁面本身不需要登入，從 Discord 點連結進來不受影響。
+- 登出會讓該 Cookie 立即失效；已登出清單存在 `session-secret` 同一個資料夾的 `session-revoked.json`，重新部署後仍然有效。
   Cookie 的簽章金鑰：有設 `WEB_SESSION_SECRET` 就用它，否則第一次啟動時自動產生一組隨機金鑰存在
-  `/app/data/session-secret`（`WEB_SESSION_SECRET_FILE` 可改位置），再和密碼一起衍生（換密碼＝全部登出）。
+  `/app/data/session-secret`（`WEB_SESSION_SECRET_FILE` 可改位置）；兩種情況都再和密碼一起衍生（換密碼＝全部登出）。
+  ⚠️ 這一版之前，設定了 `WEB_SESSION_SECRET` 時簽章不跟密碼綁定；升級後所有人需要重新登入一次。
+- 密碼建議至少 12 個字元的隨機字串，太短時啟動會在 log 警告。
 - 登入限流：每個 IP（IPv6 以 /64 為單位）10 分鐘內最多失敗 10 次；全站 10 分鐘內失敗超過 100 次時
-  暫停所有登入（已登入的裝置不受影響）。
+  暫停所有登入（已登入的裝置不受影響）。成功登入過的裝置（`ml_device` Cookie，90 天）不受全站上限影響，
+  攻擊者灌錯誤密碼鎖不住擁有者。
+- 反向代理：只信任從本機／私有網段連進來的代理（`TRUST_PROXY`，預設 `loopback, linklocal, uniquelocal`），
+  服務的埠號直接對外時，偽造的 `X-Forwarded-For` 不會被當成來源 IP。
 
 | 方法 | 路徑 | 說明 |
 |---|---|---|
@@ -95,7 +101,7 @@ header（未設定 `MUSIC_LIB_SECRET` 時不驗證，僅建議在完全信任的
 
 音樂庫每首歌的「⋮」選單可以：
 
-- **收藏（移到資料夾）**：根目錄的歌是快取，空間不夠時會被清掉；移進子資料夾（預設 `favorites`）就會長期保存。
+- **收藏（移到資料夾）**：根目錄裡自動下載的歌（檔名結尾是 `[yt_…]`、`[BV…]` 這類影片 ID）是快取，空間不夠時會被清掉；移進子資料夾（預設 `favorites`）就會長期保存。
 - **重新命名**、**移到其他資料夾**、**從音樂庫刪除**（會先確認，刪除後所有裝置與 Bot 都無法再播放）。
 
 移動或改名後，伺服器上所有播放清單指向舊路徑的項目會一起更新；這個瀏覽器的佇列、播放歷史與離線檔也會跟著改。
@@ -108,9 +114,11 @@ header（未設定 `MUSIC_LIB_SECRET` 時不驗證，僅建議在完全信任的
 
 「儲存資料夾」留空時存到音樂庫根目錄（`MUSIC_DIR`），也可於頁面中指定子資料夾與曲名；單檔大小遵循 `MAX_UPLOAD_MB`（預設 `512`）。
 
-> ⚠️ 根目錄第一層的音檔會被視為快取，總量超過 `MAX_CACHE_SIZE_MB` 時會**從最久沒播放的開始**自動刪除
-> （LRU：網頁播放或 Bot 下載快取檔時會更新檔案的存取時間 atime，不動修改時間）。要長期保存的歌請填寫資料夾（例如 `uploads`），
-> 或事後在播放器用「收藏」移進資料夾；子資料夾內的檔案不會被清理。
+> 快取＝根目錄第一層、而且檔名是自動下載格式（`<標題> [<影片 ID>].mp3`，ID 是 `yt_…`、`BV…`、`av…`）的音檔，
+> 總量超過 `MAX_CACHE_SIZE_MB` 時會**從最久沒播放的開始**自動刪除
+> （LRU：網頁播放或 Bot 下載快取檔時會更新檔案的存取時間 atime，不動修改時間）。
+> 上傳到根目錄的歌（檔名不是這個格式）不算快取，不會被清理；子資料夾內的檔案也不會。
+> （這一版之前，根目錄第一層的所有音檔都算快取，沒選資料夾的上傳會被刪掉。）
 
 ### 線上串流（YouTube / Bilibili，yt-dlp）
 
@@ -119,6 +127,9 @@ header（未設定 `MUSIC_LIB_SECRET` 時不驗證，僅建議在完全信任的
 
 播放流程移植自 Mousebot 的 `onlineMusicHandler.js`，邏輯與常數相同：
 
+0. 網址先正規化成唯一的標準形式（`ytdlp/urlUtils.js` 的 `cleanUrl`）：YouTube → `https://www.youtube.com/watch?v=<id>`，
+   Bilibili → `https://www.bilibili.com/video/<BV 號>`，http 一律改成 https。網址裡出現互相衝突的影片 ID
+   （例如 `/shorts/<B>?v=<A>`）直接拒絕——以前 yt-dlp 會下載 B、快取卻存成 A，之後所有人播 A 都聽到 B。
 1. 先查快取（`<MUSIC_DIR>` 根目錄第一層，檔名格式與 Bot 相同，所以 Bot 與網頁的快取互相命中）。
    影片 ID 依網址的平台判斷：YouTube 影片 ID 裡剛好含有 `av1`、`BV…` 時不會被誤認成 Bilibili
    （Bot 端的 `getCacheFilename` 需要做同樣的修改，否則這類影片兩邊的快取不會互相命中）。

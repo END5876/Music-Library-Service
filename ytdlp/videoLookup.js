@@ -6,7 +6,7 @@ const { spawn } = require('child_process');
 
 const antiBot = require('./musicAntiBot');
 const potProvider = require('./potProvider');
-const { isAllowedUrl } = require('./urlUtils');
+const { isAllowedUrl, cleanUrl } = require('./urlUtils');
 
 // ── 搜尋／getInfo 逾時保護（同 Bot）──────────────────────
 const SEARCH_TIMEOUT_MS_YT   = 15_000;
@@ -230,7 +230,10 @@ async function searchMulti(keyword, limit = 5, fast = false, platforms = ['youtu
       useBili ? _searchOnePlatform('bilisearch', keyword, limit, fast) : Promise.resolve([]),
     ];
     const [ytResults, biliResults] = await Promise.all(tasks);
-    return [...ytResults, ...biliResults].filter(r => isAllowedUrl(r.url));
+    // 先正規化再過濾：Bilibili 搜尋 API 回的網址常是 http://…/video/av…，isAllowedUrl 只接受 https
+    return [...ytResults, ...biliResults]
+      .map(r => ({ ...r, url: cleanUrl(r.url) }))
+      .filter(r => isAllowedUrl(r.url));
   } finally {
     activeQueries -= slots;
   }

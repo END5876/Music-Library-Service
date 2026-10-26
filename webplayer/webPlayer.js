@@ -42,7 +42,7 @@ const { mountWebApi: mountBotWebApi } = require('../botSync/routes');
 function mountWebPlayer(app, { store, libSecret, status, botHub }) {
   const auth = mountWebAuth(app, { libSecret });
   if (!auth) return false;
-  const { requireWebAuth } = auth;
+  const { requireWebAuth, isAuthenticated } = auth;
 
   app.get('/', (req, res) => res.redirect('/player'));
   app.use('/player-assets', express.static(path.join(__dirname, '..', 'public'), { index: false, maxAge: 0 }));
@@ -103,7 +103,7 @@ function mountWebPlayer(app, { store, libSecret, status, botHub }) {
   mountPlaylists(app, { requireWebAuth, online });
   mountUploadRoutes(app, { store, requireWebAuth });
   mountLibraryManageRoutes(app, { store, requireWebAuth });
-  if (botHub) mountBotWebApi(app, { hub: botHub, requireWebAuth, store, isAllowedUrl: online.isAllowedUrl, cleanUrl: online.cleanUrl });
+  if (botHub) mountBotWebApi(app, { hub: botHub, requireWebAuth, isAuthenticated, store, isAllowedUrl: online.isAllowedUrl, cleanUrl: online.cleanUrl });
 
   if (status) {
     app.get('/web/api/status', requireWebAuth, async (req, res) => {

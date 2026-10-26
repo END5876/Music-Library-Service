@@ -98,10 +98,19 @@ test('writeFileFromStream：寫入成功後才出現在清單，且不留暫存�
   assert.equal((await store.listAll()).some((f) => f.filename === 'W/up.mp3'), true);
 });
 
-test('writeFileFromStream：覆寫既有檔案', async () => {
+test('writeFileFromStream：預設不覆寫既有檔案（409），overwrite: true 才取代', async () => {
   await store.writeFileFromStream('W/over.mp3', Readable.from([Buffer.from('old')]));
-  await store.writeFileFromStream('W/over.mp3', Readable.from([Buffer.from('new!')]));
+  await assert.rejects(store.writeFileFromStream('W/over.mp3', Readable.from([Buffer.from('evil')])), (err) => err.status === 409);
+  assert.equal(fs.readFileSync(path.join(MUSIC, 'W', 'over.mp3'), 'utf8'), 'old');
+  assert.ok(!fs.readdirSync(path.join(MUSIC, 'W')).some((n) => n.includes('.tmp')), '失敗時不留暫存檔');
+  await store.writeFileFromStream('W/over.mp3', Readable.from([Buffer.from('new!')]), { overwrite: true });
   assert.equal(fs.readFileSync(path.join(MUSIC, 'W', 'over.mp3'), 'utf8'), 'new!');
+});
+
+test('writeErrorStatus：磁碟已滿回 507，StoreError 沿用自己的狀態碼，其他 400', () => {
+  assert.equal(store.writeErrorStatus(Object.assign(new Error('x'), { code: 'ENOSPC' })), 507);
+  assert.equal(store.writeErrorStatus(new store.StoreError(409, 'x')), 409);
+  assert.equal(store.writeErrorStatus(new Error('x')), 400);
 });
 
 test('writeFileFromStream：拒絕不合法路徑與非音訊檔，不建立任何檔案', async () => {

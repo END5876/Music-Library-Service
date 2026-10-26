@@ -13,15 +13,15 @@
 //   MUSIC_LIB_SECRET   保護 API 的共用金鑰，呼叫端要帶相同的值
 //   MAX_CACHE_SIZE_MB  cache/ 子資料夾的容量上限，預設 2048
 //   WEB_PLAYER_PASSWORD  網頁播放器登入密碼（不設定＝不啟用網頁播放器）
-//   ALLOW_INSECURE_LIBRARY_API  設 1 才允許「啟用網頁播放器卻沒設 MUSIC_LIB_SECRET」時開放 /api/music/*
+//   ALLOW_INSECURE_LIBRARY_API  設 1 才允許沒設 MUSIC_LIB_SECRET 時開放 /api/music/*（只限完全信任的內網）
 //   LOG_TIMESTAMPS     設 0 關閉 log 前面的時間（部署平台已經會加時間時）
 //
 // API：
-//   GET  /health                                   健康檢查（不驗證金鑰）
+//   GET  /health                                   健康檢查（不驗證金鑰）：音樂庫資料夾讀不到、或正式環境沒掛 Volume 時回 503
 //   GET  /api/music/list                           列出整個音樂庫（filename / name / size）
 //   GET  /api/music/exists?filename=                檢查指定 filename 是否已存在
 //   GET  /api/music/file/*                          下載檔案內容（* 是相對於音樂庫根目錄的路徑）
-//   PUT  /api/music/file/*                          上傳／覆寫檔案內容（原始位元組，不做任何解析）
+//   PUT  /api/music/file/*                          上傳檔案內容（原始位元組，不做任何解析）；同名已存在回 409，?overwrite=1 才取代
 //   GET  /api/music/status                          服務狀態（快取用量、串流、yt-dlp 版本…，見 status.js）
 //   PUT  /api/music/bots/:botId/state 等             Bot ↔ 網頁「正在播放」同步（見 botSync/routes.js）
 //
@@ -65,8 +65,14 @@ app.use((req, res, next) => {
 });
 
 // 健康檢查放在金鑰驗證之前 —— 部署平台的健康檢查探針不會帶金鑰，
-// 這條路由本身也不洩漏任何音樂庫內容。
-app.get('/health', (req, res) => res.json({ ok: true }));
+// 這條路由本身也不洩漏任何音樂庫內容（不回傳路徑或錯誤訊息）。
+// 🆕 [資料保護] 音樂庫資料夾讀不到，或正式環境的音樂庫沒有掛 Volume（下次部署就消失）時回 503。
+app.get('/health', async (req, res) => {
+  const disk = await store.diskHealth();
+  const volumeRequired = process.env.NODE_ENV === 'production' && process.env.MUSIC_REQUIRE_VOLUME !== '0';
+  const ok = disk.readable && !(volumeRequired && disk.volume === 'not-mounted');
+  res.status(ok ? 200 : 503).json({ ok, library: disk.readable ? 'ok' : 'error', volume: disk.volume, freeMB: disk.freeMB });
+});
 
 // Bot 用的內部 API（/api/music/*，需帶 x-music-lib-key）
 mountLibraryRoutes(app, { store, secret: SECRET, status });
@@ -90,8 +96,8 @@ store.cleanupStaleTemps().catch(() => {});
 app.listen(PORT, () => {
   console.log(`✅ [MusicLibrary] 共用音樂庫服務已啟動，監聽埠 ${PORT}（音樂庫路徑: ${store.MUSIC_DIR}）`);
   if (isInsecureLocked({ secret: SECRET })) {
-    console.error('🔒 [MusicLibrary] 網頁播放器已啟用（服務有公開網域）但沒有設定 MUSIC_LIB_SECRET：/api/music/* 已停用（回 503）。'
-      + '請設定 MUSIC_LIB_SECRET；確定要在沒有金鑰的情況下開放，才設 ALLOW_INSECURE_LIBRARY_API=1');
+    console.error('🔒 [MusicLibrary] 沒有設定 MUSIC_LIB_SECRET：/api/music/* 已停用（回 503）。'
+      + '請設定 MUSIC_LIB_SECRET；確定要在沒有金鑰的情況下開放（只限完全信任的內網），才設 ALLOW_INSECURE_LIBRARY_API=1');
   } else if (!SECRET) {
     console.warn('⚠️ [MusicLibrary] 尚未設定 MUSIC_LIB_SECRET，任何連得到這個服務的請求都能讀寫音樂庫，僅建議在完全信任的內網環境這樣使用');
   }

@@ -13,6 +13,7 @@ const fs   = require('fs');
 const path = require('path');
 const logger = require('../logger');
 const { isYouTubeUrl, YTDLP_PATH } = require('./musicAntiBot');
+const { parseUrl, youtubeVideoId, bilibiliVideoId } = require('./urlUtils');
 const { CACHE_DIR, MAX_CACHE_SIZE_MB, evictCacheIfNeeded, invalidateList, listAll } = require('../musicStore');
 
 // 單一下載的最長時間；yt-dlp 卡死時強制終止，否則下載鎖（downloadingUrls）永遠不會釋放
@@ -28,16 +29,19 @@ function ensureCacheDir() {
 // 快取檔名裡的影片 ID（BVxxx / avNNN / yt_xxx）；認不出平台 ID 時回傳 null
 // 先依網域決定平台再取 ID：YouTube 的影片 ID 是隨機英數字，可能剛好含有「av1」「bv…」，
 // 以前不分平台先比對 BV / av，會讓兩支不同的 YouTube 影片算出同一個快取檔（播到別首歌）。
+// 🔒 [快取投毒] ID 只從網址的固定位置取（與 urlUtils.cleanUrl 相同的解析）：以前在整個網址裡找，
+// 查詢參數裡的 &x=BV… 或 /shorts/<B>?v=<A> 都能讓快取檔名跟實際下載的影片不一致。
 // ⚠️ Bot 端（unifiedQueue 的 musicCache.getCacheFilename）也要做同樣的修改，兩邊的快取才會互相命中。
 function getCacheId(url) {
-  if (isYouTubeUrl(url)) {
-    const ytMatch = url.match(/(?:[?&]v=|youtu\.be\/)([A-Za-z0-9_-]{11})/);
-    return ytMatch ? `yt_${ytMatch[1]}` : null;
+  const u = parseUrl(url);
+  if (!u) return null;
+  // 用網域判斷平台（與 Bot 的 getCacheId 相同）；isYouTubeUrl 是在整個網址裡找字串
+  const host = u.hostname.toLowerCase();
+  if (host === 'youtu.be' || host === 'youtube.com' || host.endsWith('.youtube.com')) {
+    const { id } = youtubeVideoId(u);
+    return id ? `yt_${id}` : null;
   }
-  const bvMatch = url.match(/BV[\w]+/i);
-  if (bvMatch) return bvMatch[0];
-  const avMatch = url.match(/\/av(\d+)/i);
-  return avMatch ? `av${avMatch[1]}` : null;
+  return bilibiliVideoId(u);
 }
 
 // 格式：<清理後的標題> [<影片ID>].mp3
@@ -67,10 +71,13 @@ async function getCachedPath(url, title) {
 // 不知道標題時，只用影片 ID 找快取檔（播放前不必為了算檔名先跑一次 yt-dlp 取標題）。
 // 只找快取範圍（根目錄第一層）；同一個 ID 有多個檔案（影片改過標題）時取最新的。
 // Bilibili 分 P（網址帶 ?p=）各 P 共用同一個 BV 號，認不出是哪一 P，一律回傳 null 走原本流程。
+// （只限 Bilibili：YouTube 網址帶 p 不代表分 P，以前也跳過的話，帶 p 就能強制重新下載、寫入新的快取檔）
 async function findCachedById(url) {
   const id = getCacheId(url);
   if (!id) return null;
-  try { if (new URL(url).searchParams.has('p')) return null; } catch { return null; }
+  if (!isYouTubeUrl(url)) {
+    try { if (new URL(url).searchParams.has('p')) return null; } catch { return null; }
+  }
 
   const suffix = ` [${id}].mp3`;
   let best = null;

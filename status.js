@@ -14,6 +14,8 @@ async function collect() {
   const mem = process.memoryUsage();
   let library;
   try { library = await store.summary(); } catch (err) { library = { error: err.message }; }
+  // 剩餘空間：Volume 快滿時下載、上傳、播放清單存檔都會失敗（ENOSPC 回 507）
+  const disk = await store.diskHealth();
   return {
     ok: true,
     startedAt: new Date(startedAt).toISOString(),
@@ -21,6 +23,7 @@ async function collect() {
     node: process.version,
     memory: { rssMB: Math.round(mem.rss / 1048576), heapUsedMB: Math.round(mem.heapUsed / 1048576) },
     library,
+    disk: { freeMB: disk.freeMB, volume: disk.volume },
     online: online.getStats(),
     bots: botHub.snapshot().map((b) => ({ id: b.id, name: b.name, online: b.online, guilds: b.guilds.length })),
   };

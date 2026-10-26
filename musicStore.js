@@ -8,8 +8,11 @@
 // 例如：自動下載＋正規化過的曲目 → '歌名 [BVxxxx].mp3'
 //       手動放的分類子資料夾       → 'favorites/歌名.mp3'
 //
-// ⚠️ 注意：根目錄第一層的音訊檔都會被視為「快取」，超過 MAX_CACHE_SIZE_MB 時
-//    會依修改時間由舊到新刪除。要長期保存的歌，請放進子資料夾（子資料夾不會被清理）。
+// ⚠️ 快取範圍＝根目錄第一層、而且檔名是快取格式（結尾是 [yt_xxx]、[BVxxx]、[avNNN] 等影片 ID，
+//    見 CACHE_NAME_RE）的音訊檔；超過 MAX_CACHE_SIZE_MB 時依最後使用時間由舊到新刪除。
+//    🔒 以前根目錄第一層的音訊檔全部算快取：網頁上傳時沒選資料夾的歌也放在根目錄，
+//    快取變大後就會被默默刪掉。現在只有自動下載的檔名格式會被清理，其他檔案（使用者上傳）一律保留。
+//    刻意不把快取搬進子資料夾：Bot 與播放清單都用「根目錄的檔名」引用快取歌曲，搬了會全部失效。
 
 const fs = require('fs');
 const fsp = require('fs/promises');
@@ -47,13 +50,23 @@ function normalizeSlashes(p) {
   return String(p || '').replace(/\\/g, '/');
 }
 
-// 判斷某個相對路徑是否屬於「快取範圍」
+// 自動下載的快取檔名：「<標題> [<ID>].mp3」或沒有標題時的「<ID>.mp3」（與 ytdlp/musicCache.js、
+// Bot 的 getCacheFilename 相同）。ID：yt_<11 碼>、BV…、av<數字>，或認不出平台時網址的 base64
+// 前 12 碼（https 網址的 base64 一定以 aHR0c 開頭，不會跟「[Live]」這種標題後綴混淆）。
+const CACHE_ID = String.raw`(?:yt_[A-Za-z0-9_-]{11}|BV[0-9A-Za-z]+|av\d+|aHR0c[A-Za-z0-9]{7})`;
+const CACHE_NAME_RE = new RegExp(String.raw`(?:^|\s)\[${CACHE_ID}\]\.mp3$|^${CACHE_ID}\.mp3$`);
+
+function isCacheFileName(name) {
+  return CACHE_NAME_RE.test(name);
+}
+
+// 判斷某個相對路徑是否屬於「快取範圍」（會被 LRU 清理）
 //   有 CACHE_SUBDIR：位於該子資料夾內
-//   無 CACHE_SUBDIR：位於根目錄第一層（不含子資料夾）
+//   無 CACHE_SUBDIR：位於根目錄第一層（不含子資料夾），而且檔名是快取格式
 function isCachePath(relPath) {
   return CACHE_SUBDIR
     ? relPath.startsWith(`${CACHE_SUBDIR}/`)
-    : !relPath.includes('/');
+    : !relPath.includes('/') && isCacheFileName(relPath);
 }
 
 // ── 路徑安全檢查：拒絕任何跳出 MUSIC_DIR 範圍的相對路徑 ──────
@@ -289,11 +302,12 @@ function publishFile(srcPath, { relPath, absPath }, { overwrite = true } = {}) {
   if (isCachePath(relPath)) scheduleEvict();
 }
 
-function writeFileFromStream(rawRelPath, readableStream) {
+// overwrite 預設 false：目標已存在就丟 409（見 publishFile）
+function writeFileFromStream(rawRelPath, readableStream, { overwrite = false } = {}) {
   return writeTempFileFromStream(rawRelPath, readableStream)
     .then(({ relPath, absPath, tmpPath }) => {
       try {
-        publishFile(tmpPath, { relPath, absPath });
+        publishFile(tmpPath, { relPath, absPath }, { overwrite });
       } catch (err) {
         try { fs.unlinkSync(tmpPath); } catch {}
         throw err;
@@ -309,6 +323,14 @@ function writeFileFromStream(rawRelPath, readableStream) {
 // ════════════════════════════════════════════════════════
 class StoreError extends Error {
   constructor(status, message) { super(message); this.status = status; }
+}
+
+// 寫入失敗時回給呼叫端的狀態碼：StoreError 帶的（409 同名等）、磁碟已滿 507、其餘當成請求不合法 400。
+// 磁碟滿以前回 400，看起來像是呼叫端的錯，5xx 的存取 log 與告警也看不到。
+function writeErrorStatus(err) {
+  if (err && err.code === 'ENOSPC') return 507;
+  if (err && err.status >= 400 && err.status < 600) return err.status;
+  return 400;
 }
 
 // from / to 都是相對路徑；to 沒有副檔名時沿用 from 的（不允許改副檔名：檔案內容不會被轉檔）
@@ -359,7 +381,29 @@ async function deleteFile(rawRelPath) {
   return { filename: relPath };
 }
 
-// 狀態頁用：曲目數、總大小、快取（根目錄第一層）佔用
+/**
+ * 🆕 [健康檢查] 音樂庫資料夾的狀態（給 /health 與狀態頁）。
+ *   readable  音樂庫資料夾讀得到
+ *   volume    'mounted' | 'not-mounted' | 'unknown'：Linux 上音樂庫跟根目錄是不是同一個檔案系統
+ *             （容器裡沒掛 Volume 時兩者相同，資料會在下次部署時消失）
+ *   freeMB    剩餘空間（讀不到時 null）
+ */
+async function diskHealth() {
+  let readable = false;
+  try { readable = (await fsp.stat(MUSIC_DIR)).isDirectory(); await fsp.access(MUSIC_DIR, fs.constants.R_OK); } catch { readable = false; }
+  let volume = 'unknown';
+  if (process.platform === 'linux') {
+    try { volume = (await fsp.stat(MUSIC_DIR)).dev === (await fsp.stat('/')).dev ? 'not-mounted' : 'mounted'; } catch { /* unknown */ }
+  }
+  let freeMB = null;
+  try {
+    const st = await fsp.statfs(MUSIC_DIR);
+    freeMB = Math.floor((Number(st.bavail) * Number(st.bsize)) / (1024 * 1024));
+  } catch { /* 平台不支援就不回報 */ }
+  return { readable, volume, freeMB };
+}
+
+// 狀態頁用：曲目數、總大小、快取（根目錄第一層的快取格式檔名）佔用
 async function summary() {
   const files = await listAll();
   let totalBytes = 0, cacheBytes = 0, cacheFiles = 0;
@@ -388,9 +432,11 @@ async function evictOnce() {
     return;
   }
 
+  // 只清快取格式的檔名：沒選資料夾的使用者上傳也在根目錄，不能被當成快取刪掉
   const paths = entries
     .filter(d => d.isFile() && !isTempName(d.name)
-      && SUPPORTED_EXTENSIONS.includes(path.extname(d.name).toLowerCase()))
+      && SUPPORTED_EXTENSIONS.includes(path.extname(d.name).toLowerCase())
+      && (CACHE_SUBDIR || isCacheFileName(d.name)))
     .map(d => path.join(CACHE_DIR, d.name));
   const stats = await statBatched(paths);
   const files = [];
@@ -487,6 +533,7 @@ async function cleanupStaleTemps(dir = MUSIC_DIR, depth = 0) {
 
 module.exports = {
   StoreError,
+  writeErrorStatus,
   MUSIC_DIR,
   CACHE_DIR,
   SUPPORTED_EXTENSIONS,
@@ -507,4 +554,6 @@ module.exports = {
   moveFile,
   deleteFile,
   summary,
+  diskHealth,
+  isCacheFileName,
 };

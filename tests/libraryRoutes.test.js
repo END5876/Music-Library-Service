@@ -33,11 +33,13 @@ test.after(() => {
   fs.rmSync(MUSIC, { recursive: true, force: true });
 });
 
-test('isInsecureLocked：只有「啟用網頁播放器＋沒設金鑰＋沒明確允許」才鎖', () => {
-  assert.equal(isInsecureLocked({ secret: '', env: {} }), false, '純內網：維持舊行為');
+test('isInsecureLocked：沒設金鑰就鎖（不論有沒有啟用網頁播放器），只有明確允許才開放', () => {
+  assert.equal(isInsecureLocked({ secret: '', env: {} }), true, '沒金鑰、沒播放器：一樣鎖住');
   assert.equal(isInsecureLocked({ secret: '', env: { WEB_PLAYER_PASSWORD: 'p' } }), true);
+  assert.equal(isInsecureLocked({ secret: '', env: { ALLOW_INSECURE_LIBRARY_API: '1' } }), false);
   assert.equal(isInsecureLocked({ secret: '', env: { WEB_PLAYER_PASSWORD: 'p', ALLOW_INSECURE_LIBRARY_API: '1' } }), false);
   assert.equal(isInsecureLocked({ secret: 'k', env: { WEB_PLAYER_PASSWORD: 'p' } }), false);
+  assert.equal(isInsecureLocked({ secret: 'k', env: {} }), false);
 });
 
 test('公開但沒設金鑰：/api/music/* 一律 503（含寫入）', async () => {
@@ -55,6 +57,24 @@ test('有金鑰：沒帶或帶錯 401，帶對 200；status 路由也受保護',
   const r = await fetch(base + '/api/music/status', { headers: { 'x-music-lib-key': 'secret' } });
   assert.equal(r.status, 200);
   assert.deepEqual(await r.json(), { ok: true });
+});
+
+test('PUT /api/music/file：同名檔案已存在回 409、內容不變；帶 ?overwrite=1 才取代', async () => {
+  const base = await serve('secret', {});
+  const h = { 'x-music-lib-key': 'secret' };
+  const name = encodeURIComponent('Song [yt_AAAAAAAAAAA].mp3');
+  assert.equal((await fetch(`${base}/api/music/file/${name}`, { method: 'PUT', headers: h, body: 'first' })).status, 200);
+  assert.equal((await fetch(`${base}/api/music/file/${name}`, { method: 'PUT', headers: h, body: 'evil' })).status, 409);
+  assert.equal(fs.readFileSync(`${MUSIC}/Song [yt_AAAAAAAAAAA].mp3`, 'utf8'), 'first');
+  assert.equal((await fetch(`${base}/api/music/file/${name}?overwrite=1`, { method: 'PUT', headers: h, body: 'second' })).status, 200);
+  assert.equal(fs.readFileSync(`${MUSIC}/Song [yt_AAAAAAAAAAA].mp3`, 'utf8'), 'second');
+});
+
+test('沒設金鑰也沒啟用播放器：預設一樣鎖住；明確設定 ALLOW_INSECURE_LIBRARY_API=1 才開放', async () => {
+  const locked = await serve('', {});
+  assert.equal((await fetch(locked + '/api/music/list')).status, 503);
+  const open = await serve('', { ALLOW_INSECURE_LIBRARY_API: '1' });
+  assert.equal((await fetch(open + '/api/music/list')).status, 200);
 });
 
 test('/api/music/list：帶 If-None-Match 且清單沒變時回 304（Bot 輪詢省流量）', async () => {
