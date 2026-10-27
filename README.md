@@ -255,9 +255,9 @@ YouTube 常在幾週內就讓舊版 yt-dlp 失效，而映像只在建置時下�
 - 以 pip 等套件管理器安裝的 yt-dlp 不支援 `-U`，會記一次警告後停用自動更新。
 - 最近一小時串流失敗達 5 次時 log 會提示：常見原因是 yt-dlp 過舊或 IP 被擋。
 
-> 瀏覽器需要連得到這個服務，所以要在幫**這個服務**綁一個公開網域。
-> Bot 之間的內部呼叫仍可走 Private Networking；公開之後請務必同時設定
-> `MUSIC_LIB_SECRET`，否則 `/api/music/*` 會對公網完全開放讀寫。
+> 瀏覽器需要連得到這個服務，所以要經由反向代理（例如 Caddy）幫**這個服務**綁一個 HTTPS 公開網域。
+> Bot 的內部呼叫仍走 Docker 內部網路（用服務名稱連線）。公開之後 `/api/music/*` 任何人都連得到，
+> 只靠 `MUSIC_LIB_SECRET` 保護，請使用夠長的隨機字串（沒設定時這組 API 預設停用）。
 
 ### 播放清單與離線下載
 
@@ -325,27 +325,26 @@ GitHub Actions（`.github/workflows/ci.yml`）在每次 push／PR 時跑 lint �
 `playerPlatform.js`（Android 判斷與靜音保活）、`playerGestures.js`（手機手勢）、`downloader.js`、`offlineStore.js`，
 彼此透過 `window.ML*` 取用。新增前端檔案時，`player.html` 的 `<script>` 順序與 `sw.js` 的 `SHELL_URLS` 都要列出，並把 `sw.js` 的 `VERSION` 加一。
 
-## 部署 
+## 部署
 
-建議跟呼叫端 Bot 放在**同一個Project**，這樣 Bot 可以直接用
-Private Networking（`<服務名稱>.internal`）呼叫這裡，不用把
-這個服務曝露到公網。
+以 Docker 部署，和呼叫端 Bot 接在**同一個 Docker 網路**上，Bot 用服務名稱直接呼叫這裡，
+內部 API 不需要另外曝露到公網（網頁播放器才需要公開網域，見上方）。
 
-1. 建一個新服務，指向這個 repo。
-2. 掛一顆 Volume 到 `/app/data`。音樂庫在 `/app/data/music`（`MUSIC_DIR`），
-   播放清單（`playlists.json`）與 cookies（`cookies.txt`、`www.youtube.com_cookies.txt`）
-   直接放在 `/app/data`，重新部署都不會消失。
-3. 設定環境變數 `MUSIC_LIB_SECRET`（自己挑一組長字串），視需要調整
-   `MAX_CACHE_SIZE_MB`。
-4. 部署完成後，記下這個服務的內部網域＋Port，給要呼叫的 Bot 服務
-   設定 `MUSIC_LIB_URL=http://<這裡的內部網域>:<port>` 與同一組
-   `MUSIC_LIB_SECRET`。
+```bash
+docker build -t music-library-service .
+docker run -d --name music-library-service --restart unless-stopped \
+  --network <與 Bot 共用的網路> --env-file .env \
+  -v /path/to/music-data:/app/data music-library-service
+```
 
-## 從既有音樂庫搬資料
+1. 資料目錄掛到 `/app/data`：音樂庫在 `/app/data/music`（`MUSIC_DIR`），
+   播放清單（`playlists.json`）、cookies（`cookies.txt`、`www.youtube.com_cookies.txt`）與登入用的金鑰
+   直接放在 `/app/data`，重建容器都不會消失。映像預設 `NODE_ENV=production`，沒有掛載時 `/health` 會回 `503`。
+2. 設定環境變數 `MUSIC_LIB_SECRET`（自己挑一組長字串），視需要調整 `MAX_CACHE_SIZE_MB`；
+   其他選填項目見 `.env.example`。
+3. 呼叫端 Bot 設定 `MUSIC_LIB_URL=http://music-library-service:<PORT>`（預設 4100）與同一組 `MUSIC_LIB_SECRET`。
+4. 容器以非 root 的 `node` 帳號執行；`docker-entrypoint.sh` 會先把資料目錄交給它。
 
-如果你原本已經有一份跑在其他服務 Volume 裡的音樂庫，最保險的搬法是
-在**原本那個還掛著舊 Volume 的服務**上，設定好指向這個新服務的
-`MUSIC_LIB_URL` / `MUSIC_LIB_SECRET`，執行呼叫端 repo（例如 Mousebot）
-裡的一次性遷移腳本（`scripts/migrate-music-library.js`），把資料
-透過這裡的上傳 API 搬過來。可重複執行，已存在且大小相同的檔案會
-自動略過。
+## License
+
+[ISC](LICENSE)
