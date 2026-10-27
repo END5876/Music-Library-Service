@@ -35,22 +35,22 @@ test.after(() => {
 
 test('isInsecureLocked：沒設金鑰就鎖（不論有沒有啟用網頁播放器），只有明確允許才開放', () => {
   assert.equal(isInsecureLocked({ secret: '', env: {} }), true, '沒金鑰、沒播放器：一樣鎖住');
-  assert.equal(isInsecureLocked({ secret: '', env: { WEB_PLAYER_PASSWORD: 'p' } }), true);
+  assert.equal(isInsecureLocked({ secret: '', env: { DISCORD_CLIENT_ID: 'client-id' } }), true);
   assert.equal(isInsecureLocked({ secret: '', env: { ALLOW_INSECURE_LIBRARY_API: '1' } }), false);
-  assert.equal(isInsecureLocked({ secret: '', env: { WEB_PLAYER_PASSWORD: 'p', ALLOW_INSECURE_LIBRARY_API: '1' } }), false);
-  assert.equal(isInsecureLocked({ secret: 'k', env: { WEB_PLAYER_PASSWORD: 'p' } }), false);
+  assert.equal(isInsecureLocked({ secret: '', env: { DISCORD_CLIENT_ID: 'client-id', ALLOW_INSECURE_LIBRARY_API: '1' } }), false);
+  assert.equal(isInsecureLocked({ secret: 'k', env: { DISCORD_CLIENT_ID: 'client-id' } }), false);
   assert.equal(isInsecureLocked({ secret: 'k', env: {} }), false);
 });
 
 test('公開但沒設金鑰：/api/music/* 一律 503（含寫入）', async () => {
-  const base = await serve('', { WEB_PLAYER_PASSWORD: 'p' });
+  const base = await serve('', { DISCORD_CLIENT_ID: 'client-id' });
   assert.equal((await fetch(base + '/api/music/list')).status, 503);
   assert.equal((await fetch(base + '/api/music/file/x.mp3', { method: 'PUT', body: 'x' })).status, 503);
   assert.ok(!fs.existsSync(`${MUSIC}/x.mp3`));
 });
 
 test('有金鑰：沒帶或帶錯 401，帶對 200；status 路由也受保護', async () => {
-  const base = await serve('secret', { WEB_PLAYER_PASSWORD: 'p' });
+  const base = await serve('secret', { DISCORD_CLIENT_ID: 'client-id' });
   assert.equal((await fetch(base + '/api/music/list')).status, 401);
   assert.equal((await fetch(base + '/api/music/list', { headers: { 'x-music-lib-key': 'nope' } })).status, 401);
   assert.equal((await fetch(base + '/api/music/status')).status, 401);

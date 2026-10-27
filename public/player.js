@@ -133,41 +133,157 @@
   // (error / ended 都是非同步觸發的事件,同步呼叫不會造成遞迴)
   const later = (fn) => { if (document.hidden) fn(); else setTimeout(fn, 800); };
 
-  // ── 登入 ──
+  // ── 登入(Discord) ──
+  // 一般瀏覽器:整頁跳到 Discord 授權再導回來。iOS 主畫面 App 跟 Safari 不共用 Cookie,跳出去登入後回不到 App,
+  // 改用代碼交接(見 webplayer/webAuth.js):App 拿一組代碼,在瀏覽器登入並確認後,App 輪詢取得登入。
+  // 其他平台的主畫面 App 也留一個「改用代碼登入」的按鈕備用。
+  const STANDALONE = matchMedia('(display-mode: standalone)').matches || navigator.standalone === true;
+  const IOS_STANDALONE = navigator.standalone === true; // 只有 iOS 有 navigator.standalone
+  // 被拒絕過之後再登入要能換 Discord 帳號:帶 switch=1,Discord 會顯示同意畫面(上面有「不是你?」)
+  let switchAccount = false;
+  const deniedMsg = (uid) => `這個 Discord 帳號${uid ? `(ID ${uid})` : ''}已被管理員停用。可以再按登入換一個帳號`;
+  // 目前登入的帳號(GET /web/api/me)。管理功能(刪除／改名／移動音樂庫檔案、Bot 正在播放)只有管理員看得到;
+  // 伺服器端一樣會擋(見 webplayer/webPlayer.js),這裡只是不顯示用不了的按鈕
+  let me = { id: null, name: '', admin: false };
+  async function loadMe() {
+    let next;
+    try {
+      const r = await fetch('/web/api/me');
+      if (!r.ok) return;
+      next = await r.json();
+    } catch { return; }
+    let last = null;
+    try {
+      last = localStorage.getItem('ml-uid');
+      if (next.id) localStorage.setItem('ml-uid', next.id);
+    } catch { /* 無痕模式等不能用 localStorage */ }
+    // 換了帳號(例如上一個人的登入過期後,另一個人在同一台裝置用代碼登入,頁面沒有重新載入):
+    // 清掉上一個人的播放清單、佇列、Bot 狀態與離線資料快取,再由呼叫端載入這個帳號的播放清單
+    const prev = me.id || last;
+    if (next.id && prev && prev !== next.id) {
+      resetAccountState();
+      render();
+      await clearDataCaches();
+    }
+    me = next;
+    $('logoutBtn').title = me.name ? '登出(' + me.name + ')' : '登出';
+    showAdminUi();
+    if (me.admin) bots.refresh();
+  }
+  function showAdminUi() {
+    document.querySelectorAll('[data-view="bots"]').forEach((b) => { b.hidden = !me.admin; });
+    if (!me.admin && mode === 'bots') setMode('library');
+  }
+  // Discord 登入導回來的結果(?login=denied 等):第一次叫出登入框時顯示,並從網址拿掉
+  // 注意:這個閉包裡的 history 是播放紀錄陣列,瀏覽器的要用 window.history
+  let loginNotice = (() => {
+    const u = new URL(location.href);
+    const result = u.searchParams.get('login');
+    if (!result) return '';
+    const uid = (u.searchParams.get('uid') || '').replace(/\D/g, '');
+    u.searchParams.delete('login'); u.searchParams.delete('uid');
+    window.history.replaceState(window.history.state, '', u.pathname + u.search + u.hash);
+    if (result === 'denied') { switchAccount = true; return deniedMsg(uid); }
+    if (result === 'cancelled') return '已取消登入';
+    return 'Discord 登入失敗,請稍後再試';
+  })();
+  let handoffTimer = null, handoffBusy = false, handoffStarting = false;
+  const withSwitch = (url) => switchAccount ? url + '&switch=1' : url;
   function showLogin(msg) {
     $('login').classList.add('show');
-    $('loginErr').textContent = msg || '';
-    $('pw').focus();
+    $('loginErr').textContent = msg || loginNotice;
+    loginNotice = '';
+    $('loginBtn').href = withSwitch('/auth/discord/login?next=' + encodeURIComponent(location.pathname + location.search));
+    if (!handoffTimer) resetHandoff();
+    $('loginBtn').focus();
   }
-  $('loginForm').addEventListener('submit', async (e) => {
-    e.preventDefault();
+  function loginDone() {
+    $('login').classList.remove('show'); loadList();
+    if ((currentFile || onlineCurrent) && audio.error) { audio.load(); tryPlay(); } // 播到一半登入過期:登入後接著重播
+  }
+  function resetHandoff() {
+    clearInterval(handoffTimer); handoffTimer = null;
+    $('handoff').hidden = true;
+    $('loginBtn').hidden = false;
+    $('handoffBtn').hidden = !STANDALONE || IOS_STANDALONE;
+  }
+  async function startHandoff() {
+    if (handoffStarting) return; // 連點兩下:只要一組代碼
+    handoffStarting = true;
+    resetHandoff();
     $('loginErr').textContent = '';
     try {
-      const r = await fetch('/web/login', {
-        method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ password: $('pw').value }),
-      });
-      if (r.ok) {
-        $('pw').value = ''; $('login').classList.remove('show'); loadList();
-        if ((currentFile || onlineCurrent) && audio.error) { audio.load(); tryPlay(); } // 播到一半登入過期:登入後接著重播
+      // 伺服器會順便作廢這個 App 之前要的代碼(不佔名額)
+      const r = await fetch('/auth/handoff/start', { method: 'POST' });
+      const j = await r.json().catch(() => ({}));
+      if (!r.ok) { $('loginErr').textContent = j.error || '無法取得登入代碼'; return; }
+      $('handoffCode').textContent = j.code;
+      $('handoffOpen').href = withSwitch(j.loginUrl);
+      $('handoffStatus').textContent = '等待登入…';
+      $('handoff').hidden = false; $('loginBtn').hidden = true; $('handoffBtn').hidden = true;
+      handoffTimer = setInterval(pollHandoff, 2000);
+    } catch { $('loginErr').textContent = '連線失敗'; } finally { handoffStarting = false; }
+  }
+  // 瀏覽器那邊的進度(伺服器回 202 的 status)
+  const HANDOFF_STATUS = {
+    pending: () => '等待登入…',
+    confirming: () => '請在瀏覽器按「確認登入」',
+    cancelled: () => '已在 Discord 取消登入,可以在瀏覽器再試一次',
+    failed: () => 'Discord 登入失敗,可以在瀏覽器再試一次',
+    denied: (j) => deniedMsg(String(j.uid || '').replace(/\D/g, '')),
+  };
+  async function pollHandoff() {
+    if (handoffBusy || !handoffTimer) return;
+    handoffBusy = true;
+    try {
+      const r = await fetch('/auth/handoff/poll', { method: 'POST' });
+      if (!handoffTimer) return; // 等回應的時候已經結束(取消或另一次輪詢已完成)
+      if (r.status === 202) {
+        const j = await r.json().catch(() => ({}));
+        if (j.status === 'denied' && !switchAccount) { switchAccount = true; $('handoffOpen').href += '&switch=1'; }
+        $('handoffStatus').textContent = (HANDOFF_STATUS[j.status] || HANDOFF_STATUS.pending)(j);
         return;
       }
-      const j = await r.json().catch(() => ({}));
-      $('loginErr').textContent = j.error || '登入失敗';
-    } catch { $('loginErr').textContent = '連線失敗'; }
+      const j = r.ok ? null : await r.json().catch(() => ({}));
+      resetHandoff();
+      if (r.ok) return loginDone();
+      $('loginErr').textContent = (j && j.error) || '登入代碼已過期,請重新開始';
+    } catch { /* 網路暫時斷線:下一輪再試 */ } finally { handoffBusy = false; }
+  }
+  // 從瀏覽器切回 App 時立刻檢查一次,不用等下一輪
+  document.addEventListener('visibilitychange', () => { if (!document.hidden && handoffTimer) pollHandoff(); });
+  $('loginBtn').addEventListener('click', (e) => {
+    if (!IOS_STANDALONE) return; // 照連結整頁跳轉
+    e.preventDefault();
+    startHandoff();
   });
-  $('logoutBtn').addEventListener('click', async () => {
+  $('handoffBtn').addEventListener('click', startHandoff);
+  // 例如瀏覽器那邊沒按確認就關掉了:代碼在伺服器上作廢,不用等過期就能重來
+  $('handoffCancel').addEventListener('click', () => {
+    resetHandoff();
+    fetch('/auth/handoff/cancel', { method: 'POST' }).catch(() => {});
+  });
+  // 登出或換帳號:停止播放,清掉這個帳號的資料(播放清單、佇列、播放紀錄、Bot 狀態、離線資料快取)。
+  // 音樂庫清單是共用的,換帳號時保留;登出時由呼叫端另外清掉
+  function resetAccountState() {
     pendingPlay = false; switchPending = false; userPaused = true;
     audio.pause(); keepOff();
     setSession('none');
-    await fetch('/web/logout', { method: 'POST' }).catch(() => {});
-    all = []; view = []; queue = []; history = []; byFile = new Map();
-    playlists = []; plOpen = null; playlistCtx = null; clearDataCaches(); bots.hide();
+    queue = []; history = [];
+    playlists = []; plOpen = null; playlistCtx = null; clearDataCaches(); bots.reset();
+    me = { id: null, name: '', admin: false }; showAdminUi();
     currentFile = null; onlineCurrent = null;
     dropPreload(); keepOff();
     $('onlineResults').textContent = '';
     audio.removeAttribute('src'); audio.load();
-    setNow(null); render();
+    setNow(null);
+  }
+  $('logoutBtn').addEventListener('click', async () => {
+    pendingPlay = false; userPaused = true; audio.pause(); // 等伺服器回應的期間先停下來
+    await fetch('/web/logout', { method: 'POST' }).catch(() => {});
+    resetAccountState();
+    all = []; view = []; byFile = new Map();
+    render();
     $('logoutBtn').hidden = true;
     showLogin();
   });
@@ -358,8 +474,8 @@
     renderChips();
     applyFilter();
     loadCapabilities();
-    loadPlaylists();
-    bots.refresh();
+    // 先確認是哪個帳號(換帳號時會先清掉上一個人的資料)再載入播放清單;管理員才會接著更新 Bot 狀態
+    loadMe().finally(loadPlaylists);
     scheduleDurations(j.durationsPending);
   }
 
@@ -1520,8 +1636,10 @@
       .catch((err) => dbg('SW 註冊失敗', err && err.message));
   }
   function clearDataCaches() {
-    if (!window.caches) return;
-    caches.keys().then((ks) => ks.filter((k) => k.startsWith('ml-data-')).forEach((k) => caches.delete(k))).catch(() => {});
+    if (!window.caches) return Promise.resolve();
+    return caches.keys()
+      .then((ks) => Promise.all(ks.filter((k) => k.startsWith('ml-data-')).map((k) => caches.delete(k))))
+      .catch(() => {});
   }
 
   // ── 播放清單 API ───────────────────────────────────────
@@ -2029,7 +2147,7 @@
       isOff ? '移除離線檔案' : (dlState.has(key) ? '下載中…' : '下載離線'),
       () => toggleOffline(item));
     menuItem('playlist-add', '加入播放清單', () => pickPlaylist([item]));
-    if (!isOffline()) {
+    if (me.admin && !isOffline()) { // 音樂庫是共用的:移動／改名／刪除只限管理員
       if (!folderOf(f)) menuItem('downloaded', '收藏(移到資料夾)', () => moveLibFile(f, 'folder'));
       else menuItem('lib', '移到其他資料夾', () => moveLibFile(f, 'folder'));
       menuItem('edit', '重新命名', () => moveLibFile(f, 'rename'));
@@ -2242,6 +2360,6 @@
 
   offlineInit().finally(() => { updateNetState(); loadList(listReq); });
   // 「點給 Bot 播放」選單項目只在有 Bot 在語音頻道時出現:頁面開著時每分鐘更新一次(Bot 頁籤開著時由 SSE 即時更新)
-  setInterval(() => { if (!document.hidden && mode !== 'bots' && $('logoutBtn').hidden === false) bots.refresh(); }, 60 * 1000);
+  setInterval(() => { if (!document.hidden && me.admin && mode !== 'bots' && $('logoutBtn').hidden === false) bots.refresh(); }, 60 * 1000);
   registerSW();
 })();

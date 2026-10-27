@@ -86,7 +86,7 @@ function cleanUrl(rawUrl) {
 }
 
 // 網頁版新增：只允許 YouTube / Bilibili 網域。
-// Bot 的入口是 Discord 使用者，這裡是任何拿到網頁密碼的人，
+// Bot 的入口是 Discord 使用者，這裡是任何登入網頁播放器的 Discord 帳號，
 // 不能讓 yt-dlp 被拿去抓任意網址（它支援上千個網站，也能讀 file:// 等）。
 // 🔒 只接受 https：Bilibili 帳號 cookie 會跟著請求送出，http 網址等於把它以明文送出去。
 // 使用者貼的 http 網址會先被 cleanUrl 改成 https，所以呼叫端一律先 cleanUrl 再檢查。

@@ -1,6 +1,6 @@
 'use strict';
 // webplayer/uploadRoutes.js
-// 僅供已登入網頁使用的手動音檔上傳。入口及 API 都必須帶 ?upload=1，
+// 僅供管理員（見 webPlayer.js）使用的手動音檔上傳。入口及 API 都必須帶 ?upload=1，
 // 並沿用 musicNormalizer 的雙通道 loudnorm，在套用正規化的同一次統一編碼成 MP3。
 
 const fs = require('fs');
@@ -42,10 +42,11 @@ function audioExtension(filename) {
   return SUPPORTED_EXTENSIONS.includes(ext) ? ext : '';
 }
 
-function mountUploadRoutes(app, { store, requireWebAuth }) {
+function mountUploadRoutes(app, { store, requireWebAuth, requireWebPage = requireWebAuth }) {
   app.get('/upload', (req, res, next) => {
     if (!isUploadEnabled(req)) return next();
-    return requireWebAuth(req, res, () => {
+    // 頁面沒登入時導去 Discord 登入，登入完回到這裡（API 仍然回 401／403）
+    return requireWebPage(req, res, () => {
       res.set('Cache-Control', 'no-store');
       res.sendFile(path.join(__dirname, '..', 'public', 'upload.html'));
     });

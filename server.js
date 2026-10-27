@@ -12,10 +12,11 @@
 //   MUSIC_DIR          音樂庫掛載路徑，預設 <repo root>/data/music
 //   MUSIC_LIB_SECRET   保護 API 的共用金鑰，呼叫端要帶相同的值
 //   MAX_CACHE_SIZE_MB  cache/ 子資料夾的容量上限，預設 2048
-//   WEB_PLAYER_PASSWORD  網頁播放器登入密碼（不設定＝不啟用網頁播放器）
+//   DISCORD_CLIENT_ID / DISCORD_CLIENT_SECRET / PUBLIC_BASE_URL / WEB_ADMIN_USERS
+//                      網頁播放器的 Discord 登入（前三個設定好才啟用網頁播放器，完整說明見 webplayer/webAuth.js）
 //   ALLOW_INSECURE_LIBRARY_API  設 1 才允許沒設 MUSIC_LIB_SECRET 時開放 /api/music/*（只限完全信任的內網）
 //   LOG_TIMESTAMPS     設 0 關閉 log 前面的時間（部署平台已經會加時間時）
-//   ALERT_WEBHOOK_URL  Discord webhook：串流一小時內失敗太多次、播放器登入被鎖定時通知（未設定＝不送）
+//   ALERT_WEBHOOK_URL  Discord webhook：串流一小時內失敗太多次、播放器登入失敗太多次時通知（未設定＝不送）
 //
 // API：
 //   GET  /health                                   健康檢查（不驗證金鑰）：音樂庫資料夾讀不到、或正式環境沒掛 Volume 時回 503
@@ -26,7 +27,7 @@
 //   GET  /api/music/status                          服務狀態（快取用量、串流、yt-dlp 版本…，見 status.js）
 //   PUT  /api/music/bots/:botId/state 等             Bot ↔ 網頁「正在播放」同步（見 botSync/routes.js）
 //
-// 網頁播放器（設定 WEB_PLAYER_PASSWORD 才啟用）：路由完整清單見 README，
+// 網頁播放器（設定好 Discord 登入才啟用）：路由完整清單見 README，
 // 各組路由的實作分在 webplayer/ 底下（入口是 webplayer/webPlayer.js）。
 //
 // 這個服務刻意不提供播放次數功能：每個呼叫端 Bot 各自計算、各自

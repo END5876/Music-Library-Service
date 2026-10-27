@@ -5,28 +5,28 @@
 //
 // 為什麼要另外做一組路由，而不是直接用 /api/music/*：
 //   瀏覽器的 <audio src="..."> 沒辦法帶自訂 header（x-music-lib-key），
-//   所以網頁改用「密碼登入 → HttpOnly Cookie」驗證；Bot 之間的內部 API
+//   所以網頁改用「Discord 登入 → HttpOnly Cookie」驗證；Bot 之間的內部 API
 //   完全不受影響。
 //
-// 預設關閉：只有設定了 WEB_PLAYER_PASSWORD 才會掛載，避免服務一旦有公開網域
-// 就意外把整個音樂庫曝露出去。
+// 預設關閉：只有 Discord 登入設定好才會掛載，避免服務一旦有公開網域
+// 就意外把整個音樂庫曝露出去。任何 Discord 帳號都能登入；標「管理員」的路由只限 WEB_ADMIN_USERS。
 //
-// 環境變數：見 webAuth.js（WEB_PLAYER_PASSWORD / WEB_SESSION_SECRET / WEB_SESSION_HOURS）
+// 環境變數：見 webAuth.js（DISCORD_CLIENT_ID / DISCORD_CLIENT_SECRET / PUBLIC_BASE_URL / WEB_ADMIN_USERS …）
 //
 // 這個檔案只負責組裝與曲目清單／靜態頁／音檔串流；其餘拆在同資料夾（各檔開頭有自己的路由說明，完整清單見 README）：
-//   webAuth.js         登入、Cookie、限流（POST /web/login、/web/logout）
+//   webAuth.js         Discord 登入、管理員、Cookie、主畫面 App 的代碼交接（/auth/*、/web/api/me、POST /web/logout）
 //   onlineRoutes.js    線上串流 API（/web/api/capabilities|search|info、/web/play）
-//   playlistRoutes.js  播放清單 API（/web/api/playlists/*）
-//   uploadRoutes.js    受控音檔上傳（/upload?upload=1、/web/api/upload?upload=1）
+//   playlistRoutes.js  播放清單 API（/web/api/playlists/*，每個帳號各自一份）
+//   uploadRoutes.js    受控音檔上傳（/upload?upload=1、/web/api/upload?upload=1；管理員）
 //   durationStore.js   歌曲長度快取（ffprobe 讀取，/web/api/list 會帶上 duration）
-//   libraryManageRoutes.js  音樂庫管理：移動（收藏到資料夾）／重新命名／刪除（/web/api/library/*）
-//   ../botSync/routes.js    Bot 正在播放＋遠端控制（/web/api/bots/*）
+//   libraryManageRoutes.js  音樂庫管理：移動（收藏到資料夾）／重新命名／刪除（/web/api/library/*；管理員）
+//   ../botSync/routes.js    Bot 正在播放＋遠端控制（/web/api/bots/*；管理員）
 //
 // 本檔路由：
 //   GET  /player             播放器頁面（純靜態，不含任何音樂庫資料）
 //   GET  /web/api/list       曲目清單（需登入）
 //   GET  /web/stream/*       串流音檔，支援 Range 拖曳進度（需登入）
-//   GET  /web/api/status     服務狀態（需登入；內容同 /api/music/status，見 status.js）
+//   GET  /web/api/status     服務狀態（管理員；內容同 /api/music/status，見 status.js）
 
 const path = require('path');
 const express = require('express');
@@ -42,7 +42,7 @@ const { mountWebApi: mountBotWebApi } = require('../botSync/routes');
 function mountWebPlayer(app, { store, libSecret, status, botHub }) {
   const auth = mountWebAuth(app, { libSecret });
   if (!auth) return false;
-  const { requireWebAuth, isAuthenticated } = auth;
+  const { requireWebAuth, requireWebAdmin, requireAdminPage, isAdmin } = auth;
 
   app.get('/', (req, res) => res.redirect('/player'));
   app.use('/player-assets', express.static(path.join(__dirname, '..', 'public'), { index: false, maxAge: 0 }));
@@ -101,12 +101,18 @@ function mountWebPlayer(app, { store, libSecret, status, botHub }) {
   mountOnlineRoutes(app, { requireWebAuth });
 
   mountPlaylists(app, { requireWebAuth, online });
-  mountUploadRoutes(app, { store, requireWebAuth });
-  mountLibraryManageRoutes(app, { store, requireWebAuth });
-  if (botHub) mountBotWebApi(app, { hub: botHub, requireWebAuth, isAuthenticated, store, isAllowedUrl: online.isAllowedUrl, cleanUrl: online.cleanUrl });
+  // 以下會影響所有人（共用音樂庫、Bot 所在的伺服器）或屬於內部資訊：只限管理員（WEB_ADMIN_USERS）
+  mountUploadRoutes(app, { store, requireWebAuth: requireWebAdmin, requireWebPage: requireAdminPage });
+  mountLibraryManageRoutes(app, { store, requireWebAuth: requireWebAdmin });
+  if (botHub) {
+    mountBotWebApi(app, {
+      hub: botHub, requireWebAuth: requireWebAdmin, isAuthenticated: isAdmin,
+      store, isAllowedUrl: online.isAllowedUrl, cleanUrl: online.cleanUrl,
+    });
+  }
 
   if (status) {
-    app.get('/web/api/status', requireWebAuth, async (req, res) => {
+    app.get('/web/api/status', requireWebAdmin, async (req, res) => {
       res.set('Cache-Control', 'no-store');
       res.json(await status.collect());
     });

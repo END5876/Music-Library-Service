@@ -115,7 +115,9 @@ function getStats() {
 // ════════════════════════════════════════════════════════
 //  HTTP 入口：GET /web/play?url=...
 // ════════════════════════════════════════════════════════
-async function handlePlayRequest(req, res, rawUrl) {
+// opts.cache：是否背景下載快取（快取就存在共用音樂庫根目錄，見 musicStore.js；網頁一般帳號為 false，只串流）
+// opts.userKey / opts.maxPerUser：同一個使用者同時串流數上限（null＝不限，例如管理員）
+async function handlePlayRequest(req, res, rawUrl, { cache: allowCache = true, userKey = null, maxPerUser = 0 } = {}) {
   if (!available) return res.status(503).json({ error: '伺服器未安裝 yt-dlp / ffmpeg，無法線上串流' });
 
   const url = cleanUrl(String(rawUrl || ''));
@@ -127,9 +129,19 @@ async function handlePlayRequest(req, res, rawUrl) {
   if (res.destroyed || req.aborted) return;
   if (cachedPath && await sendCachedFile(res, cachedPath)) return;
 
-  if (activeCtxs.size >= MAX_WEB_STREAMS) {
-    return res.status(503).json({ error: '目前串流人數已滿，請稍後再試' });
-  }
+  // 每個使用者的同時串流數：一個人不能把全站名額（MAX_WEB_STREAMS）佔光
+  const userBusy = () => {
+    if (!userKey || !maxPerUser) return false;
+    let n = 0;
+    for (const c of activeCtxs) if (c.userKey === userKey) n += 1;
+    return n >= maxPerUser;
+  };
+  const tooMany = () => {
+    if (activeCtxs.size >= MAX_WEB_STREAMS) return '目前串流人數已滿，請稍後再試';
+    if (userBusy()) return `同時最多 ${maxPerUser} 個線上串流，請先停止其他正在播放的線上歌曲`;
+    return '';
+  };
+  if (tooMany()) return res.status(503).json({ error: tooMany() });
 
   let item;
   try {
@@ -139,11 +151,12 @@ async function handlePlayRequest(req, res, rawUrl) {
   }
   if (res.destroyed || req.aborted) return;
   // 等待 getInfo 期間其他請求可能已佔滿名額，這裡再確認一次
-  if (activeCtxs.size >= MAX_WEB_STREAMS) {
-    return res.status(503).json({ error: '目前串流人數已滿，請稍後再試' });
-  }
+  if (tooMany()) return res.status(503).json({ error: tooMany() });
 
-  const ctx = { req, res, item, procs: null, closed: false, started: false, copy: req.query && req.query.fmt === 'webm' };
+  const ctx = {
+    req, res, item, procs: null, closed: false, started: false, copy: req.query && req.query.fmt === 'webm',
+    userKey, noCache: !allowCache,
+  };
   activeCtxs.add(ctx);
 
   res.on('close', () => {

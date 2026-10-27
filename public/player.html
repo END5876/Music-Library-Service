@@ -70,7 +70,7 @@
   <button class="navitem" data-view="playlists"><svg><use href="#i-playlist"/></svg>播放清單</button>
   <button class="navitem" data-view="offline"><svg><use href="#i-offline"/></svg>離線歌曲</button>
   <button class="navitem needs-online" data-view="online" hidden><svg><use href="#i-explore"/></svg>線上搜尋</button>
-  <button class="navitem" data-view="bots"><svg><use href="#i-bot"/></svg>Bot 正在播放</button>
+  <button class="navitem" data-view="bots" hidden><svg><use href="#i-bot"/></svg>Bot 正在播放</button>
   <button class="navitem subtle" id="helpBtn" title="鍵盤快捷鍵 (?)"><svg><use href="#i-keyboard"/></svg>鍵盤快捷鍵</button>
 </aside>
 
@@ -232,7 +232,8 @@
   <button data-view="playlists"><svg><use href="#i-playlist"/></svg>播放清單</button>
   <button data-view="offline"><svg><use href="#i-offline"/></svg>離線</button>
   <button class="needs-online" data-view="online" hidden><svg><use href="#i-explore"/></svg>線上搜尋</button>
-  <button data-view="bots"><svg><use href="#i-bot"/></svg>Bot</button>
+  <!-- Bot 頁籤只有管理員看得到(player.js 的 showAdminUi) -->
+  <button data-view="bots" hidden><svg><use href="#i-bot"/></svg>Bot</button>
 </nav>
 
 <div class="full" id="full" data-tab="player">
@@ -328,13 +329,21 @@
 </div>
 
 <div class="dialog" id="login">
-  <form class="box" id="loginForm">
+  <div class="box">
     <div class="logo"><i></i><span>裊器音樂</span></div>
-    <p>請輸入密碼</p>
-    <input type="password" id="pw" placeholder="密碼" autocomplete="current-password" required>
+    <p>請用 Discord 帳號登入</p>
+    <a class="btn btn-lg btn-primary" id="loginBtn" href="/auth/discord/login">使用 Discord 登入</a>
+    <!-- 代碼交接(主畫面 App 用,見 webplayer/webAuth.js) -->
+    <div class="handoff" id="handoff" hidden>
+      <p>在瀏覽器完成 Discord 登入後,確認頁上的代碼要和這裡相同:</p>
+      <div class="handoff-code" id="handoffCode"></div>
+      <a class="btn btn-lg btn-primary" id="handoffOpen" target="_blank" rel="noopener">開啟 Discord 登入</a>
+      <p id="handoffStatus"></p>
+      <button class="btn btn-secondary" type="button" id="handoffCancel">取消</button>
+    </div>
+    <button class="btn btn-secondary" type="button" id="handoffBtn" hidden>登入後回不到這裡?改用代碼登入</button>
     <div class="err" id="loginErr"></div>
-    <button class="btn btn-lg btn-primary" type="submit">登入</button>
-  </form>
+  </div>
 </div>
 
 <!-- 載入順序有依賴:offlineStore.js、downloader.js 必須早於 player.js(player.js 一開始就會取用 window.MLOfflineStore / window.MLDownloader);

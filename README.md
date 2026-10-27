@@ -33,24 +33,75 @@ header（未設定 `MUSIC_LIB_SECRET` 時預設停用，見下方說明）。`fi
 
 ## 網頁播放器
 
-設定環境變數 `WEB_PLAYER_PASSWORD` 後，服務會多出一個瀏覽器可用的
+設定好 Discord 登入（見下方）後，服務會多出一個瀏覽器可用的
 串流播放器（不設定則完全不啟用，行為跟以前一樣）。播放器也支援漸進式網頁應用程式（PWA）：透過 HTTPS 或本機 `localhost` 開啟 `/player` 後，可使用瀏覽器的「安裝」功能加入桌面／主畫面，並以獨立視窗啟動。iOS／iPadOS 可使用 Safari 的「加入主畫面」。
 
-- 開啟 `https://<你的公開網域>/player`，輸入密碼登入。
+- 開啟 `https://<你的公開網域>/player`，按「使用 Discord 登入」。
 - 支援搜尋、資料夾篩選、上一首／下一首、隨機、循環（全部／單曲／不循環）、
   拖曳進度（HTTP Range）、鍵盤快速鍵（空白＝播放／暫停，N／P＝下一首／上一首，
   S＝隨機，R＝循環，←／→＝快退／快進 10 秒），也支援手機鎖定畫面的媒體控制。
-- 登入後由 HttpOnly、`SameSite=Strict` 的 Cookie 維持（預設 7 天，`WEB_SESSION_HOURS` 可調）。
+
+#### Discord 登入
+
+1. [Discord Developer Portal](https://discord.com/developers/applications) 選一個應用程式（可以直接用 Bot 的應用程式），
+   **OAuth2 → Redirects** 加上 `<PUBLIC_BASE_URL>/auth/discord/callback`，複製 Client ID 與 Client Secret。
+2. 設定環境變數：
+
+| 變數 | 說明 |
+|---|---|
+| `DISCORD_CLIENT_ID`／`DISCORD_CLIENT_SECRET` | 上一步複製的值 |
+| `PUBLIC_BASE_URL` | 網頁對外網址，例如 `https://music.example.com`（組 redirect_uri 用，要和 Discord 後台填的一致） |
+| `WEB_ADMIN_USERS` | 管理員的 Discord 使用者 ID，逗號分隔（見下方「權限」）。每次請求都重新檢查，移除＝立即失效 |
+| `WEB_BLOCKED_USERS` | （選用）不能登入的使用者 ID，已登入的也立即失效 |
+| `WEB_SESSION_HOURS` | 登入有效時數，預設 `720`（30 天） |
+
+- **任何 Discord 帳號都能登入**，不需要白名單。只要 `identify` 權限（只拿使用者 ID 與名稱，不讀伺服器清單、不讀 email）；
+  Discord 的 access token 用完就丟，不保存。
+- 要找自己的 Discord ID（填 `WEB_ADMIN_USERS` 用）：Discord 設定 → 進階 → 開啟開發者模式，在自己的名字上按右鍵「複製使用者 ID」。
+- 以前的 `WEB_ALLOWED_USERS`／`WEB_ALLOWED_GUILD`／`WEB_ALLOWED_ROLES` 已經沒有作用（有設的話啟動時會在 log 提醒）。
+- 登出只登出播放器，不會登出 Discord：再按登入時 Discord 已授權過，會直接登入、不再顯示同意畫面。
+  被封鎖之後再按登入會顯示 Discord 的同意畫面，可以在上面按「不是你？」換一個帳號。
+
+#### 權限
+
+| | 一般帳號 | 管理員（`WEB_ADMIN_USERS`） |
+|---|---|---|
+| 聽音樂庫、線上搜尋與播放、離線下載 | ✅ | ✅ |
+| 播放清單（**每個帳號各自一份**，互相看不到） | ✅ | ✅ |
+| 收藏／移動／重新命名／刪除音樂庫檔案 | — | ✅ |
+| 上傳音檔（`/upload?upload=1`） | — | ✅ |
+| Bot 正在播放（查看、遙控、點歌給 Bot） | — | ✅ |
+| 服務狀態（`/web/api/status`） | — | ✅ |
+
+- 音樂庫、Bot 所在的伺服器是所有人共用的，所以會影響其他人的操作只開放給管理員；伺服器端一律檢查，
+  播放器也只對管理員顯示這些按鈕與 Bot 頁籤。
+- Bot 用內部金鑰（`x-music-lib-key`）呼叫時視同管理員，但沒有 Discord 帳號，所以不能用播放清單。
+- 一般帳號的線上播放**只串流、不寫進共用音樂庫**（背景下載快取只替管理員做，快取命中的歌照樣直接播檔案）；
+  同時最多 `WEB_MAX_STREAMS_PER_USER`（預設 `2`）個線上串流，搜尋／取得影片資訊每分鐘最多 `WEB_QUERIES_PER_MINUTE`（預設 `30`）次。
+- 播放清單每個帳號最多 100 個、每個 2000 首、所有清單合計 10000 首；有播放清單的帳號最多 1000 個，
+  全部帳號合計 200000 首；每個帳號每分鐘最多修改 120 次。每個帳號 1 小時內最多登入 60 次。
+- 從舊版（所有人共用一份）升級時，舊的播放清單**不搬移**：`playlists.json` 會改名備份成
+  `playlists.json.shared-<時間>.bak`，每個帳號都從空的開始。
+  ⚠️ 部署後如果要回滾到舊版：舊版看不懂新格式，會直接覆蓋 `playlists.json`，回滾前請先備份這個檔案。
+  播放清單檔讀取失敗時，播放清單功能回 `503` 並暫停寫入（不會用空的清單蓋掉所有人的資料）；不認得的格式會先備份成 `.unknown-<時間>.bak`。
+- 登入限流：只計「向 Discord 換 token 失敗」的次數（正常登入不計），每個來源 10 分鐘內 10 次、全站 100 次，
+  超過就暫停新的登入（已登入的裝置不受影響）。避免有人亂灌 callback，讓伺服器的 IP 被 Discord 限流。
+- **主畫面 App（iOS）**：iOS 的主畫面 App 跟 Safari 不共用 Cookie，跳到 Discord 登入後回不到 App 裡，
+  所以在 iOS 主畫面 App 按登入會改用**代碼登入**：App 顯示一組代碼和「開啟 Discord 登入」，在瀏覽器完成登入後，
+  確認頁會顯示同一組代碼，按「確認登入」後 App 幾秒內自動登入（代碼 10 分鐘內有效）。
+  其他平台的主畫面 App 若登入後回不來，登入框也有「改用代碼登入」可以用。
+  確認頁一定要手動按確認：別人把他 App 的登入連結傳給你時，你點開也不會把登入交給對方（看到不是自己要求的代碼請按取消）；
+  要求代碼的網路和按確認的網路不同時，確認頁會另外顯示紅字警告。
+- 從舊版的密碼登入升級：`WEB_PLAYER_PASSWORD` 已經沒有作用（有設的話啟動時會在 log 提醒刪掉），所有人需要用 Discord 重新登入一次。
+
+#### Cookie 與安全性
+
+- 登入後由 HttpOnly、`SameSite=Strict` 的 Cookie 維持（預設 30 天，`WEB_SESSION_HOURS` 可調）。
   從別的網站連過來的請求（`Sec-Fetch-Site: cross-site`）一律不接受 Cookie 登入（回 `403`），
   別的網站不能讓已登入的使用者代為點歌、下載或改播放清單。播放器頁面本身不需要登入，從 Discord 點連結進來不受影響。
 - 登出會讓該 Cookie 立即失效；已登出清單存在 `session-secret` 同一個資料夾的 `session-revoked.json`，重新部署後仍然有效。
   Cookie 的簽章金鑰：有設 `WEB_SESSION_SECRET` 就用它，否則第一次啟動時自動產生一組隨機金鑰存在
-  `/app/data/session-secret`（`WEB_SESSION_SECRET_FILE` 可改位置）；兩種情況都再和密碼一起衍生（換密碼＝全部登出）。
-  ⚠️ 這一版之前，設定了 `WEB_SESSION_SECRET` 時簽章不跟密碼綁定；升級後所有人需要重新登入一次。
-- 密碼建議至少 12 個字元的隨機字串，太短時啟動會在 log 警告。
-- 登入限流：每個 IP（IPv6 以 /64 為單位）10 分鐘內最多失敗 10 次；全站 10 分鐘內失敗超過 100 次時
-  暫停所有登入（已登入的裝置不受影響）。成功登入過的裝置（`ml_device` Cookie，90 天）不受全站上限影響，
-  攻擊者灌錯誤密碼鎖不住擁有者。
+  `/app/data/session-secret`（`WEB_SESSION_SECRET_FILE` 可改位置）。
 - 反向代理：只信任從本機／私有網段連進來的代理（`TRUST_PROXY`，預設 `loopback, linklocal, uniquelocal`），
   服務的埠號直接對外時，偽造的 `X-Forwarded-For` 不會被當成來源 IP。
 
@@ -59,26 +110,33 @@ header（未設定 `MUSIC_LIB_SECRET` 時預設停用，見下方說明）。`fi
 | GET | `/player` | 播放器頁面（純靜態） |
 | GET | `/manifest.webmanifest` | PWA 安裝資訊（名稱、色彩、啟動頁、圖示） |
 | GET | `/player-sw.js` | PWA Service Worker（離線殼層與已登入資料快取） |
-| POST | `/web/login` | `{ "password": "..." }`，成功後設定 Cookie |
+| GET | `/auth/discord/login` | `?next=<站內路徑>`：導到 Discord 授權頁（`&switch=1`＝顯示同意畫面以便換帳號） |
+| GET | `/auth/discord/callback` | Discord 導回來：檢查是否被封鎖、設定 Cookie |
+| GET | `/web/api/me` | 目前登入的帳號 `{ id, name, admin }` |
+| POST | `/auth/handoff/start` | 代碼登入：取得一次性代碼與登入連結 |
+| POST | `/auth/handoff/poll` | 代碼登入：瀏覽器那邊確認後回 `200` 並設定 Cookie，還在等回 `202` |
+| POST | `/auth/handoff/confirm` | 代碼登入：瀏覽器確認頁送出（確認或取消） |
+| POST | `/auth/handoff/cancel` | 代碼登入：App 按取消，代碼立刻作廢 |
 | POST | `/web/logout` | 清除 Cookie，並讓這個 Cookie 失效 |
 | GET | `/web/api/list` | 曲目清單（需登入） |
 | GET | `/web/stream/*` | 串流音檔，支援 Range（需登入） |
-| GET | `/upload?upload=1` | 受控的音檔上傳頁（需登入；未帶正確參數時不提供） |
-| POST | `/web/api/upload?upload=1` | 上傳、轉為 MP3、響度正規化後儲存（需登入） |
+| GET | `/upload?upload=1` | 受控的音檔上傳頁（管理員；未帶正確參數時不提供） |
+| POST | `/web/api/upload?upload=1` | 上傳、轉為 MP3、響度正規化後儲存（管理員） |
 | GET | `/web/api/capabilities` | `{ online }`：伺服器是否可線上串流 |
 | GET | `/web/api/search?q=` | 搜尋 YouTube + Bilibili |
 | GET | `/web/api/info?url=` | 取得影片資訊（標題、時長） |
 | GET | `/web/play?url=` | 線上播放（快取命中＝檔案；否則即時串流＋背景下載）；`&fmt=webm` 見下方 |
-| POST | `/web/api/library/move` | `{ from, to }` 移動／重新命名（`to` 可省略副檔名；播放清單跟著改路徑） |
-| DELETE | `/web/api/library/file/*` | 從音樂庫刪除檔案 |
-| GET | `/web/api/status` | 服務狀態（需登入，內容同 `/api/music/status`） |
-| GET | `/web/api/bots` | 各 Bot、各伺服器的播放狀態 |
-| GET | `/web/api/bots/events` | SSE：Bot 狀態有變就推送（`event: state`） |
-| POST | `/web/api/bots/:botId/command` | 遠端控制 Bot（含批量點歌 `enqueueMany`，最多 500 首），等 Bot 回報結果 `{ ok, message }` |
+| GET／POST／PATCH／PUT／DELETE | `/web/api/playlists/*` | 自己的播放清單（每個帳號各自一份，見 `webplayer/playlistRoutes.js`） |
+| POST | `/web/api/library/move` | `{ from, to }` 移動／重新命名（管理員；`to` 可省略副檔名；所有人的播放清單跟著改路徑） |
+| DELETE | `/web/api/library/file/*` | 從音樂庫刪除檔案（管理員） |
+| GET | `/web/api/status` | 服務狀態（管理員，內容同 `/api/music/status`） |
+| GET | `/web/api/bots` | 各 Bot、各伺服器的播放狀態（管理員） |
+| GET | `/web/api/bots/events` | SSE：Bot 狀態有變就推送（`event: state`；管理員） |
+| POST | `/web/api/bots/:botId/command` | 遠端控制 Bot（管理員；含批量點歌 `enqueueMany`，最多 500 首），等 Bot 回報結果 `{ ok, message }` |
 
 ### Bot 正在播放（Bot ↔ 網頁同步）
 
-播放器的 **Bot 正在播放** 頁籤即時顯示各 Bot、各伺服器正在播的歌、播放進度、循環模式與佇列，並可以：
+播放器的 **Bot 正在播放** 頁籤（只有管理員看得到）即時顯示各 Bot、各伺服器正在播的歌、播放進度、循環模式與佇列，並可以：
 
 - 跳過、停止、切換循環（不循環／單曲／列表）、隨機連播、清空佇列、移除佇列中的某首。
 - 在音樂庫、播放清單歌曲的「⋮」選單，或線上搜尋結果的 Bot 圖示選「**點給 Bot 播放**」，挑一個 Bot 所在的伺服器送過去
@@ -108,7 +166,7 @@ header（未設定 `MUSIC_LIB_SECRET` 時預設停用，見下方說明）。`fi
 
 ### 受控音檔上傳
 
-在已設定 `WEB_PLAYER_PASSWORD` 的前提下，開啟 `https://<你的公開網域>/upload?upload=1` 並登入，即可上傳 MP3、WAV、OGG、FLAC、M4A 或 AAC 音檔。未帶 `?upload=1`、值不是 `1` 或未登入時，頁面與上傳 API 都不會提供服務。
+在已啟用網頁播放器的前提下，管理員開啟 `https://<你的公開網域>/upload?upload=1`（沒登入會先導去 Discord 登入），即可上傳 MP3、WAV、OGG、FLAC、M4A 或 AAC 音檔。未帶 `?upload=1`、值不是 `1` 或未登入時，頁面與上傳 API 都不會提供服務。
 
 上傳檔案會先寫入不會列出的暫存檔，再由 ffmpeg 轉為高品質 MP3（LAME VBR `-q:a 2`），接著沿用 `ytdlp/musicNormalizer.js` 的雙通道 EBU R128 loudnorm 處理（`-16 LUFS`、`LRA 20`、`TP -2.0`）。只有壓縮與正規化都成功後才會以原子操作發布至音樂庫。音樂庫已有同名檔案時回 `409`，不會覆寫既有曲目（換一個曲名或資料夾即可）。
 

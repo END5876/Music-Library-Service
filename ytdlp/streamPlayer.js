@@ -4,7 +4,7 @@
 //   錯誤 → 連續錯誤計數 + 重試。從 onlineStream.js 拆出，邏輯與常數不變（同 Bot）。
 //
 // 共用可變狀態（errorCounts / downloadingUrls / recentFailures）只在這個模組內讀寫。
-// ctx = { req, res, item, procs, closed, started, copy }，由 onlineStream.js 的 handlePlayRequest 建立。
+// ctx = { req, res, item, procs, closed, started, copy, userKey, noCache }，由 onlineStream.js 的 handlePlayRequest 建立。
 //
 // 即時串流的輸出格式：
 //   ctx.copy=true（瀏覽器支援 WebM/Opus，且是 YouTube）→ yt-dlp 優先挑 Opus 音軌，ffmpeg 只換封裝（-c:a copy），
@@ -97,6 +97,8 @@ async function playStream(ctx, retryCount = 0) {
   const platform = antiBot.isYouTubeUrl(item.url) ? 'YouTube' : 'Bilibili';
 
   const tooLongToCache = !item.durationSec || item.durationSec > MAX_CACHE_DURATION_SEC;
+  // ctx.noCache：呼叫端不允許寫入共用音樂庫（網頁的一般帳號，見 onlineRoutes.js），只串流
+  const skipCache = tooLongToCache || !!ctx.noCache;
 
   try {
     const cachedPath = await cache.getCachedPath(item.url, item.title);
@@ -108,8 +110,8 @@ async function playStream(ctx, retryCount = 0) {
       return;
     }
 
-    if (tooLongToCache) {
-      const reason = !item.durationSec ? '未知長度/直播' : `長度超過 7 分鐘`;
+    if (skipCache) {
+      const reason = ctx.noCache ? '不寫入共用音樂庫' : !item.durationSec ? '未知長度/直播' : `長度超過 7 分鐘`;
       console.log(`⏭️ [${platform}] ${reason}，跳過背景下載，僅串流: ${item.title}`);
     } else {
       console.log(`🔄 [${platform}] 快取未命中，啟動即時串流播放: ${item.title}`);
@@ -123,7 +125,7 @@ async function playStream(ctx, retryCount = 0) {
 
     _fallbackStream(ctx, retryCount);
 
-    if (!tooLongToCache) {
+    if (!skipCache) {
       if (downloadingUrls.has(item.url)) {
         console.log(`⏳ 此 URL 已經在背景下載中，跳過重複下載任務。`);
       } else if (downloadingUrls.size >= MAX_BG_DOWNLOADS) {

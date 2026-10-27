@@ -15,6 +15,8 @@ const store = require('../musicStore');
 const pl = require('../webplayer/playlistStore');
 const { mountLibraryManageRoutes } = require('../webplayer/libraryManageRoutes');
 const { cleanUrl, isAllowedUrl } = require('../ytdlp/urlUtils');
+const A = '111111111111111111'; // 兩個不同的 Discord 帳號（播放清單各自一份）
+const B = '222222222222222222';
 
 let base, server, authed = true;
 const origLog = console.log;
@@ -78,12 +80,12 @@ test('deleteFile：刪除音訊檔；找不到回 404；不能刪非音訊檔', 
   await assert.rejects(store.deleteFile('../x.mp3'), (err) => err.status === 400);
 });
 
-test('POST /web/api/library/move：播放清單裡的路徑跟著改', async () => {
+test('POST /web/api/library/move：所有帳號的播放清單裡的路徑都跟著改', async () => {
   touch(MUSIC, 'song.mp3');
   touch(MUSIC, 'keep/song.mp3');
   const deps = { cleanUrl, isAllowedUrl };
-  const p1 = await pl.create('清單一', [{ kind: 'lib', filename: 'song.mp3' }], deps);
-  const p2 = await pl.create('清單二', [{ kind: 'lib', filename: 'song.mp3' }, { kind: 'lib', filename: 'keep/song.mp3' }], deps);
+  const p1 = await pl.create(A, '清單一', [{ kind: 'lib', filename: 'song.mp3' }], deps);
+  const p2 = await pl.create(B, '清單二', [{ kind: 'lib', filename: 'song.mp3' }, { kind: 'lib', filename: 'keep/song.mp3' }], deps);
 
   await fs.promises.unlink(path.join(MUSIC, 'keep', 'song.mp3')); // 讓目標位置空出來，但清單二裡仍有指向它的項目
   const r = await move({ from: 'song.mp3', to: 'keep/song' });
@@ -91,9 +93,9 @@ test('POST /web/api/library/move：播放清單裡的路徑跟著改', async () 
   const j = await r.json();
   assert.deepEqual(j, { ok: true, from: 'song.mp3', to: 'keep/song.mp3', playlists: 2 });
 
-  const byId = (id) => pl.list().find((p) => p.id === id);
-  assert.deepEqual(byId(p1.id).items.map((it) => it.filename), ['keep/song.mp3']);
-  assert.deepEqual(byId(p2.id).items.map((it) => it.filename), ['keep/song.mp3'], '已有新路徑的清單不重複');
+  const byId = (owner, id) => pl.list(owner).find((p) => p.id === id);
+  assert.deepEqual(byId(A, p1.id).items.map((it) => it.filename), ['keep/song.mp3']);
+  assert.deepEqual(byId(B, p2.id).items.map((it) => it.filename), ['keep/song.mp3'], '已有新路徑的清單不重複');
 });
 
 test('網頁路由：輸入檢查、錯誤碼、需要登入', async () => {

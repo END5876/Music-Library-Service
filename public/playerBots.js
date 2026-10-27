@@ -4,7 +4,7 @@
 // （跳過、停止、循環、隨機連播、清空／移除佇列），以及把音樂庫或線上歌曲「點給 Bot 播放」。
 // 伺服器端協定見 botSync/routes.js：GET /web/api/bots、SSE /web/api/bots/events、POST /web/api/bots/:id/command。
 //
-// createBots(deps) 回傳 { show, hide, refresh, hasTargets, sendToBot }；deps 由 player.js 傳入：
+// createBots(deps) 回傳 { show, hide, reset, refresh, hasTargets, sendToBot }；deps 由 player.js 傳入：
 //   sendToBot(items, onDone)：items 可以是一首或多首（多選、整份播放清單）；一首走 enqueue（Bot 會查完整影片資訊），
 //   多首走 enqueueMany（一次最多 MAX_BATCH 首，線上歌曲直接用帶過去的資訊）。onDone 在送出成功後呼叫（例如結束多選）。
 //   $ / setStatus / askConfirm / pushLayer / dropLayer / fmt / makeRow   畫面工具
@@ -56,6 +56,7 @@
       try {
         const r = await fetch('/web/api/bots');
         if (r.status === 401) return false;
+        if (r.status === 403) { setData([]); return false; } // 不是管理員（或剛被拿掉）：不留舊的狀態
         if (!r.ok) return false;
         setData((await r.json()).bots);
         return true;
@@ -235,6 +236,11 @@
       disconnect();
       clearInterval(tickTimer);
     }
+    // 登出、換帳號、不是管理員：關掉連線並清掉上一份 Bot 狀態（「點給 Bot」的選項也跟著消失）
+    function reset() {
+      hide();
+      setData([]);
+    }
 
     // ── 點給 Bot 播放 ───────────────────────────────────
     const MAX_BATCH = 500; // 與伺服器 botSync/routes.js 的上限一致
@@ -284,7 +290,7 @@
       pushLayer('botPick', closePick);
     }
 
-    return { show, hide, refresh, hasTargets: () => targets().length > 0, sendToBot };
+    return { show, hide, reset, refresh, hasTargets: () => targets().length > 0, sendToBot };
   }
 
   window.MLBots = { createBots };
