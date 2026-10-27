@@ -12,7 +12,7 @@ const express = require('express');
 process.env.NODE_ENV = 'test';
 const { mountWebAuth } = require('../webplayer/webAuth');
 
-const ALICE = '111111111111111111'; // 管理員（WEB_ADMIN_USERS）
+const ALICE = '111111111111111111'; // 管理員（OWNER_USER_ID）
 const BOB = '222222222222222222';   // 一般的 Discord 帳號
 const EVE = '555555555555555555';   // 被封鎖（WEB_BLOCKED_USERS）
 
@@ -47,7 +47,8 @@ test.before(async () => {
     DISCORD_CLIENT_ID: 'client-id',
     DISCORD_CLIENT_SECRET: 'client-secret',
     PUBLIC_BASE_URL: 'https://music.test/',
-    WEB_ADMIN_USERS: ALICE,
+    OWNER_USER_ID: ALICE,
+    WEB_ADMIN_USERS: undefined,
     WEB_BLOCKED_USERS: EVE,
     WEB_ALLOWED_USERS: undefined,
     WEB_ALLOWED_GUILD: undefined,
@@ -126,7 +127,7 @@ test('設定不完整時不掛載（回傳 null）：缺 Discord 設定、只剩
   assert.equal(await boot({ ...none, WEB_PLAYER_PASSWORD: 'old-password' }), null, '只有舊的 WEB_PLAYER_PASSWORD');
   assert.equal(await boot({ DISCORD_CLIENT_SECRET: undefined }), null, '缺 client secret');
   assert.equal(await boot({ PUBLIC_BASE_URL: 'music.test' }), null, 'PUBLIC_BASE_URL 不是網址');
-  assert.notEqual(await boot({ WEB_ADMIN_USERS: undefined, WEB_BLOCKED_USERS: undefined }), null, '沒有管理員也能啟用（只是沒人能用管理功能）');
+  assert.notEqual(await boot({ OWNER_USER_ID: undefined, WEB_BLOCKED_USERS: undefined }), null, '沒有管理員也能啟用（只是沒人能用管理功能）');
 });
 
 test('/auth/discord/login：導到 Discord 授權頁，state 存在 Lax、只限 /auth/discord 的 Cookie', async () => {
@@ -191,7 +192,7 @@ test('任何 Discord 帳號都能登入；被封鎖的帳號被拒絕（顯示 I
   assert.equal(cookieOf(eve, 'ml_session'), '', '被封鎖的人不發登入 Cookie');
 });
 
-test('管理員：requireWebAdmin 只放行 WEB_ADMIN_USERS 與內部金鑰；/web/api/me 告訴前端是不是管理員', async () => {
+test('管理員：requireWebAdmin 只放行 OWNER_USER_ID 與內部金鑰；/web/api/me 告訴前端是不是管理員', async () => {
   const alice = await loginAs(main, ALICE);
   const bob = await loginAs(main, BOB);
   const admin = (headers) => fetch(`${main}/admin`, { headers });
@@ -229,7 +230,7 @@ test('每次請求都重新檢查：拿掉管理員、加進 WEB_BLOCKED_USERS �
   const alice = await loginAs(main, ALICE);
   const bob = await loginAs(main, BOB);
 
-  const noAdmin = await boot({ WEB_ADMIN_USERS: undefined });
+  const noAdmin = await boot({ OWNER_USER_ID: undefined });
   assert.equal((await fetch(`${noAdmin}/admin`, { headers: { cookie: alice } })).status, 403, 'Alice 不再是管理員');
   assert.equal((await get(noAdmin, { cookie: alice })).status, 200, '但還是可以一般使用');
 
@@ -277,7 +278,8 @@ test('Cookie 被竄改、過期、用途不對、帳號被封鎖：401', async (
     `${Buffer.from(JSON.stringify({ t: 's', sid: 'a'.repeat(32), uid: ALICE, exp: future + 1 })).toString('base64url')}.${sig}`, // 改內容沿用舊簽章
     seal({ t: 's', sid: 'b'.repeat(32), uid: ALICE, exp: Date.now() - 1000 }), // 簽章正確但已過期
     seal({ t: 'o', sid: 'c'.repeat(32), uid: ALICE, exp: future }),            // OAuth state 不能當登入用
-    seal({ t: 's', sid: 'd'.repeat(32), uid: EVE, exp: future }),              // 被封鎖    seal({ t: 's', uid: ALICE, exp: future }),                                 // 沒有 sid（無法撤銷）
+    seal({ t: 's', sid: 'd'.repeat(32), uid: EVE, exp: future }),              // 被封鎖
+    seal({ t: 's', uid: ALICE, exp: future }),                                 // 沒有 sid（無法撤銷）
     'garbage', `${body}`, '',
   ]) {
     assert.equal((await get(main, { cookie: `ml_session=${token}` })).status, 401, token);
@@ -311,7 +313,9 @@ test('登出：清除 Cookie；這個 Cookie 就算被複製走也不能再用�
   const c1 = await loginAs(main, ALICE);
   const c2 = await loginAs(main, ALICE);
   assert.notEqual(c1, c2);
-  const r = await fetch(`${main}/web/logout`, { method: 'POST', headers: { cookie: c1 } });
+  assert.equal((await fetch(`${main}/auth/logout`, { method: 'POST', headers: { cookie: c1, 'Sec-Fetch-Site': 'cross-site' } })).status, 403, '跨站請求不能把人登出');
+  assert.equal((await get(main, { cookie: c1 })).status, 200);
+  const r = await fetch(`${main}/auth/logout`, { method: 'POST', headers: { cookie: c1 } });
   assert.equal(r.status, 200);
   assert.match(r.headers.get('set-cookie'), /^ml_session=; .*Max-Age=0/);
   assert.equal((await get(main, { cookie: c1 })).status, 401);
@@ -320,7 +324,21 @@ test('登出：清除 Cookie；這個 Cookie 就算被複製走也不能再用�
   const rebooted = await boot(); // 模擬重新部署：已登出清單從檔案讀回來
   assert.equal((await get(rebooted, { cookie: c1 })).status, 401, '重新啟動後登出仍然有效');
   assert.equal((await get(rebooted, { cookie: c2 })).status, 200);
-  assert.equal((await fetch(`${main}/web/logout`, { method: 'POST' })).status, 200, '沒登入也可以登出');
+  assert.equal((await fetch(`${main}/auth/logout`, { method: 'POST' })).status, 200, '沒登入也可以登出');
+
+  // 舊路徑（Service Worker 快取的舊版頁面）
+  const c3 = await loginAs(main, ALICE);
+  assert.equal((await fetch(`${main}/web/logout`, { method: 'POST', headers: { cookie: c3 } })).status, 200);
+  assert.equal((await get(main, { cookie: c3 })).status, 401);
+});
+
+test('舊名稱 WEB_ADMIN_USERS 仍然有效，與 OWNER_USER_ID 合併', async () => {
+  const both = await boot({ WEB_ADMIN_USERS: BOB });
+  const admin = async (id) => (await fetch(`${both}/admin`, { headers: { cookie: await loginAs(both, id) } })).status;
+  assert.equal(await admin(ALICE), 200, 'OWNER_USER_ID');
+  assert.equal(await admin(BOB), 200, 'WEB_ADMIN_USERS');
+  const onlyOld = await boot({ OWNER_USER_ID: undefined, WEB_ADMIN_USERS: BOB });
+  assert.equal((await fetch(`${onlyOld}/admin`, { headers: { cookie: await loginAs(onlyOld, BOB) } })).status, 200);
 });
 
 test('未設定 WEB_SESSION_SECRET：自動產生隨機金鑰存檔，重新啟動後沿用', async () => {

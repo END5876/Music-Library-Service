@@ -280,7 +280,7 @@
   }
   $('logoutBtn').addEventListener('click', async () => {
     pendingPlay = false; userPaused = true; audio.pause(); // 等伺服器回應的期間先停下來
-    await fetch('/web/logout', { method: 'POST' }).catch(() => {});
+    await fetch('/auth/logout', { method: 'POST' }).catch(() => {});
     resetAccountState();
     all = []; view = []; byFile = new Map();
     render();

@@ -16,7 +16,8 @@
 //   DISCORD_CLIENT_ID / DISCORD_CLIENT_SECRET   Discord Developer Portal → OAuth2
 //   PUBLIC_BASE_URL      網頁對外網址（例如 https://music.example.com），用來組 redirect_uri；
 //                        Discord 後台的 Redirects 要填 <PUBLIC_BASE_URL>/auth/discord/callback
-//   WEB_ADMIN_USERS      管理員的 Discord 使用者 ID（逗號或空白分隔）。每次請求都重新檢查：移除＝立即失效
+//   OWNER_USER_ID        管理員（Bot 擁有者）的 Discord 使用者 ID（逗號或空白分隔），與 Mousebot、分帳設成一樣。
+//                        每次請求都重新檢查：移除＝立即失效。舊名稱 WEB_ADMIN_USERS 仍然有效（兩邊合併），但會警告
 //   WEB_BLOCKED_USERS    不能登入的 Discord 使用者 ID（已登入的也立即失效）
 //   WEB_SESSION_SECRET   簽 Cookie 用的金鑰。未設定時自動產生一組隨機金鑰存在 WEB_SESSION_SECRET_FILE
 //   WEB_SESSION_SECRET_FILE  自動產生的金鑰存放位置，預設 <repo root>/data/session-secret（Docker 內為 /app/data，掛 Volume）。
@@ -30,7 +31,7 @@
 //   GET  /auth/discord/login     ?next=<站內路徑> 或 ?handoff=<id>（&switch=1＝顯示同意畫面以便換帳號）→ 302 到 Discord 授權頁
 //   GET  /auth/discord/callback  Discord 導回來：驗證 state、換 token、檢查是否被封鎖 → 設定 Cookie
 //   GET  /web/api/me             目前登入的帳號 { id, name, admin }（前端用來決定要不要顯示管理功能）
-//   POST /web/logout             清除 Cookie，並讓這個 Cookie 失效
+//   POST /auth/logout            清除 Cookie，並讓這個 Cookie 失效（與分帳相同路徑；舊路徑 /web/logout 仍可用）
 //   POST /auth/handoff/start     代碼交接：主畫面 App 取得一次性代碼
 //   POST /auth/handoff/poll      代碼交接：主畫面 App 輪詢，瀏覽器那邊確認後拿到登入 Cookie
 //   POST /auth/handoff/confirm   代碼交接：瀏覽器那邊的確認頁送出
@@ -163,10 +164,15 @@ function mountWebAuth(app, { libSecret }) {
   const clientId = process.env.DISCORD_CLIENT_ID || '';
   const clientSecret = process.env.DISCORD_CLIENT_SECRET || '';
   const publicBase = (process.env.PUBLIC_BASE_URL || '').replace(/\/+$/, '');
-  const ADMIN_USERS = parseIds(process.env.WEB_ADMIN_USERS, 'WEB_ADMIN_USERS');
+  // 管理員名單跟 Mousebot、分帳共用 OWNER_USER_ID；舊的 WEB_ADMIN_USERS 合併進來，避免已經設定的部署突然沒有管理員
+  const ADMIN_USERS = parseIds(process.env.OWNER_USER_ID, 'OWNER_USER_ID');
+  if (process.env.WEB_ADMIN_USERS) {
+    for (const id of parseIds(process.env.WEB_ADMIN_USERS, 'WEB_ADMIN_USERS')) ADMIN_USERS.add(id);
+    console.warn('⚠️ [WebAuth] WEB_ADMIN_USERS 已改名為 OWNER_USER_ID（與 Mousebot、分帳共用），目前兩個都會讀取；請把 ID 移到 OWNER_USER_ID 後刪除 WEB_ADMIN_USERS');
+  }
   const BLOCKED_USERS = parseIds(process.env.WEB_BLOCKED_USERS, 'WEB_BLOCKED_USERS');
   for (const old of ['WEB_ALLOWED_USERS', 'WEB_ALLOWED_GUILD', 'WEB_ALLOWED_ROLES']) {
-    if (process.env[old]) console.warn(`⚠️ [WebAuth] ${old} 已經沒有作用（任何 Discord 帳號都能登入）；管理員請改設 WEB_ADMIN_USERS`);
+    if (process.env[old]) console.warn(`⚠️ [WebAuth] ${old} 已經沒有作用（任何 Discord 帳號都能登入）；管理員請改設 OWNER_USER_ID`);
   }
 
   if (!clientId || !clientSecret || !/^https?:\/\//i.test(publicBase)) {
@@ -176,7 +182,7 @@ function mountWebAuth(app, { libSecret }) {
     return null;
   }
   if (!ADMIN_USERS.size) {
-    console.warn('⚠️ [WebAuth] 沒有設定 WEB_ADMIN_USERS：刪除／改名／上傳音樂、Bot 正在播放等管理功能在網頁上沒有人能用');
+    console.warn('⚠️ [WebAuth] 沒有設定 OWNER_USER_ID：刪除／改名／上傳音樂、Bot 正在播放等管理功能在網頁上沒有人能用');
   }
 
   // 指定 API 版本：不帶版本的 /api 會落到 Discord 的預設版本，哪天預設版本調整就可能壞掉
@@ -231,7 +237,7 @@ function mountWebAuth(app, { libSecret }) {
 
   // ── 登入 Session ──
   // 每個 Session 有自己的 sid，登出時只撤銷這一個（其他裝置不受影響）。name 只用來顯示，不做任何判斷。
-  // 管理員身分不寫進 Cookie：每次請求依 WEB_ADMIN_USERS 判斷，拿掉＝立即失效。
+  // 管理員身分不寫進 Cookie：每次請求依 OWNER_USER_ID 判斷，拿掉＝立即失效。
   function sessionCookie(req, user) {
     const payload = { t: 's', sid: crypto.randomBytes(16).toString('hex'), uid: user.id, name: user.name || '', exp: Date.now() + SESSION_MS };
     return cookieString(req, COOKIE_NAME, seal(payload), SESSION_MS / 1000);
@@ -536,12 +542,17 @@ ${otherNetwork ? '<p class="warn">⚠️ 這組代碼是從另一個網路要求
     res.json(req.webUser);
   });
 
-  app.post('/web/logout', (req, res) => {
+  // 路徑與分帳相同（/auth/logout）；/web/logout 是舊路徑，留給還在用舊版頁面（Service Worker 快取）的裝置。
+  // 跨站請求不處理：不然別的網站放一個自動送出的表單就能把人登出
+  function logout(req, res) {
+    if (isCrossSite(req)) return res.status(403).json({ error: '不接受從其他網站發出的請求' });
     const p = readSession(req);
     if (p) revokeSession(p); // 讓這個 Cookie 就算被複製走也不能再用
     res.set('Set-Cookie', cookieString(req, COOKIE_NAME, '', 0));
     res.json({ ok: true });
-  });
+  }
+  app.post('/auth/logout', logout);
+  app.post('/web/logout', logout);
 
   // ── 代碼交接 ──
   app.post('/auth/handoff/start', (req, res) => {

@@ -12,7 +12,7 @@
 //   MUSIC_DIR          音樂庫掛載路徑，預設 <repo root>/data/music
 //   MUSIC_LIB_SECRET   保護 API 的共用金鑰，呼叫端要帶相同的值
 //   MAX_CACHE_SIZE_MB  cache/ 子資料夾的容量上限，預設 2048
-//   DISCORD_CLIENT_ID / DISCORD_CLIENT_SECRET / PUBLIC_BASE_URL / WEB_ADMIN_USERS
+//   DISCORD_CLIENT_ID / DISCORD_CLIENT_SECRET / PUBLIC_BASE_URL / OWNER_USER_ID
 //                      網頁播放器的 Discord 登入（前三個設定好才啟用網頁播放器，完整說明見 webplayer/webAuth.js）
 //   ALLOW_INSECURE_LIBRARY_API  設 1 才允許沒設 MUSIC_LIB_SECRET 時開放 /api/music/*（只限完全信任的內網）
 //   LOG_TIMESTAMPS     設 0 關閉 log 前面的時間（部署平台已經會加時間時）

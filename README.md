@@ -43,7 +43,7 @@ header（未設定 `MUSIC_LIB_SECRET` 時預設停用，見下方說明）。`fi
 
 #### Discord 登入
 
-1. [Discord Developer Portal](https://discord.com/developers/applications) 選一個應用程式（可以直接用 Bot 的應用程式），
+1. [Discord Developer Portal](https://discord.com/developers/applications) 選一個應用程式（可以直接用 Bot 的應用程式；跟分帳用同一個的話，在一邊授權過之後另一邊按登入就不會再出現同意畫面），
    **OAuth2 → Redirects** 加上 `<PUBLIC_BASE_URL>/auth/discord/callback`，複製 Client ID 與 Client Secret。
 2. 設定環境變數：
 
@@ -51,20 +51,20 @@ header（未設定 `MUSIC_LIB_SECRET` 時預設停用，見下方說明）。`fi
 |---|---|
 | `DISCORD_CLIENT_ID`／`DISCORD_CLIENT_SECRET` | 上一步複製的值 |
 | `PUBLIC_BASE_URL` | 網頁對外網址，例如 `https://music.example.com`（組 redirect_uri 用，要和 Discord 後台填的一致） |
-| `WEB_ADMIN_USERS` | 管理員的 Discord 使用者 ID，逗號分隔（見下方「權限」）。每次請求都重新檢查，移除＝立即失效 |
+| `OWNER_USER_ID` | 管理員（Bot 擁有者）的 Discord 使用者 ID，逗號分隔，與 Mousebot、分帳設成一樣（見下方「權限」）。每次請求都重新檢查，移除＝立即失效。舊名稱 `WEB_ADMIN_USERS` 仍然有效（合併進來，啟動時提醒改名） |
 | `WEB_BLOCKED_USERS` | （選用）不能登入的使用者 ID，已登入的也立即失效 |
 | `WEB_SESSION_HOURS` | 登入有效時數，預設 `720`（30 天） |
 
 - **任何 Discord 帳號都能登入**，不需要白名單。只要 `identify` 權限（只拿使用者 ID 與名稱，不讀伺服器清單、不讀 email）；
   Discord 的 access token 用完就丟，不保存。
-- 要找自己的 Discord ID（填 `WEB_ADMIN_USERS` 用）：Discord 設定 → 進階 → 開啟開發者模式，在自己的名字上按右鍵「複製使用者 ID」。
+- 要找自己的 Discord ID（填 `OWNER_USER_ID` 用）：Discord 設定 → 進階 → 開啟開發者模式，在自己的名字上按右鍵「複製使用者 ID」。
 - 以前的 `WEB_ALLOWED_USERS`／`WEB_ALLOWED_GUILD`／`WEB_ALLOWED_ROLES` 已經沒有作用（有設的話啟動時會在 log 提醒）。
 - 登出只登出播放器，不會登出 Discord：再按登入時 Discord 已授權過，會直接登入、不再顯示同意畫面。
   被封鎖之後再按登入會顯示 Discord 的同意畫面，可以在上面按「不是你？」換一個帳號。
 
 #### 權限
 
-| | 一般帳號 | 管理員（`WEB_ADMIN_USERS`） |
+| | 一般帳號 | 管理員（`OWNER_USER_ID`） |
 |---|---|---|
 | 聽音樂庫、線上搜尋與播放、離線下載 | ✅ | ✅ |
 | 播放清單（**每個帳號各自一份**，互相看不到） | ✅ | ✅ |
@@ -117,7 +117,7 @@ header（未設定 `MUSIC_LIB_SECRET` 時預設停用，見下方說明）。`fi
 | POST | `/auth/handoff/poll` | 代碼登入：瀏覽器那邊確認後回 `200` 並設定 Cookie，還在等回 `202` |
 | POST | `/auth/handoff/confirm` | 代碼登入：瀏覽器確認頁送出（確認或取消） |
 | POST | `/auth/handoff/cancel` | 代碼登入：App 按取消，代碼立刻作廢 |
-| POST | `/web/logout` | 清除 Cookie，並讓這個 Cookie 失效 |
+| POST | `/auth/logout` | 清除 Cookie，並讓這個 Cookie 失效（路徑與分帳相同；舊路徑 `/web/logout` 仍可用） |
 | GET | `/web/api/list` | 曲目清單（需登入） |
 | GET | `/web/stream/*` | 串流音檔，支援 Range（需登入） |
 | GET | `/upload?upload=1` | 受控的音檔上傳頁（管理員；未帶正確參數時不提供） |

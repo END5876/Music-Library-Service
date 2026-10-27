@@ -9,12 +9,12 @@
 //   完全不受影響。
 //
 // 預設關閉：只有 Discord 登入設定好才會掛載，避免服務一旦有公開網域
-// 就意外把整個音樂庫曝露出去。任何 Discord 帳號都能登入；標「管理員」的路由只限 WEB_ADMIN_USERS。
+// 就意外把整個音樂庫曝露出去。任何 Discord 帳號都能登入；標「管理員」的路由只限 OWNER_USER_ID。
 //
-// 環境變數：見 webAuth.js（DISCORD_CLIENT_ID / DISCORD_CLIENT_SECRET / PUBLIC_BASE_URL / WEB_ADMIN_USERS …）
+// 環境變數：見 webAuth.js（DISCORD_CLIENT_ID / DISCORD_CLIENT_SECRET / PUBLIC_BASE_URL / OWNER_USER_ID …）
 //
 // 這個檔案只負責組裝與曲目清單／靜態頁／音檔串流；其餘拆在同資料夾（各檔開頭有自己的路由說明，完整清單見 README）：
-//   webAuth.js         Discord 登入、管理員、Cookie、主畫面 App 的代碼交接（/auth/*、/web/api/me、POST /web/logout）
+//   webAuth.js         Discord 登入、管理員、Cookie、主畫面 App 的代碼交接（/auth/*、/web/api/me、POST /auth/logout）
 //   onlineRoutes.js    線上串流 API（/web/api/capabilities|search|info、/web/play）
 //   playlistRoutes.js  播放清單 API（/web/api/playlists/*，每個帳號各自一份）
 //   uploadRoutes.js    受控音檔上傳（/upload?upload=1、/web/api/upload?upload=1；管理員）
@@ -101,7 +101,7 @@ function mountWebPlayer(app, { store, libSecret, status, botHub }) {
   mountOnlineRoutes(app, { requireWebAuth });
 
   mountPlaylists(app, { requireWebAuth, online });
-  // 以下會影響所有人（共用音樂庫、Bot 所在的伺服器）或屬於內部資訊：只限管理員（WEB_ADMIN_USERS）
+  // 以下會影響所有人（共用音樂庫、Bot 所在的伺服器）或屬於內部資訊：只限管理員（OWNER_USER_ID）
   mountUploadRoutes(app, { store, requireWebAuth: requireWebAdmin, requireWebPage: requireAdminPage });
   mountLibraryManageRoutes(app, { store, requireWebAuth: requireWebAdmin });
   if (botHub) {
