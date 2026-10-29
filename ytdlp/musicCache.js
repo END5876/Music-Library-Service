@@ -84,6 +84,10 @@ async function findCachedById(url) {
   for (const f of await listAll()) {
     if (f.filename.includes('/')) continue;
     if (!f.filename.endsWith(suffix) && f.filename !== `${id}.mp3`) continue;
+    // 🐛 [分 P 播錯首] 不帶 ?p= 的網址是第 1 P，但合集各 P 的快取檔都以同一個 [BV…] 結尾
+    // （yt-dlp 會在標題後加「pNN 分P名」），只看 ID 會拿到最後快取的那一 P；
+    // 只要有分 P 的檔案就交給完整流程（取得標題後用完整檔名比對）
+    if (!isYouTubeUrl(url) && /(^|\s)p\d{2,}(\s|$)/.test(f.filename.slice(0, -suffix.length))) return null;
     if (!best || f.mtimeMs > best.mtimeMs) best = f;
   }
   return best ? path.join(CACHE_DIR, best.filename) : null;

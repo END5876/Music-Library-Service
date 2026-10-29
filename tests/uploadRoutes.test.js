@@ -71,6 +71,18 @@ test('曲名清理後為空：400', async () => {
   }
 });
 
+test('曲名裡的「.」和「/」不會截斷曲名，只去掉音檔副檔名（用同名檔案的 409 確認算出的檔名）', async () => {
+  const cases = [['Mr. Brightside', 'Mr. Brightside.mp3'], ['Vol. 2', 'Vol. 2.mp3'], ['AC/DC - Thunderstruck', 'AC DC - Thunderstruck.mp3'], ['song.flac', 'song.mp3']];
+  for (const [title, expected] of cases) {
+    const fp = require('path').join(MUSIC, expected);
+    fs.writeFileSync(fp, 'original');
+    try {
+      const r = await upload({ 'x-upload-filename': 'x.flac', 'x-upload-title': title });
+      assert.equal(r.status, 409, title);
+    } finally { fs.rmSync(fp, { force: true }); }
+  }
+});
+
 test('上傳欄位不是合法的 URL 編碼：400', async () => {
   const r = await fetch(base + '/web/api/upload?upload=1', { method: 'POST', body: 'x', headers: { 'x-upload-filename': '%E0%A4%A' } });
   assert.equal(r.status, 400);

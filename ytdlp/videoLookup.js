@@ -118,6 +118,12 @@ async function getInfoCached(url) {
   return p;
 }
 
+// 這個網址現在取資訊會不會真的跑 yt-dlp（有快取結果或同網址正在查詢就不會）；/web/play 用來決定要不要算進查詢次數
+function isInfoCached(url) {
+  const hit = infoCache.get(url);
+  return !!(hit && Date.now() - hit.ts < INFO_CACHE_TTL_MS) || infoInflight.has(url);
+}
+
 // ════════════════════════════════════════════════════════
 //  _searchOnePlatform — 搜尋單一平台（同 Bot）
 // ════════════════════════════════════════════════════════
@@ -239,4 +245,4 @@ async function searchMulti(keyword, limit = 5, fast = false, platforms = ['youtu
   }
 }
 
-module.exports = { getInfoCached, searchMulti };
+module.exports = { getInfoCached, isInfoCached, searchMulti };

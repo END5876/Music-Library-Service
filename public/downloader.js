@@ -75,12 +75,50 @@
         const type = r.headers.get('Content-Type') || 'audio/mpeg';
         const blob = await new Response(r.body.pipeThrough(counter), { headers: { 'Content-Type': type } }).blob();
         if (!got) throw new Error('下載到空檔案');
+        // 🐛 線上即時串流沒有 Content-Length,伺服器中途斷掉時仍會正常結束 response:比對實際長度與歌曲長度,短太多就當失敗(之後可重新下載)
+        if (it.kind !== 'lib' && !total) {
+          const want = parseDur(it.duration);
+          const have = want ? await blobDuration(blob) : 0;
+          if (have && have < want * 0.9 && want - have > 5) throw new Error('下載不完整(串流中斷)');
+        }
         const meta = { title: it.title || '', at: Date.now(), author: it.author || '', platform: it.platform || '', duration: it.duration || '' };
         await offlinePut({ key, blob, size: blob.size, ...meta });
         offlineKeys.add(key); offlineSizes.set(key, blob.size); offlineMeta.set(key, meta);
       } finally {
         dlState.delete(key);
       }
+    }
+
+    // 「3:45」「1:02:03」→ 秒數;「未知」或空白 → 0(不檢查)
+    function parseDur(s) {
+      const parts = String(s || '').split(':');
+      if (parts.some((p) => !/^\d+$/.test(p.trim()))) return 0;
+      return parts.reduce((acc, p) => acc * 60 + Number(p), 0);
+    }
+
+    // 讀出 Blob 實際可播放的秒數;讀不到(格式不支援、逾時)回 0,不擋下載
+    function blobDuration(blob) {
+      return new Promise((resolve) => {
+        const a = new Audio();
+        const u = URL.createObjectURL(blob);
+        const done = (d) => {
+          clearTimeout(timer);
+          a.onloadedmetadata = a.ondurationchange = a.onerror = null;
+          a.removeAttribute('src'); a.load();
+          URL.revokeObjectURL(u);
+          resolve(isFinite(d) && d > 0 ? d : 0);
+        };
+        const timer = setTimeout(() => done(0), 5000);
+        a.preload = 'metadata';
+        a.onloadedmetadata = () => {
+          if (isFinite(a.duration)) { done(a.duration); return; }
+          // 即時封裝的 WebM 檔頭沒有長度(Infinity):跳到極遠處讓瀏覽器掃到結尾,算出真正長度
+          a.ondurationchange = () => { if (isFinite(a.duration)) done(a.duration); };
+          a.currentTime = 1e101;
+        };
+        a.onerror = () => done(0);
+        a.src = u;
+      });
     }
 
     function finishBatch() {

@@ -106,7 +106,7 @@ async function playStream(ctx, retryCount = 0) {
 
     if (cachedPath) {
       console.log(`✅ [Cache] 快取命中，直接播放: ${path.basename(cachedPath)}`);
-      _playFromFile(ctx, cachedPath);
+      _playFromFile(ctx, cachedPath, retryCount);
       return;
     }
 
@@ -182,18 +182,21 @@ async function playStream(ctx, retryCount = 0) {
 }
 
 // 對應 Bot 的 _playFromFile：Bot 是 createAudioResource(filePath)，這裡是 res.sendFile（含 Range）
-function _playFromFile(ctx, filePath) {
+// 🐛 [416 無限重試] 以前送檔前就清掉錯誤計數、失敗時重試次數固定傳 0，同一個檔案每次都以同樣方式失敗
+// （例如 Range 超出檔案大小的 416）就每 3 秒重來一次永不結束，還一直佔著串流名額。
+// 現在送完才清計數、沿用真正的重試次數；412/416 是請求本身的問題，重試也一樣，直接回該狀態碼
+function _playFromFile(ctx, filePath, retryCount = 0) {
   const { res } = ctx;
   ctx.started = true;
   touchCache(filePath);
   res.sendFile(filePath, { dotfiles: 'allow', headers: { 'Cache-Control': 'private, no-cache' } }, (err) => {
-    if (!err) return;
+    if (!err) { resetErrorCount(ctx.item.url); return; }
     if (res.headersSent) return; // 瀏覽器中途取消（ECONNABORTED）等，不需處理
+    if (err.status === 412 || err.status === 416) { res.status(err.status).end(); return; }
     console.error('❌ [OnlineMusic] 本地播放失敗:', err);
     ctx.started = false;
-    _handleStreamError(ctx, 0, err.message);
+    _handleStreamError(ctx, retryCount, err.message);
   });
-  resetErrorCount(ctx.item.url);
   console.log(`🎵 [OnlineMusic] 本地播放: ${path.basename(filePath)}`);
 }
 

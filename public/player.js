@@ -824,7 +824,12 @@
       if (queue.length) { playEntry(queue.shift()); return; }
       playlistCtx = null;
     }
-    if (onlineCurrent) { onlineCurrent = null; markPlaying(); renderNext(); setStatus('佇列播放完畢'); return; }
+    if (onlineCurrent) {
+      // 🐛 只有真的播完(從 onEnded 來)才清掉;使用者按「下一首」時歌還在播,清掉會讓播放鍵和播完後的 advance 改播音樂庫
+      if (audio.ended) { onlineCurrent = null; markPlaying(); renderNext(); setStatus('佇列播放完畢'); }
+      else setStatus('佇列裡沒有下一首了');
+      return;
+    }
     if (shuffle) {
       if (!view.length) return;
       if (repeat === 'off' && currentFile) { setStatus('隨機清單播放完畢'); return; }
@@ -1115,7 +1120,7 @@
   function toggleShuffle() {
     shuffle = !shuffle;
     if (playlistCtx) refillFromCtx(); else if (shuffle) buildShuffle();                       // 點下去的當下就排好
-    else queue = queue.filter(e => e.kind === 'online'); // 關閉:回到依清單順序,保留手動加入的線上歌曲
+    else queue = queue.filter(e => e.user || e.kind === 'online'); // 關閉:回到依清單順序,保留手動加入的歌曲(含音樂庫)與線上歌曲
     syncButtons(); savePrefs();
     setStatus(shuffle ? '隨機播放:開(已排好佇列,可在「佇列」拖曳調整)' : '隨機播放:關');
   }

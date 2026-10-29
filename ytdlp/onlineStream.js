@@ -37,7 +37,7 @@ const antiBot    = require('./musicAntiBot');
 const potProvider = require('./potProvider');
 const logger     = require('../logger');
 const { cleanUrl, isAllowedUrl } = require('./urlUtils');
-const { getInfoCached, searchMulti } = require('./videoLookup');
+const { getInfoCached, isInfoCached, searchMulti } = require('./videoLookup');
 const { playStream, cleanupProcess, getStats: getStreamStats, WEB_KEY } = require('./streamPlayer');
 const { touchCache } = require('../musicStore');
 const { killTree } = require('./procTree');
@@ -50,6 +50,7 @@ const MAX_WEB_STREAMS       = parseInt(process.env.WEB_MAX_STREAMS || '4', 10); 
 
 // ── 狀態 ──────────────────────────────────────────────────
 const activeCtxs = new Set();       // 目前連線中的串流請求
+const pendingInfo = new Map();      // userKey → 還在 getInfo、尚未建立 ctx 的請求數
 
 let available = false;
 let initPromise = null;
@@ -117,7 +118,8 @@ function getStats() {
 // ════════════════════════════════════════════════════════
 // opts.cache：是否背景下載快取（快取就存在共用音樂庫根目錄，見 musicStore.js；網頁一般帳號為 false，只串流）
 // opts.userKey / opts.maxPerUser：同一個使用者同時串流數上限（null＝不限，例如管理員）
-async function handlePlayRequest(req, res, rawUrl, { cache: allowCache = true, userKey = null, maxPerUser = 0 } = {}) {
+// opts.chargeQuery：真的要跑 getInfo（yt-dlp）前呼叫，回傳 0＝可以，>0＝超過每分鐘查詢次數、要等幾秒（null＝不限）
+async function handlePlayRequest(req, res, rawUrl, { cache: allowCache = true, userKey = null, maxPerUser = 0, chargeQuery = null } = {}) {
   if (!available) return res.status(503).json({ error: '伺服器未安裝 yt-dlp / ffmpeg，無法線上串流' });
 
   const url = cleanUrl(String(rawUrl || ''));
@@ -130,9 +132,11 @@ async function handlePlayRequest(req, res, rawUrl, { cache: allowCache = true, u
   if (cachedPath && await sendCachedFile(res, cachedPath)) return;
 
   // 每個使用者的同時串流數：一個人不能把全站名額（MAX_WEB_STREAMS）佔光
+  // 🔒 [繞過查詢限制] 還在 getInfo 的請求也要算：ctx 要等 getInfo 完才建立，以前一直送不同網址的 /web/play
+  // 就能不受限地開 yt-dlp，佔滿全站共用的查詢名額（MAX_WEB_QUERIES），其他人搜尋／播放全部「伺服器忙碌中」
   const userBusy = () => {
     if (!userKey || !maxPerUser) return false;
-    let n = 0;
+    let n = pendingInfo.get(userKey) || 0;
     for (const c of activeCtxs) if (c.userKey === userKey) n += 1;
     return n >= maxPerUser;
   };
@@ -143,11 +147,26 @@ async function handlePlayRequest(req, res, rawUrl, { cache: allowCache = true, u
   };
   if (tooMany()) return res.status(503).json({ error: tooMany() });
 
+  // 會真的跑 yt-dlp 時，一般帳號跟搜尋／影片資訊共用每分鐘次數（快取命中、拖曳進度的重複請求不算）
+  if (chargeQuery && !isInfoCached(url)) {
+    const wait = chargeQuery();
+    if (wait) {
+      res.set('Retry-After', String(wait));
+      return res.status(429).json({ error: '查詢太頻繁，請稍後再試' });
+    }
+  }
+
   let item;
+  if (userKey) pendingInfo.set(userKey, (pendingInfo.get(userKey) || 0) + 1);
   try {
     item = await getInfoCached(url);
   } catch (err) {
     return res.status(502).json({ error: `無法獲取影片資訊：${err.message}` });
+  } finally {
+    if (userKey) {
+      const n = (pendingInfo.get(userKey) || 1) - 1;
+      if (n > 0) pendingInfo.set(userKey, n); else pendingInfo.delete(userKey);
+    }
   }
   if (res.destroyed || req.aborted) return;
   // 等待 getInfo 期間其他請求可能已佔滿名額，這裡再確認一次
@@ -177,6 +196,8 @@ function sendCachedFile(res, filePath) {
   touchCache(filePath);
   return new Promise((resolve) => {
     res.sendFile(filePath, { dotfiles: 'allow', headers: { 'Cache-Control': 'private, no-cache' } }, (err) => {
+      // 412/416（Range 超出檔案大小等）是請求本身的問題：直接回該狀態碼，不要改走完整流程（佔串流名額又會一直重試）
+      if (err && !res.headersSent && (err.status === 412 || err.status === 416)) { res.status(err.status).end(); return resolve(true); }
       resolve(!err || res.headersSent);
     });
   });

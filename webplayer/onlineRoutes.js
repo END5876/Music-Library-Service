@@ -13,7 +13,8 @@
 // 任何 Discord 帳號都能登入，所以一般帳號（非管理員、非內部金鑰）另外受限：
 //   - 背景下載快取只替管理員做：快取存在共用音樂庫根目錄、會擠掉別人的快取歌曲；一般帳號只串流（快取命中照樣播檔案）
 //   - 同時線上串流 WEB_MAX_STREAMS_PER_USER（預設 2，播放器會預載下一首），不能一個人佔光全站名額
-//   - 搜尋／取得影片資訊每分鐘 WEB_QUERIES_PER_MINUTE 次（預設 30；每次搜尋會跑 2 個 yt-dlp）
+//   - 搜尋／取得影片資訊每分鐘 WEB_QUERIES_PER_MINUTE 次（預設 30；每次搜尋會跑 2 個 yt-dlp）；
+//     /web/play 需要先跑 getInfo 時也算一次，還在 getInfo 的播放請求也算進同時串流數
 
 const online = require('../ytdlp/onlineStream');
 
@@ -32,13 +33,18 @@ function mountOnlineRoutes(app, { requireWebAuth }) {
     const now = Date.now();
     for (const [k, q] of queries) if (q.resetAt <= now) queries.delete(k);
   }, 60 * 1000).unref();
-  function queryLimit(req, res, next) {
-    if (!limited(req)) return next();
+  // 記一次查詢；回傳 0＝還有額度，>0＝超過、要等的秒數（/web/play 真的要跑 getInfo 時也算一次）
+  function takeQuery(req) {
     const now = Date.now();
     let q = queries.get(req.webUser.id);
     if (!q || q.resetAt <= now) { q = { count: 0, resetAt: now + 60 * 1000 }; queries.set(req.webUser.id, q); }
-    if (++q.count > QUERIES_PER_MINUTE) {
-      res.set('Retry-After', String(Math.ceil((q.resetAt - now) / 1000)));
+    return ++q.count > QUERIES_PER_MINUTE ? Math.ceil((q.resetAt - now) / 1000) : 0;
+  }
+  function queryLimit(req, res, next) {
+    if (!limited(req)) return next();
+    const wait = takeQuery(req);
+    if (wait) {
+      res.set('Retry-After', String(wait));
       return res.status(429).json({ error: '搜尋太頻繁，請稍後再試' });
     }
     next();
@@ -80,7 +86,7 @@ function mountOnlineRoutes(app, { requireWebAuth }) {
 
   app.get('/web/play', requireWebAuth, requireOnline, (req, res) => {
     const opts = limited(req)
-      ? { cache: false, userKey: req.webUser.id, maxPerUser: MAX_STREAMS_PER_USER }
+      ? { cache: false, userKey: req.webUser.id, maxPerUser: MAX_STREAMS_PER_USER, chargeQuery: () => takeQuery(req) }
       : { cache: true };
     online.handlePlayRequest(req, res, req.query.url, opts).catch((err) => {
       console.error('❌ [OnlineMusic] /web/play 失敗:', err);

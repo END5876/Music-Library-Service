@@ -57,6 +57,16 @@ test('findCachedById：只用影片 ID 找根目錄的快取檔，不需要標�
   assert.equal(await findCachedById('https://example.com/x'), null);
 });
 
+test('findCachedById：合集已快取其他 P 時，不帶 ?p= 的網址（第 1 P）不會拿到別 P 的檔案', async () => {
+  const { touch } = require('./helpers');
+  const { findCachedById } = require('../ytdlp/musicCache');
+  const { invalidateList } = require('../musicStore');
+
+  touch(MUSIC, '合集 p03 第三首 [BV1zz411c7mD].mp3');
+  invalidateList();
+  assert.equal(await findCachedById('https://www.bilibili.com/video/BV1zz411c7mD'), null, '交給完整流程用標題比對');
+});
+
 test('getCacheFilename：YouTube 影片 ID 裡剛好有 av1 / BV 時不會被當成 Bilibili（不同影片不會撞到同一個快取檔）', () => {
   assert.equal(getCacheFilename('https://www.youtube.com/watch?v=Xav1bcdefgh', 'T'), 'T [yt_Xav1bcdefgh].mp3');
   assert.equal(getCacheFilename('https://www.youtube.com/watch?v=Qav1zzzzzzz', 'T'), 'T [yt_Qav1zzzzzzz].mp3');

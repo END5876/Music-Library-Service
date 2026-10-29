@@ -20,9 +20,12 @@ function decodeUploadHeader(value) {
   try { return decodeURIComponent(String(value || '')); } catch { throw new Error('上傳欄位編碼不合法'); }
 }
 
+// 🐛 [曲名被截斷] 這裡處理的是管理員輸入的曲名，不是路徑：以前先 path.basename 再刪掉最後一個「.」之後的字，
+// 「Mr. Brightside」變成「Mr」、「AC/DC - X」變成「DC - X」。現在 / 和 \ 跟其他保留字元一樣換成空白，
+// 只去掉已知的音檔副檔名（曲名沒填、改用原始檔名時才會有）
 function sanitizeFilename(value) {
-  const base = path.basename(decodeUploadHeader(value)).replace(/[\u0000-\u001f<>:"/\\|?*]/g, ' ').trim();
-  const stem = base.replace(/\.[^.]+$/, '').replace(/\s+/g, ' ').trim();
+  const base = decodeUploadHeader(value).replace(/[\u0000-\u001f<>:"/\\|?*]/g, ' ').trim();
+  const stem = (audioExtension(base) ? base.slice(0, -path.extname(base).length) : base).replace(/\s+/g, ' ').trim();
   if (!stem) throw new Error('請提供有效的檔案名稱');
   return stem.slice(0, 180);
 }
