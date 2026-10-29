@@ -13,6 +13,7 @@ const fs   = require('fs');
 const path = require('path');
 const logger = require('../logger');
 const potProvider = require('./potProvider');
+const { parseUrl, hostIs } = require('./urlUtils');
 
 // yt-dlp 執行檔（所有呼叫 yt-dlp 的模組共用這個常數）
 const YTDLP_PATH = 'yt-dlp';
@@ -113,8 +114,11 @@ const ytClientIndex = new Map();
 let YT_COOKIES_FILE   = null;
 let YT_COOKIE_HEADER  = null;
 
+// 🔒 依網址的網域判斷：以前在整個網址裡找字串，https://www.bilibili.com/bangumi/play/ep1#youtube.com
+// 會被當成 YouTube，帶著 YouTube 的 Cookie（header 模式）和 WARP proxy 去請求 Bilibili
 function isYouTubeUrl(url) {
-  return /youtube\.com|youtu\.be/.test(url);
+  const u = parseUrl(url);
+  return !!u && (hostIs(u.hostname, 'youtube.com') || hostIs(u.hostname, 'youtu.be'));
 }
 
 // Bilibili 只讀 .env 的 BILIBILI_*，不使用 cookies.txt（cookies.txt 只給 YouTube 用）

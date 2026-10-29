@@ -65,7 +65,8 @@
 
     async function command(botId, guildId, action, args = {}) {
       const k = botId + '|' + guildId;
-      if (busy.has(k)) return null;
+      // 不要無聲丟掉:讓使用者知道這次沒送出
+      if (busy.has(k)) { setStatus('這個伺服器上一個指令還在處理中,請稍候再試'); return null; }
       busy.add(k);
       if (visible) render();
       try {
@@ -272,10 +273,13 @@
       const ul = $('botPickList');
       ul.textContent = '';
       for (const { bot, g } of ts) {
+        const pending = busy.has(bot.id + '|' + g.guildId);
         ul.append(makeRow({
           title: g.guildName + (g.voiceChannel ? ' · 🔊 ' + g.voiceChannel : ''),
-          sub: botLabel(bot) + ' · ' + (g.current ? '正在播:' + itemTitle(g.current) : '待命中'),
+          sub: botLabel(bot) + ' · ' + (pending ? '上一個指令處理中…' : g.current ? '正在播:' + itemTitle(g.current) : '待命中'),
           onClick: async () => {
+            // 上一首還在送(Bot 可能正在跑 yt-dlp):先別關選單、也別蓋上「處理中」提示,讓使用者稍後再點
+            if (busy.has(bot.id + '|' + g.guildId)) return setStatus('這個伺服器上一個指令還在處理中,請稍候再試');
             const its = pickItems, done = pickDone, next = $('botPickNext').checked;
             closePick();
             setStatus(its.length > 1 ? `已送出 ${its.length} 首給 Bot,處理中…` : '已送給 Bot,處理中…', true);

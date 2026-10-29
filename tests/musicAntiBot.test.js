@@ -41,3 +41,10 @@ test('錯誤分類只認真正的 HTTP 狀態碼：影片 ID／BV 號裡的數�
   assert.equal(bili.msg, '未知錯誤: ERROR: [BiliBili] BV1412xx403: something broke');
   assert.equal(antiBot.classifyBilibiliError('ERROR: Unsupported URL: https://example.com').msg, '不支援的網址');
 });
+
+test('isYouTubeUrl 依網域判斷：路徑或 # 後面含 youtube.com 的 Bilibili 網址不算 YouTube', () => {
+  for (const u of [YT, 'https://youtu.be/dQw4w9WgXcQ', 'https://music.youtube.com/watch?v=dQw4w9WgXcQ']) assert.equal(antiBot.isYouTubeUrl(u), true, u);
+  for (const u of [BILI, 'https://www.bilibili.com/bangumi/play/ep123#youtube.com', 'https://www.bilibili.com/youtube.com/x', 'https://notyoutube.com/', '']) {
+    assert.equal(antiBot.isYouTubeUrl(u), false, u);
+  }
+});

@@ -2,11 +2,12 @@
 // 移植自 Mousebot handlers/musicplayer/musicCache.js
 // 職責：快取資料夾管理、檔名產生、快取讀寫、大小控制、下載執行
 //
-// 與 Bot 版本的差異（僅此兩點）：
+// 與 Bot 版本的差異：
 //   1. 這個服務「本身就是」共用音樂庫，所以快取直接放在 MUSIC_DIR 根目錄第一層（見 musicStore.CACHE_DIR），
 //      不需要（也沒有）musicLibraryClient 的「向共用音樂庫查詢／上傳」——
 //      下載完成的檔案就已經在共用音樂庫裡了，其他 Bot 下次 checkExists 就會命中。
 //   2. 檔名格式 getCacheFilename() 與 Bot 完全相同，因此 Bot 與網頁彼此的快取會互相命中。
+//   3. downloadAndCache 在發布（改名成快取檔名）之前先做響度正規化，見函式內的說明。
 
 const { spawnTree, killTree } = require('./procTree');
 const fs   = require('fs');
@@ -15,6 +16,7 @@ const logger = require('../logger');
 const { isYouTubeUrl, YTDLP_PATH } = require('./musicAntiBot');
 const { parseUrl, youtubeVideoId, bilibiliVideoId } = require('./urlUtils');
 const { CACHE_DIR, MAX_CACHE_SIZE_MB, evictCacheIfNeeded, invalidateList, listAll } = require('../musicStore');
+const normalizer = require('./musicNormalizer');
 
 // 單一下載的最長時間；yt-dlp 卡死時強制終止，否則下載鎖（downloadingUrls）永遠不會釋放
 const DOWNLOAD_TIMEOUT_MS = 15 * 60 * 1000;
@@ -50,7 +52,9 @@ function getCacheFilename(url, title) {
     .replace(/[\\/:*?"<>|]/g, '')
     .replace(/\s+/g, ' ')
     .trim()
-    .slice(0, 80);
+    .slice(0, 80)
+    // 🐛 [截斷 emoji] 與 Bot 端 getCacheFilename 相同：切在 emoji 中間時去掉半個代理字元，兩邊檔名才會一致
+    .replace(/[\uD800-\uDBFF]$/, '');
 
   const idSuffix = getCacheId(url)
     || Buffer.from(url).toString('base64').replace(/[^A-Za-z0-9]/g, '').slice(0, 12);
@@ -153,16 +157,26 @@ function downloadAndCache(url, title, ytdlpArgs, onProgress) {
         return;
       }
 
-      try {
-        fs.renameSync(actualTmp, filePath);
-        invalidateList();
-        evictCacheIfNeeded(); // 新檔加入後再檢查一次容量（下載前的檢查看不到這一首）
-        const sizeMB = (fs.statSync(filePath).size / 1024 / 1024).toFixed(2);
-        console.log(`✅ [${platform}] 下載完成: ${filename} (${sizeMB} MB)`);
-        resolve(filePath);
-      } catch (err) {
-        reject(new Error('重新命名快取檔失敗: ' + err.message));
-      }
+      // 🐛 先在暫存檔上做響度正規化，再改名成快取檔名發布：以前是發布後才正規化、原地換掉檔案，
+      // 已經開始播這個檔的瀏覽器接下來的 Range 請求會用舊檔的位移讀新檔（雜音或 416）。
+      // 正規化失敗就照原檔發布（原檔仍可正常播放）
+      normalizer.normalizeAudioFile(actualTmp)
+        .then(
+          () => console.log(`🎚️ [Normalizer] 響度正規化完成: ${filename}`),
+          (err) => console.warn(`⚠️ [Normalizer] 正規化失敗（略過，原檔仍可正常播放）: ${err.message}`),
+        )
+        .then(() => {
+          try {
+            fs.renameSync(actualTmp, filePath);
+            invalidateList();
+            evictCacheIfNeeded(); // 新檔加入後再檢查一次容量（下載前的檢查看不到這一首）
+            const sizeMB = (fs.statSync(filePath).size / 1024 / 1024).toFixed(2);
+            console.log(`✅ [${platform}] 下載完成: ${filename} (${sizeMB} MB)`);
+            resolve(filePath);
+          } catch (err) {
+            reject(new Error('重新命名快取檔失敗: ' + err.message));
+          }
+        });
     });
   });
 }

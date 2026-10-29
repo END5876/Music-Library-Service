@@ -12,8 +12,11 @@
   function createDownloader({ offlineKeys, offlineSizes, offlineMeta, dlState, itemKey, streamUrl, enc, offlinePut, setStatus, showLogin, refreshDl }) {
     // ── 下載(最多同時 2 個,可整批取消)──────────────────
     const DL_CONCURRENCY = 2;
+    // 線上歌曲走 /web/play,和正在播的線上歌曲共用每人串流上限(預設 2):一次只下載一首線上歌曲,音樂庫的不受限
+    const DL_ONLINE_CONCURRENCY = 1;
+    const DL_BUSY_RETRIES = 3;
     const dlQueue = [];
-    let dlActive = 0, dlAbort = null, dlFailMsg = '';
+    let dlActive = 0, dlOnline = 0, dlAbort = null, dlFailMsg = '';
     let dlBatch = { total: 0, done: 0, failed: 0 };
     const dlBusy = () => dlActive > 0 || dlQueue.length > 0;
 
@@ -31,8 +34,13 @@
 
     function pumpDownloads() {
       while (dlAbort && dlActive < DL_CONCURRENCY && dlQueue.length) {
-        const it = dlQueue.shift();
+        // 線上名額已滿:先挑後面的音樂庫歌曲,沒有就等線上那首下載完
+        const i = dlOnline < DL_ONLINE_CONCURRENCY ? 0 : dlQueue.findIndex((x) => x.kind === 'lib');
+        if (i < 0) break;
+        const [it] = dlQueue.splice(i, 1);
+        const online = it.kind !== 'lib';
         dlActive++;
+        if (online) dlOnline++;
         downloadOne(it, dlAbort.signal)
           .then(() => { dlBatch.done++; })
           .catch((err) => {
@@ -44,6 +52,7 @@
           })
           .finally(() => {
             dlActive--;
+            if (online) dlOnline--;
             if (!dlBusy()) finishBatch(); else pumpDownloads();
             refreshDl();
           });
@@ -56,7 +65,15 @@
       if (st) st.active = true;
       try {
         const url = it.kind === 'lib' ? streamUrl(it.filename) : '/web/play?url=' + enc(it.srcUrl || it.url);
-        const r = await fetch(url, { signal });
+        let r;
+        for (let attempt = 0; ; attempt++) {
+          r = await fetch(url, { signal });
+          // 線上串流數已滿(例如正在播線上歌曲)是暫時的:稍等再試,不要直接算失敗(沒裝 yt-dlp 的 503 不重試)
+          if (r.status !== 503 || it.kind === 'lib' || attempt >= DL_BUSY_RETRIES) break;
+          const j = await r.json().catch(() => ({}));
+          if (/未安裝/.test(j.error || '')) throw new Error(j.error);
+          await wait(5000 * (attempt + 1), signal);
+        }
         if (r.status === 401) { showLogin('登入已過期,請重新登入'); throw new Error('登入已過期'); }
         if (!r.ok) { const j = await r.json().catch(() => ({})); throw new Error(j.error || 'HTTP ' + r.status); }
         const total = Number(r.headers.get('Content-Length')) || 0;
@@ -87,6 +104,15 @@
       } finally {
         dlState.delete(key);
       }
+    }
+
+    // 可被取消的等待:取消下載時立刻以 AbortError 結束(不算失敗)
+    function wait(ms, signal) {
+      return new Promise((resolve, reject) => {
+        const abort = () => { clearTimeout(t); reject(new DOMException('Aborted', 'AbortError')); };
+        const t = setTimeout(() => { signal.removeEventListener('abort', abort); resolve(); }, ms);
+        if (signal.aborted) abort(); else signal.addEventListener('abort', abort, { once: true });
+      });
     }
 
     // 「3:45」「1:02:03」→ 秒數;「未知」或空白 → 0(不檢查)

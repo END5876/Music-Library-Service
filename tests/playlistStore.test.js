@@ -158,3 +158,18 @@ test('上限：每個帳號最多 100 個播放清單（別的帳號不受影響
   const b = await pl.create(B, 'B 還可以建', [], deps);
   pl.remove(B, b.id);
 });
+
+test('存檔失敗時不留在記憶體：回錯誤後清單維持原樣，重試不會重複新增', async () => {
+  const before = pl.list(B).length;
+  const tmp = `${pl.FILE}.${process.pid}.tmp`;
+  fs.mkdirSync(tmp); // 暫存檔路徑被資料夾佔住 → 寫入失敗
+  try {
+    await assert.rejects(pl.create(B, '寫不進去', [], deps));
+    assert.equal(pl.list(B).length, before, '失敗的改動不會留在記憶體');
+  } finally {
+    fs.rmSync(tmp, { recursive: true, force: true });
+  }
+  const p = await pl.create(B, '寫得進去', [], deps);
+  assert.deepEqual(pl.list(B).map((x) => x.name).filter((n) => n.startsWith('寫')), ['寫得進去']);
+  pl.remove(B, p.id);
+});

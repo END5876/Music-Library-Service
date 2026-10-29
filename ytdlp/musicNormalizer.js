@@ -1,5 +1,5 @@
 // ytdlp/musicNormalizer.js
-// 移植自 Mousebot handlers/musicplayer/musicNormalizer.js（邏輯與參數完全相同）
+// 移植自 Mousebot handlers/musicplayer/musicNormalizer.js（響度參數相同；快取檔的編碼參數改成明確指定，見 CACHE_ENCODE）
 // 職責：對已下載的音檔進行響度正規化 (Loudness Normalization)
 // 原理：使用 ffmpeg 內建 loudnorm 濾鏡，雙通道 (two-pass) 分析 + 套用
 // 參數對齊指令：ffmpeg-normalize "$f" -o "output/$f" -nt ebu -t -16 -lrt 20
@@ -17,6 +17,9 @@ const TARGET_TP   = -2.0;  // 未指定 -tp 時，ffmpeg-normalize 於 ebu 模�
 // 上傳用：只取第一條音軌（忽略封面圖等視訊串流），輸出 LAME VBR -q:a 2
 const MP3_SELECT = ['-map', '0:a:0', '-vn'];
 const MP3_ENCODE = ['-c:a', 'libmp3lame', '-q:a', '2'];
+// 🐛 背景下載的快取檔：跟下載時 yt-dlp 的 --audio-quality 0 一樣用 VBR -q:a 0。
+// 以前沒指定編碼參數，ffmpeg 用 LAME 預設的 128 kbps CBR，正規化一次音質就永久掉一半
+const CACHE_ENCODE = ['-c:a', 'libmp3lame', '-q:a', '0'];
 
 // 所有 ffmpeg 響度工作（背景下載的正規化、網頁上傳）共用同一個並行上限
 // 記憶體小的機器可設 WEB_MAX_NORMALIZE=1：只是快取檔晚一點完成正規化，不影響播放
@@ -46,6 +49,8 @@ function _enqueue(task) {
 /**
  * 成功：覆蓋原檔案，resolve(filePath)
  * 失敗：保留原檔案不動，reject(err)（呼叫端應 catch 但不中斷主流程）
+ * ⚠️ 會原地換掉檔案：只能用在還沒發布的暫存檔（見 musicCache.downloadAndCache），
+ *    已在庫內的檔案可能正在被播放，換掉後瀏覽器接下來的 Range 請求會用舊檔的位移讀新檔
  */
 function normalizeAudioFile(filePath) {
   return _enqueue(() => _normalizeOne(filePath));
@@ -76,7 +81,7 @@ function _normalizeOne(filePath) {
     const tmpPath = path.join(dir, `${base}.norm_${Date.now()}.tmp${ext}`);
 
     _analyzeLoudness(filePath)
-      .then((measured) => _applyLoudnorm(filePath, tmpPath, measured))
+      .then((measured) => _applyLoudnorm(filePath, tmpPath, measured, [...MP3_SELECT, ...CACHE_ENCODE]))
       .then(() => {
         fs.renameSync(tmpPath, filePath);
         invalidateList(); // 檔案大小改變了

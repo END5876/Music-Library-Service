@@ -147,9 +147,11 @@ async function statBatched(paths, batchSize = 64) {
 // ════════════════════════════════════════════════════════
 let listCache = null;     // { at, files }
 let listInflight = null;  // 同時多個請求共用同一次掃描
+let listGen = 0;          // invalidateList 的次數：掃描期間有異動時，那次的結果不寫進快取
 
 // 檔案有異動（上傳／下載完成／正規化／清理）時呼叫，讓下一次 listAll 重新掃描
-function invalidateList() { listCache = null; }
+// 🐛 也放掉進行中的掃描：以前之後的請求會加入異動前就開始的掃描，拿到（並快取 3 秒）刪除／移動前的清單
+function invalidateList() { listCache = null; listInflight = null; listGen += 1; }
 
 async function scanLibrary() {
   ensureDirs();
@@ -178,9 +180,11 @@ async function scanLibrary() {
 async function listAll() {
   if (listCache && Date.now() - listCache.at < LIST_TTL_MS) return listCache.files;
   if (!listInflight) {
-    listInflight = scanLibrary()
-      .then((files) => { listCache = { at: Date.now(), files }; return files; })
-      .finally(() => { listInflight = null; });
+    const gen = listGen;
+    const p = scanLibrary()
+      .then((files) => { if (gen === listGen) listCache = { at: Date.now(), files }; return files; })
+      .finally(() => { if (listInflight === p) listInflight = null; });
+    listInflight = p;
   }
   return listInflight;
 }

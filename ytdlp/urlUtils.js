@@ -96,4 +96,4 @@ function isAllowedUrl(rawUrl) {
   return ALLOWED_HOSTS.some(h => hostIs(u.hostname, h));
 }
 
-module.exports = { cleanUrl, isAllowedUrl, youtubeVideoId, bilibiliVideoId, parseUrl };
+module.exports = { cleanUrl, isAllowedUrl, youtubeVideoId, bilibiliVideoId, parseUrl, hostIs };

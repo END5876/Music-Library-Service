@@ -18,7 +18,6 @@ const { spawnTree, isAlive, killTree } = require('./procTree');
 
 const cache      = require('./musicCache');
 const antiBot    = require('./musicAntiBot');
-const normalizer = require('./musicNormalizer');
 const potProvider = require('./potProvider');
 const { touchCache } = require('../musicStore');
 
@@ -40,7 +39,9 @@ const WEB_KEY = 'web'; // 取代 Bot 的 guildId：YouTube client 輪換（被�
 // 否則某個人播到壞掉的影片，會把其他人正常的串流也算進「連續錯誤」。
 const errorCounts = new Map();      // url -> 連續錯誤次數
 const ERROR_COUNTS_MAX = 500;
-const downloadingUrls = new Set();  // 下載鎖（防止同一 URL 同時下載兩次）
+// 🐛 以快取檔名為 key：以前用網址，watch?v=X 和 watch?v=X&t=90（或 BV 號與 ?p=1）算成不同的下載，
+// 卻寫進同一個暫存檔／快取檔，兩個 yt-dlp 同時寫會產生截斷或交錯的快取檔
+const downloadingUrls = new Set();  // 下載鎖（防止同一首歌同時下載兩次），存的是快取檔名
 
 // 最近一小時的串流失敗紀錄（狀態頁用；連續失敗通常代表 yt-dlp 需要更新或 IP 被擋）
 const FAILURE_WINDOW_MS = 60 * 60 * 1000;
@@ -126,12 +127,13 @@ async function playStream(ctx, retryCount = 0) {
     _fallbackStream(ctx, retryCount);
 
     if (!skipCache) {
-      if (downloadingUrls.has(item.url)) {
+      const dlKey = cache.getCacheFilename(item.url, item.title);
+      if (downloadingUrls.has(dlKey)) {
         console.log(`⏳ 此 URL 已經在背景下載中，跳過重複下載任務。`);
       } else if (downloadingUrls.size >= MAX_BG_DOWNLOADS) {
         console.log(`⏭️ [${platform}] 背景下載已達上限 (${MAX_BG_DOWNLOADS})，這首只串流，不下載快取`);
       } else {
-        downloadingUrls.add(item.url);
+        downloadingUrls.add(dlKey);
 
         console.log(`⬇️ [${platform}] 背景開始下載快取...`);
 
@@ -153,23 +155,15 @@ async function playStream(ctx, retryCount = 0) {
           },
         )
         .then((filePath) => {
-          console.log(`✅ [Cache] 背景下載完成，已儲存至: ${path.basename(filePath)}`);
-
-          // 下載完成後，背景自動進行響度正規化（不阻塞任何播放邏輯）
+          // 響度正規化已在 downloadAndCache 發布前做完（不能在發布後原地換掉可能正在播的檔案）
           // ※ Bot 版在正規化後會 pushToSharedLibrary；這個服務本身就是共用音樂庫，檔案已在庫內。
-          normalizer.normalizeAudioFile(filePath)
-            .then(() => {
-              console.log(`🎚️ [Normalizer] 響度正規化完成: ${path.basename(filePath)}`);
-            })
-            .catch((err) => {
-              console.warn(`⚠️ [Normalizer] 正規化失敗（略過，原檔仍可正常播放）: ${err.message}`);
-            });
+          console.log(`✅ [Cache] 背景下載完成，已儲存至: ${path.basename(filePath)}`);
         })
         .catch((err) => {
           console.error(`⚠️ [Cache] 背景下載失敗: ${err.message}`);
         })
         .finally(() => {
-          downloadingUrls.delete(item.url);
+          downloadingUrls.delete(dlKey);
         });
 
       }

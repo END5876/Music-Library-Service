@@ -98,11 +98,21 @@ function ownerLists(owner, { create = false } = {}) {
   return d.owners[owner];
 }
 
+// 🐛 存檔失敗時丟掉記憶體裡已改動的資料，下一個請求從檔案（＝上一次成功存檔的內容）重新讀取：
+// 以前回了錯誤、改動卻還留在記憶體（之後的 GET 看得到、重試會重複新增，下一次別人存檔時才一起寫進去）
 function save() {
-  fs.mkdirSync(path.dirname(FILE), { recursive: true });
   const tmp = `${FILE}.${process.pid}.tmp`;
-  fs.writeFileSync(tmp, JSON.stringify(data));
-  fs.renameSync(tmp, FILE);
+  try {
+    fs.mkdirSync(path.dirname(FILE), { recursive: true });
+    fs.writeFileSync(tmp, JSON.stringify(data));
+    fs.renameSync(tmp, FILE);
+  } catch (err) {
+    try { fs.unlinkSync(tmp); } catch {}
+    data = null;
+    console.error('❌ [Playlists] 存檔失敗:', err.message);
+    if (err.code === 'ENOSPC') throw new HttpError(507, '儲存空間已滿，播放清單無法儲存，請聯絡管理員');
+    throw err;
+  }
 }
 
 const newId = () => crypto.randomBytes(6).toString('hex');

@@ -1066,7 +1066,9 @@
     }
     errorRetryKey = '';
     errorStreak += 1;
-    if (errorStreak < Math.min(view.length, 5)) { setStatus('這首無法播放,已略過'); later(advance); }
+    // 上限依實際的播放範圍(播放清單或音樂庫清單＋佇列)算:播放清單播放中時音樂庫的搜尋只剩 1 首,不該壞一首就整個停掉
+    const scopeLen = (playlistCtx ? playlistCtx.items.length : view.length) + queue.length;
+    if (errorStreak < Math.min(scopeLen, 5)) { setStatus('這首無法播放,已略過'); later(advance); }
     else setStatus('連續多首無法播放,已停止');
   });
 
@@ -1325,6 +1327,7 @@
     if (bots.hasTargets()) menuItem('bot', '點給 Bot 播放', () => bots.sendToBot(it));
   }
 
+  let searchTok = 0; // 連續送出搜尋時,只顯示最後一次的結果
   $('searchForm').addEventListener('submit', async (e) => {
     e.preventDefault();
     if (mode !== 'online') return; // 音樂庫搜尋是即時篩選,不需要送出
@@ -1332,12 +1335,15 @@
     onlineQuery = q;
     if (!q) return;
     $('search').blur();
+    const tok = ++searchTok;
     const box = $('onlineResults');
     box.textContent = '';
     $('onlineHint').textContent = '搜尋中…';
     try {
       const isUrl = /^https?:\/\//i.test(q);
       const j = await apiJson((isUrl ? '/web/api/info?url=' : '/web/api/search?q=') + enc(q));
+      if (tok !== searchTok) return; // 已經有更新的搜尋
+      box.textContent = '';
       // 依推測:搜尋回 { results:[...] },網址解析回單一物件或 { item }
       const list = j.results || (j.item ? [j.item] : (j.url || j.title ? [j] : []));
       if (!list.length) { $('onlineHint').textContent = '找不到結果'; return; }
@@ -1356,7 +1362,7 @@
       box.appendChild(frag);
       markPlaying();
     } catch (err) {
-      $('onlineHint').textContent = '搜尋失敗:' + err.message;
+      if (tok === searchTok) $('onlineHint').textContent = '搜尋失敗:' + err.message;
     }
   });
 
@@ -2189,9 +2195,16 @@
     const fix = (e) => { if (e && e.kind === 'lib' && e.filename === from) e.filename = to; };
     queue.forEach(fix); history.forEach(fix);
     if (playlistCtx) playlistCtx.items.forEach(fix);
-    if (currentFile === from) currentFile = to;
-    if (preload && preload.key === 'lib:' + from) dropPreload();
     const oldKey = 'lib:' + from, newKey = 'lib:' + to;
+    if (currentFile === from) {
+      currentFile = to;
+      // 舊網址已經 404:之後的重試、斷網恢復、補救重新載入都要改用新路徑,不然這首會被當成壞檔略過
+      if (lastSrc && lastSrc.key === oldKey) lastSrc = { key: newKey, url: streamUrl(to) };
+      if (resumeAt && resumeAt.key === oldKey) resumeAt.key = newKey;
+      if (errorRetryKey === oldKey) errorRetryKey = newKey;
+      if (waitingNet === oldKey) waitingNet = newKey;
+    }
+    if (preload && preload.key === oldKey) dropPreload();
     if (!offlineKeys.has(oldKey)) return;
     try {
       const blob = await offlineGet(oldKey);
@@ -2230,7 +2243,8 @@
       const j = await libApi('POST', '/web/api/library/move', { from: f.filename, to });
       await renameLocalRefs(j.from, j.to);
       setStatus(how === 'folder' ? '已收藏到「' + j.to.split('/').slice(0, -1).join('/') + '」' : '已重新命名');
-      loadList();
+      // 正在播的就是這首:清單重新載入後把播放資訊換成新名稱
+      loadList().then(() => { const t = currentFile === j.to && byFile.get(j.to); if (t) setNow({ title: t.name, sub: libSub(t) }); });
     } catch (err) { setStatus('移動失敗:' + err.message); }
   }
 

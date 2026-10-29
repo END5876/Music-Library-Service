@@ -90,6 +90,16 @@ test('listAll：短時間內重複呼叫共用同一份結果；invalidateList �
   assert.equal((await store.listAll()).some((f) => f.filename === 'L/new.mp3'), true, 'invalidate 後看得到新檔');
 });
 
+test('listAll：掃描進行中 invalidateList，之後的呼叫重新掃描，舊的結果不寫進快取', async () => {
+  store.invalidateList();
+  const stale = store.listAll(); // 掃描開始、還沒完成
+  store.invalidateList();         // 例如期間有檔案被刪除／移動
+  const fresh = store.listAll();
+  const [s, f] = await Promise.all([stale, fresh]);
+  assert.notEqual(s, f, 'invalidate 後不加入異動前開始的掃描');
+  assert.equal(await store.listAll(), f, '快取的是異動後的掃描結果');
+});
+
 test('writeFileFromStream：寫入成功後才出現在清單，且不留暫存檔', async () => {
   const r = await store.writeFileFromStream('W/up.mp3', Readable.from([Buffer.from('hello')]));
   assert.equal(r.relPath, 'W/up.mp3');
