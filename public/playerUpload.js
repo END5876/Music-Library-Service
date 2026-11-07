@@ -59,7 +59,7 @@
       };
       card('音樂庫', u.library.bytes, 0, `${u.library.files.toLocaleString()} 首，不會被自動清除`);
       card('線上快取', u.cache.bytes, u.cache.limitBytes, `${u.cache.files.toLocaleString()} 首，超過上限時自動清掉最久沒聽的`);
-      card('🔒 私人', u.private.bytes, u.private.quotaBytes, `${u.private.files.toLocaleString()} 首，只有你看得到`);
+      card('私人空間', u.private.bytes, u.private.quotaBytes, `${u.private.files.toLocaleString()} 首，只有你看得到`);
       if (u.disk.freeBytes != null) {
         card('磁碟剩餘', u.disk.freeBytes, 0, `低於 ${fmtBytes(u.disk.minFreeBytes)} 時停止接受上傳`);
         if (u.disk.freeBytes < u.disk.minFreeBytes * 1.5) box.lastChild.classList.add('warn');
@@ -242,7 +242,7 @@
       else if (job.status === 'processing') it.msg = job.mode === 'original' ? '儲存中…' : '轉檔／統一音量中,大檔案可能要一兩分鐘…';
       else if (job.status === 'done') {
         const r = job.result || {};
-        it.msg = (RESULT_TEXT[r.method] || (() => '完成'))(r) + ' → ' + String(job.filename || '').replace(/^\.private\/\d+\//, '🔒 ');
+        it.msg = (RESULT_TEXT[r.method] || (() => '完成'))(r) + ' → ' + String(job.filename || '').replace(/^\.private\/\d+\//, '私人 / ');
       } else if (job.status === 'error') it.msg = job.error || '處理失敗';
       return before !== 'done' && job.status === 'done';
     }

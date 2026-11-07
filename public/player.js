@@ -317,6 +317,7 @@
     if (iid) li.dataset.iid = iid;
     if (key && offlineKeys.has(key)) li.classList.add('offline');
     if (missing) li.classList.add('missing');
+    if (key && key.startsWith('lib:.private/')) li.classList.add('private'); // 私人歌曲:副標題前加鎖頭圖示
     const cv = document.createElement('div'); cv.className = 'cover';
     const info = document.createElement('div'); info.className = 'info';
     const t = document.createElement('div'); t.className = 't'; t.textContent = title; t.title = title;
@@ -374,7 +375,7 @@
   const UPLOAD_TAB_KEY = 'ml-upload-tab'; // 重新整理／關掉重開前停在上傳頁籤:回來時直接打開
 
   const folderOf = (f) => f.filename.includes('/') ? f.filename.split('/')[0] : '';
-  // 私人上傳(.private/<自己的 ID>/...,只有管理員本人的清單裡會有):資料夾顯示成「🔒 私人」,不能點給 Bot
+  // 私人上傳(.private/<自己的 ID>/...,只有管理員本人的清單裡會有):資料夾顯示成「私人」(列上加單色鎖頭圖示,見 player.css 的 .row.private),不能點給 Bot
   const PRIVATE_DIR = '.private';
   const isPrivateFile = (fn) => typeof fn === 'string' && fn.startsWith(PRIVATE_DIR + '/');
   const privSubdir = (fn) => fn.split('/').slice(2, -1).join('/'); // .private/<id>/<這段>/檔名
@@ -384,7 +385,7 @@
     const file = parts.pop();
     return [PRIVATE_DIR, me.id, ...parts, file.replace(/\.[^.]+$/, '')].join('/');
   };
-  const folderLabel = (k) => (k === PRIVATE_DIR ? '🔒 私人' : k);
+  const folderLabel = (k) => (k === PRIVATE_DIR ? '私人' : k);
   const libSub = (f) => folderLabel(folderOf(f)) || '音樂庫';
   const onlineSub = (r) => [r.platform, r.author].filter(Boolean).join(' · ') || '線上歌曲';
 
@@ -502,7 +503,7 @@
     const priv = files.filter((f) => isPrivateFile(f.filename)).length;
     const pub = files.length - priv;
     const names = files.slice(0, 8).map((f) => '・' + f.name).join('\n') + (files.length > 8 ? `\n…還有 ${files.length - 8} 首` : '');
-    const scope = [pub ? `公開 ${pub} 首` : '', priv ? `🔒 私人 ${priv} 首` : ''].filter(Boolean).join('、');
+    const scope = [pub ? `公開 ${pub} 首` : '', priv ? `私人 ${priv} 首` : ''].filter(Boolean).join('、');
     if (!await askConfirm(`刪除選取的 ${files.length} 首歌?`, `${scope}\n\n${names}`, { ok: '下一步', danger: true })) return;
     const warn = pub ? '伺服器上的檔案會被刪除,所有人與 Bot 都無法再播放,所有人播放清單裡的這些歌會變成找不到。' : '伺服器上的私人檔案會被刪除。';
     if (!await askConfirm('再確認一次:真的要刪除?', `${files.length} 首歌將被永久刪除,無法復原。\n${warn}`, { ok: `刪除 ${files.length} 首`, danger: true })) return;
@@ -620,14 +621,14 @@
 
   // 上方標籤:全部／公開／私人。私人歌曲只會出現在管理員本人的清單裡,
   // 所以只有管理員(或清單裡真的有私人歌曲時)才顯示;要找某個資料夾的歌,直接在搜尋列打資料夾名稱
-  const SCOPES = [['', '全部'], ['public', '公開'], ['private', '🔒 私人']];
+  const SCOPES = [['', '全部'], ['public', '公開'], ['private', '私人']];
   function renderChips() {
     const box = $('chips'); box.textContent = '';
     box.hidden = !me.admin && !all.some((f) => isPrivateFile(f.filename));
     if (box.hidden) folder = '';
     for (const [key, label] of SCOPES) {
       const b = document.createElement('button');
-      b.className = 'chip' + (key === folder ? ' active' : '');
+      b.className = 'chip' + (key === folder ? ' active' : '') + (key === 'private' ? ' lock' : '');
       b.textContent = label;
       b.addEventListener('click', () => { folder = key; renderChips(); applyFilter(); });
       box.appendChild(b);
@@ -2323,7 +2324,7 @@
       menuItem('delete', priv ? '刪除私人歌曲' : '從音樂庫刪除', () => deleteLibFile(f), 'danger');
     }
     menuInfo([
-      ['資料夾:', priv ? '🔒 私人' + (privSubdir(f.filename) ? ' / ' + privSubdir(f.filename) : '') : (folderOf(f) || '(音樂庫根目錄)')],
+      ['資料夾:', priv ? '私人' + (privSubdir(f.filename) ? ' / ' + privSubdir(f.filename) : '') : (folderOf(f) || '(音樂庫根目錄)')],
       ...(priv ? [['可見範圍:', '只有你;其他帳號和 Bot 都看不到']] : []),
       ...(f.duration ? [['長度:', fmt(f.duration)]] : []),
       ['檔案大小:', fmtSize(f.size)],
@@ -2411,7 +2412,7 @@
     try {
       const j = await libApi('POST', '/web/api/library/move', { from: f.filename, to });
       await renameLocalRefs(j.from, j.to);
-      const where = isPrivateFile(j.to) ? '🔒 私人' + (privSubdir(j.to) ? ' / ' + privSubdir(j.to) : '') : j.to.split('/').slice(0, -1).join('/');
+      const where = isPrivateFile(j.to) ? '私人' + (privSubdir(j.to) ? ' / ' + privSubdir(j.to) : '') : j.to.split('/').slice(0, -1).join('/');
       setStatus(how === 'private' ? '已設為私人' : how === 'publish' ? '已公開到「' + where + '」' : how === 'folder' ? '已移到「' + where + '」' : '已重新命名');
       // 正在播的就是這首:清單重新載入後把播放資訊換成新名稱
       loadList().then(() => { const t = currentFile === j.to && byFile.get(j.to); if (t) setNow({ title: t.name, sub: libSub(t) }); });
