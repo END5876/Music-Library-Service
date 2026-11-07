@@ -124,7 +124,7 @@ function str(v, max) {
 
 function cleanName(raw) {
   const s = str(raw, MAX_NAME);
-  if (!s) throw new HttpError(400, '名稱不可為空');
+  if (!s) throw new HttpError(400, '請輸入名稱');
   return s;
 }
 

@@ -79,7 +79,7 @@
         setStatus((j.ok ? '' : '❌ ') + (j.message || (j.ok ? '完成' : '操作失敗')));
         return j;
       } catch {
-        setStatus('❌ 連線失敗');
+        setStatus('❌ 連線失敗,請檢查網路後再試一次');
         return null;
       } finally {
         busy.delete(k);
@@ -132,7 +132,7 @@
         ctrls.append(
           ctrlBtn('next', '跳過', () => run('skip'), { disabled: pending }),
           ctrlBtn('stop', '停止', async () => {
-            const ok = await askConfirm('停止 Bot 播放?', `「${g.guildName}」的播放與佇列都會清除。`, { ok: '停止', danger: true });
+            const ok = await askConfirm('停止 Bot 播放?', `「${g.guildName}」的播放與佇列都會清除。`, { ok: '停止播放', danger: true });
             if (ok) run('stop');
           }, { disabled: pending }),
         );
@@ -154,7 +154,7 @@
         const qh = el('div', 'bot-queue-head');
         qh.append(el('h4', '', `佇列 ${g.queueLength} 首`));
         const clr = ctrlBtn(null, '清空', async () => {
-          const ok = await askConfirm('清空 Bot 的佇列?', `「${g.guildName}」佇列裡的 ${g.queueLength} 首歌會被移除。`, { ok: '清空', danger: true });
+          const ok = await askConfirm('清空 Bot 的佇列?', `「${g.guildName}」佇列裡的 ${g.queueLength} 首歌會被移除。`, { ok: '清空佇列', danger: true });
           if (ok) run('clearQueue');
         }, { disabled: pending });
         qh.append(clr);

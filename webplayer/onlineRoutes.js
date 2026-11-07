@@ -63,13 +63,14 @@ function mountOnlineRoutes(app, { requireWebAuth }) {
 
   app.get('/web/api/search', requireWebAuth, requireOnline, queryLimit, async (req, res) => {
     const q = String(req.query.q || '').trim().slice(0, 100);
-    if (!q) return res.status(400).json({ error: '搜尋關鍵字不可為空' });
+    if (!q) return res.status(400).json({ error: '請輸入搜尋關鍵字' });
     try {
       const results = await online.searchMulti(q, 5);
       res.set('Cache-Control', 'no-store');
       res.json({ results });
     } catch (err) {
-      res.status(503).json({ error: `搜尋失敗：${err.message}` });
+      console.warn('⚠️ [OnlineMusic] 搜尋失敗:', err.message);
+      res.status(503).json({ error: '搜尋失敗，請稍後再試一次' });
     }
   });
 
@@ -80,7 +81,8 @@ function mountOnlineRoutes(app, { requireWebAuth }) {
       res.set('Cache-Control', 'no-store');
       res.json(await online.getInfo(url));
     } catch (err) {
-      res.status(502).json({ error: `無法獲取影片資訊：${err.message}` });
+      console.warn('⚠️ [OnlineMusic] 讀取影片資訊失敗:', err.message);
+      res.status(502).json({ error: '讀不到這部影片的資訊，可能已被刪除、設為私人，或有地區限制' });
     }
   });
 

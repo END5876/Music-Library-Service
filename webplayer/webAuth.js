@@ -469,7 +469,7 @@ function mountWebAuth(app, { libSecret }) {
       return res.redirect(302, '/player?login=cancelled');
     }
     if (!saved || typeof state !== 'string' || !safeEqual(state, saved.state) || typeof code !== 'string') {
-      return sendPage(res, 400, '登入流程已過期或無效', `<p>請回到播放器重新登入一次。</p>${backLink}`);
+      return sendPage(res, 400, '這次登入已經逾時', `<p>請回到播放器重新登入一次。</p>${backLink}`);
     }
     if (saved.handoff && !liveHandoff(saved.handoff, 'pending')) return expiredHandoffPage(res);
 

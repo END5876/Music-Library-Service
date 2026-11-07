@@ -240,7 +240,7 @@
       $('handoffStatus').textContent = '等待登入…';
       $('handoff').hidden = false; $('loginBtn').hidden = true; $('handoffBtn').hidden = true;
       handoffTimer = setInterval(pollHandoff, 2000);
-    } catch { $('loginErr').textContent = '連線失敗'; } finally { handoffStarting = false; }
+    } catch { $('loginErr').textContent = '連線失敗,請檢查網路後再試一次'; } finally { handoffStarting = false; }
   }
   // 瀏覽器那邊的進度(伺服器回 202 的 status)
   const HANDOFF_STATUS = {
@@ -570,10 +570,10 @@
       dbg('loadList 連線失敗', err);
       serverDown = true; updateNetState();
       if (offlineKeys.size && mode === 'library') { setMode('offline'); return setStatus('目前無法連線,已切換到離線歌曲'); }
-      return setStatus('連線失敗');
+      return setStatus('連線失敗,請檢查網路後再試一次');
     }
     if (r.status === 401) { setStatus(''); return showLogin(); }
-    if (!r.ok) return setStatus('讀取清單失敗');
+    if (!r.ok) return setStatus('讀取清單失敗,請重新整理頁面再試一次');
     const j = await r.json();
     if (serverDown) { serverDown = false; updateNetState(); }
     all = j.files || [];
@@ -1198,7 +1198,7 @@
     }
     if (nowKey() !== key) return;
     if (onlineCurrent) {
-      setStatus('線上串流失敗(可能被平台限制、影片不可用或伺服器忙碌)');
+      setStatus('線上串流失敗(可能被平台限制、影片不可用或伺服器忙碌),請換一首或稍後再試');
       if (queue.length) later(advance);
       return;
     }
@@ -1216,7 +1216,7 @@
     // 上限依實際的播放範圍(播放清單或音樂庫清單＋佇列)算:播放清單播放中時音樂庫的搜尋只剩 1 首,不該壞一首就整個停掉
     const scopeLen = (playlistCtx ? playlistCtx.items.length : view.length) + queue.length;
     if (errorStreak < Math.min(scopeLen, 5)) { setStatus('這首無法播放,已略過'); later(advance); }
-    else setStatus('連續多首無法播放,已停止');
+    else setStatus('連續多首無法播放,已停止播放,請檢查網路後再試');
   });
 
   // ── 補救機制(頁面醒來 / 事件漏掉)──
@@ -2245,7 +2245,7 @@
   });
   $('plDelete').addEventListener('click', async () => {
     const p = plOpen && plById(plOpen); if (!p) return;
-    if (!await askConfirm(`刪除播放清單「${p.name}」?`, '歌曲本身不會被刪除。', { ok: '刪除', danger: true })) return;
+    if (!await askConfirm(`刪除播放清單「${p.name}」?`, '歌曲本身不會被刪除。', { ok: '刪除播放清單', danger: true })) return;
     try { await plApi('DELETE', `${PL_API}/${p.id}`); } catch (err) { return setStatus(err.message); }
     playlists = playlists.filter((x) => x.id !== p.id);
     if (playlistCtx && playlistCtx.id === p.id) playlistCtx = null;
@@ -2260,14 +2260,14 @@
     if (!dls.length) return setStatus('沒有可下載的歌曲');
     // 全部都已下載:再按一次就是移除
     if (dls.every((it) => offlineKeys.has(itemKey(it)))) {
-      if (!await askConfirm('移除這個播放清單的離線檔案?', '之後需要網路才能播放這些歌曲。', { ok: '移除', danger: true })) return;
+      if (!await askConfirm('移除這個播放清單的離線檔案?', '之後需要網路才能播放這些歌曲。', { ok: '移除離線檔案', danger: true })) return;
       removeOffline(p.items).then(() => setStatus('已移除離線檔案'));
       return;
     }
     enqueueDownloads(dls);
   });
   $('offlineClear').addEventListener('click', async () => {
-    if (!await askConfirm('清除全部離線檔案?', '這個裝置上下載的所有歌曲都會被移除。', { ok: '清除', danger: true })) return;
+    if (!await askConfirm('清除全部離線檔案?', '這個裝置上下載的所有歌曲都會被移除。', { ok: '清除全部', danger: true })) return;
     try { await offlineClearAll(); offlineKeys.clear(); offlineSizes.clear(); offlineMeta.clear(); setStatus('已清除全部離線檔案'); }
     catch (err) { setStatus('清除失敗:' + err.message); }
     refreshDl();
@@ -2329,7 +2329,7 @@
       ...(f.duration ? [['長度:', fmt(f.duration)]] : []),
       ['檔案大小:', fmtSize(f.size)],
       ['離線狀態:', isOff ? '已下載到此裝置' : (dlState.has(key) ? '下載中' : '未下載')],
-      ...(!folderOf(f) ? [['提醒:', '根目錄的歌是快取,空間不夠時會被自動清掉;收藏到資料夾就會保留']] : []),
+      ...(!folderOf(f) ? [['提醒:', '放在根目錄的歌,空間不夠時會被自動清掉;收藏到資料夾就會保留']] : []),
     ]);
     placeMenu(anchor);
   }
@@ -2343,7 +2343,7 @@
         headers: body ? { 'Content-Type': 'application/json' } : undefined,
         body: body ? JSON.stringify(body) : undefined,
       });
-    } catch { throw new Error('連線失敗'); }
+    } catch { throw new Error('連線失敗,請檢查網路後再試一次'); }
     if (r.status === 401) { showLogin('登入已過期,請重新登入'); throw new Error('請先登入'); }
     const j = await r.json().catch(() => ({}));
     if (!r.ok) throw new Error(j.error || 'HTTP ' + r.status);
@@ -2402,7 +2402,7 @@
       const d = await askText((how === 'publish' ? '公開到哪個資料夾?' : '移到哪個資料夾?') + hint, how === 'publish' ? 'uploads' : (dir || 'favorites'));
       if (d === null) return;
       const clean = d.replace(/\\/g, '/').replace(/^\/+|\/+$/g, '');
-      if (!clean) return setStatus('請輸入資料夾名稱(根目錄的歌會被快取清理)');
+      if (!clean) return setStatus('請輸入資料夾名稱(放在根目錄的歌,空間不夠時會被自動清掉)');
       to = clean + '/' + stem;
     } else {
       const n = await askText('新的檔名', stem);
@@ -2423,7 +2423,7 @@
     const priv = isPrivateFile(f.filename);
     if (!await askConfirm(priv ? '刪除這首私人歌曲?' : '從音樂庫刪除這首歌?',
       f.name + (priv ? '\n伺服器上的私人檔案會被刪除,無法復原。' : '\n伺服器上的檔案會被刪除,所有裝置與 Bot 都無法再播放,無法復原。'),
-      { ok: '刪除', danger: true })) return;
+      { ok: '刪除歌曲', danger: true })) return;
     try {
       await libApi('DELETE', streamUrl(f.filename).replace('/web/stream/', '/web/api/library/file/'));
       setStatus('已刪除');

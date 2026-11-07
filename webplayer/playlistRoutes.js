@@ -92,7 +92,7 @@ function mountPlaylists(app, { requireWebAuth, online, privateScope = () => ({})
   // express.json 解析失敗（壞掉的 JSON、超過大小）時回 JSON 而不是 HTML 錯誤頁
   app.use(BASE, (err, req, res, next) => {
     if (err && (err.type === 'entity.parse.failed' || err.type === 'entity.too.large')) {
-      return res.status(err.status || 400).json({ error: '請求內容不合法' });
+      return res.status(err.status || 400).json({ error: '資料格式不正確，請重新整理頁面再試一次' });
     }
     next(err);
   });
