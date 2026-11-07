@@ -331,8 +331,12 @@
       g.className = 'grip'; g.title = '拖曳排序'; g.setAttribute('aria-label', '拖曳排序');
       g.innerHTML = '<svg><use href="#i-grip"/></svg>';
       g.addEventListener('click', (ev) => ev.stopPropagation());
-      g.addEventListener('pointerdown', (ev) => (typeof grip === 'function' ? grip : startDrag)(ev, li));
-      li.appendChild(g);
+      g.addEventListener('pointerdown', (ev) => {
+        const run = () => (typeof grip === 'function' ? grip : startDrag)(ev, li);
+        if (ev.pointerType === 'mouse') return run();
+        holdToDrag(ev, li, run); // 觸控:要按住一下才開始拖曳,捲動時手指剛好碰到把手不會誤觸
+      });
+      li.prepend(g); // 放在最左邊(電腦版另外疊在序號上,見 player.css)
     }
     for (const bt of (Array.isArray(btn) ? btn : btn ? [btn] : [])) {
       const b = document.createElement('button');
@@ -795,6 +799,40 @@
   // rows:拖曳中的列以外、可以放置的列;sc:捲動容器;onEnd(dropped, pos):放開或取消時呼叫
   // 每一幀(requestAnimationFrame,跟螢幕更新同步)只改 transform:被拖的列跟著手指,
   // 其他列滑開讓出空位,看得出會插在哪裡。拖曳中不讀 layout、不切換 class,避免整份列表重算樣式。
+  // 觸控拖曳排序:按住把手 HOLD_MS 才開始(輕震一下、該列亮起);按住期間手指移動超過 HOLD_SLOP 就當成捲動、不拖。
+  // 把手的 touch-action 在觸控裝置是 pan-y(見 player.css),所以從把手上也能正常捲動;
+  // 開始拖曳後用不被動的 touchmove 擋掉捲動,手指放開或手勢被取消時拿掉
+  const HOLD_MS = 350, HOLD_SLOP = 10;
+  function holdToDrag(ev, li, run) {
+    const x0 = ev.clientX, y0 = ev.clientY;
+    li.classList.add('hold');
+    const cleanup = () => {
+      clearTimeout(timer);
+      li.classList.remove('hold');
+      window.removeEventListener('pointermove', onMove);
+      window.removeEventListener('pointerup', cleanup);
+      window.removeEventListener('pointercancel', cleanup);
+    };
+    const onMove = (e) => { if (Math.hypot(e.clientX - x0, e.clientY - y0) > HOLD_SLOP) cleanup(); };
+    const timer = setTimeout(() => {
+      cleanup();
+      const block = (e) => { if (e.cancelable) e.preventDefault(); };
+      const stop = () => {
+        document.removeEventListener('touchmove', block);
+        window.removeEventListener('pointerup', stop);
+        window.removeEventListener('pointercancel', stop);
+      };
+      document.addEventListener('touchmove', block, { passive: false });
+      window.addEventListener('pointerup', stop);
+      window.addEventListener('pointercancel', stop);
+      try { if (navigator.vibrate) navigator.vibrate(15); } catch { /* 不支援震動 */ }
+      run();
+    }, HOLD_MS);
+    window.addEventListener('pointermove', onMove, { passive: true });
+    window.addEventListener('pointerup', cleanup);
+    window.addEventListener('pointercancel', cleanup);
+  }
+
   function dragSort(ev, li, rows, sc, onEnd) {
     if (ev.button > 0) return;
     ev.preventDefault(); ev.stopPropagation();

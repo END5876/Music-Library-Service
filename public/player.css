@@ -134,7 +134,7 @@ section{margin-top:28px;min-width:0}
 .rbtn.done{color:var(--text-2)}
 .grip{cursor:grab;touch-action:none}
 /* 電腦版(滑鼠操作)有序號的列:拖曳把手疊在序號的位置,滑過該列時取代序號出現,
-   右側只留「時間 ⋮」,不會空出一格;觸控裝置／手機版維持把手常駐在右側 */
+   右側只留「時間 ⋮」,不會空出一格;觸控裝置／手機版把手常駐在最左邊(窄版,見檔案後段) */
 @media (hover:hover) and (min-width:701px){
   .row:has(> .idx) .grip{position:absolute;left:8px;top:50%;transform:translateY(-50%);width:28px;height:36px;border-radius:6px;opacity:0}
   .row:has(> .idx):hover .grip,.row:has(> .idx) .grip:focus-visible,.row.dragging .grip{opacity:1}
@@ -438,3 +438,13 @@ body.pl-detail header .search{visibility:hidden}
 /* 音樂庫標題列的上傳鈕:處理中的數字徽章疊在右上角 */
 .up-entry{position:relative}
 .up-entry .nav-badge{position:absolute;top:-4px;right:-6px;margin:0;min-width:18px;line-height:16px;font-size:10px;padding:1px 5px}
+/* 觸控拖曳排序:要按住把手一下才開始(player.js 的 holdToDrag)。把手允許上下捲動,長按不跳出系統選單 */
+.grip{-webkit-touch-callout:none;-webkit-user-select:none;user-select:none}
+@media (pointer:coarse){ .grip{touch-action:pan-y} }
+.row.hold .grip{background:var(--surface-3);color:var(--text);transition:background .35s ease}
+.row.hold{background:var(--surface-2)}
+/* 觸控裝置／手機版:把手在每列最左邊,窄版,不擠掉歌名的空間(電腦版滑鼠操作時疊在序號上,不受影響) */
+@media (hover:none), (max-width:700px){
+  .grip{width:22px;height:40px;border-radius:6px;margin-left:-6px;margin-right:-4px;display:grid;place-items:center}
+  .grip svg{width:18px;height:18px}
+}
