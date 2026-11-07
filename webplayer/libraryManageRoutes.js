@@ -7,6 +7,7 @@
 //   POST   /web/api/library/move       { from, to }  to 為新的相對路徑（可省略副檔名，沿用原本的）
 //                                       → { ok, from, to, playlists }；playlists = 跟著改路徑的播放清單數
 //   DELETE /web/api/library/file/*     刪除檔案 → { ok, filename }
+//   POST   /web/api/library/delete     { files:[...] } 多選刪除（最多 500 首）→ { ok, deleted, failed }
 //
 // 錯誤：400 路徑不合法、404 找不到、409 目標已存在。
 
@@ -39,6 +40,27 @@ function mountLibraryManageRoutes(app, { store, requireWebAuth, privateScope = (
     } catch (err) {
       fail(res, err, '移動檔案');
     }
+  });
+
+  // 多選刪除：{ files:[filename...] }（最多 MAX_BATCH_DELETE 首）→ { ok, deleted:[...], failed:[{ filename, error }] }
+  // 一首失敗不影響其他首；私人歌曲只能刪自己的（privateScope）
+  const MAX_BATCH_DELETE = 500;
+  app.post('/web/api/library/delete', requireWebAuth, express.json({ limit: '256kb' }), async (req, res) => {
+    const files = (req.body || {}).files;
+    if (!Array.isArray(files) || !files.length || files.some((f) => typeof f !== 'string')) {
+      return res.status(400).json({ error: '缺少 files' });
+    }
+    if (files.length > MAX_BATCH_DELETE) return res.status(400).json({ error: `一次最多刪除 ${MAX_BATCH_DELETE} 首` });
+    const deleted = [], failed = [];
+    for (const f of [...new Set(files)]) {
+      try {
+        deleted.push((await store.deleteFile(f, privateScope(req))).filename);
+      } catch (err) {
+        if (!(err && err.status >= 400 && err.status < 500)) console.error('❌ [MusicLibrary] 批次刪除失敗:', err);
+        failed.push({ filename: f, error: err && err.status < 500 ? err.message : '刪除失敗' });
+      }
+    }
+    res.json({ ok: failed.length === 0, deleted, failed });
   });
 
   app.delete('/web/api/library/file/*', requireWebAuth, async (req, res) => {

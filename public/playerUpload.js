@@ -1,6 +1,7 @@
 'use strict';
 // playerUpload.js — 播放器裡的「上傳」頁籤（只有管理員看得到；伺服器端一樣只放行管理員，見 webplayer/uploadRoutes.js）
-//   - 多選或拖放多個音檔，逐一上傳（一次一個：伺服器轉檔很吃 CPU），每首各自顯示進度／結果，失敗的可以重試
+//   - 多選或拖放多個音檔，一首接一首全部傳上去；伺服器收到就排進背景佇列，一次處理一首（VPS CPU 不多）。
+//     前端每 3 秒問一次處理進度（GET /web/api/upload/jobs）；傳完就可以關掉網頁，重新打開會接回進度
 //   - 放進共用音樂庫，或私人上傳（.private/<自己的 ID>/，其他帳號、Bot 都看不到）；私人上傳可選「保留原檔、不轉檔」
 //   - 開始前整批預檢（格式、單檔上限、私人配額、磁碟水位），頁面上方顯示目前用量
 // 對外：window.MLUpload.create({ onUploaded }) → { show(), hide(), busy() }
@@ -26,7 +27,8 @@
   };
 
   function create({ onUploaded }) {
-    let items = [];          // { id, file, title, status, pct, msg }
+    let items = [];          // { id, file?, name, size, title, status, pct, msg, jobId? }；file 為 null＝重新整理前上傳、只剩伺服器紀錄
+    let pollTimer = 0;
     let seq = 0;
     let running = false;
     let target = 'library';
@@ -78,7 +80,7 @@
       try {
         const r = await fetch('/web/api/upload/preflight', {
           method: 'POST', headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ target, mode: original() ? 'original' : 'transcode', files: pending.map((it) => ({ name: it.file.name, size: it.file.size })) }),
+          body: JSON.stringify({ target, mode: original() ? 'original' : 'transcode', files: pending.map((it) => ({ name: it.name, size: it.size })) }),
         });
         j = await r.json().catch(() => ({}));
         if (!r.ok) throw new Error(j.error || 'HTTP ' + r.status);
@@ -111,13 +113,13 @@
     function addFiles(fileList) {
       for (const file of fileList) {
         const ok = ACCEPT.includes(extOf(file.name));
-        items.push({ id: ++seq, file, title: stemOf(file.name), status: ok ? 'pending' : 'blocked', pct: 0, msg: ok ? '' : '不支援的格式' });
+        items.push({ id: ++seq, file, name: file.name, size: file.size, title: stemOf(file.name), status: ok ? 'pending' : 'blocked', pct: 0, msg: ok ? '' : '不支援的格式' });
       }
       render();
       schedulePreflight();
     }
 
-    const STATUS_LABEL = { pending: '等待中', uploading: '上傳中', processing: '處理中', done: '完成', error: '失敗', blocked: '略過' };
+    const STATUS_LABEL = { pending: '等待上傳', uploading: '上傳中', queued: '已上傳・排隊處理', processing: '伺服器處理中', done: '完成', error: '失敗', blocked: '略過' };
     function render() {
       listEl.textContent = '';
       for (const it of items) {
@@ -129,14 +131,14 @@
         input.disabled = it.status !== 'pending' && it.status !== 'error';
         input.addEventListener('input', () => { it.title = input.value; });
         li.querySelector('.up-state').textContent = STATUS_LABEL[it.status] + (it.status === 'uploading' ? ` ${it.pct}%` : '');
-        li.querySelector('.up-size').textContent = fmtBytes(it.file.size) + (it.estimate != null && it.status === 'pending' && it.estimate !== it.file.size ? ` → 約 ${fmtBytes(it.estimate)}` : '');
+        li.querySelector('.up-size').textContent = fmtBytes(it.size) + (it.estimate != null && it.status === 'pending' && it.estimate !== it.size ? ` → 約 ${fmtBytes(it.estimate)}` : '');
         li.querySelector('.up-msg').textContent = it.msg || '';
-        li.querySelector('.up-bar i').style.width = (it.status === 'done' || it.status === 'processing' ? 100 : it.pct) + '%';
+        li.querySelector('.up-bar i').style.width = (['done', 'queued', 'processing'].includes(it.status) ? 100 : it.pct) + '%';
         const act = li.querySelector('.up-act');
-        if (it.status === 'error') {
+        if (it.status === 'error' && it.file) {
           act.innerHTML = '<svg><use href="#i-repeat"/></svg>'; act.title = '重試'; act.setAttribute('aria-label', '重試');
-          act.addEventListener('click', () => { it.status = 'pending'; it.pct = 0; it.msg = ''; render(); schedulePreflight(); });
-        } else if (it.status === 'uploading' || it.status === 'processing') {
+          act.addEventListener('click', () => { it.status = 'pending'; it.pct = 0; it.msg = ''; it.jobId = null; render(); schedulePreflight(); });
+        } else if (['uploading', 'queued', 'processing'].includes(it.status)) {
           act.hidden = true;
         } else {
           act.innerHTML = '<svg><use href="#i-close"/></svg>'; act.title = '移除'; act.setAttribute('aria-label', '移除');
@@ -152,7 +154,10 @@
       const pending = items.filter((it) => it.status === 'pending').length;
       $('upStart').disabled = running || !pending;
       $('upStart').lastChild.textContent = running ? '上傳中…' : pending ? `開始上傳（${pending} 首）` : '開始上傳';
-      $('upClear').hidden = !items.some((it) => it.status === 'done' || it.status === 'blocked');
+      $('upClear').hidden = !items.some((it) => it.status === 'done' || it.status === 'blocked' || (it.status === 'error' && !it.file));
+      const waitingServer = items.filter((it) => it.status === 'queued' || it.status === 'processing').length;
+      $('upServerNote').hidden = !waitingServer;
+      $('upServerNote').textContent = `伺服器還有 ${waitingServer} 首在排隊處理,一次處理一首。已經傳完的話可以關掉網頁,處理會繼續進行;重新打開這個頁籤會接回進度。`;
       for (const el of document.querySelectorAll('#upTarget .chip, #upOriginal, #upFolder, #upFiles')) el.disabled = running;
       $('upDrop').classList.toggle('disabled', running);
     }
@@ -188,14 +193,15 @@
           const now = Date.now();
           if (now - lastPaint > 200) { lastPaint = now; render(); }
         };
-        req.upload.onload = () => { it.status = 'processing'; it.msg = original() ? '儲存中…' : '轉檔／統一音量中,大檔案可能要一兩分鐘…'; render(); };
+        req.upload.onload = () => { it.pct = 100; it.msg = '已傳完,等伺服器確認…'; render(); };
         req.onerror = () => { it.status = 'error'; it.msg = '連線中斷'; render(); resolve(); };
         req.onload = () => {
           let j = {};
           try { j = JSON.parse(req.responseText); } catch {}
-          if (req.status === 201) {
-            it.status = 'done';
-            it.msg = (RESULT_TEXT[j.method] || (() => '完成'))(j) + ' → ' + (j.filename || '').replace(/^\.private\/\d+\//, '🔒 ');
+          if (req.status === 202 && j.job) {
+            it.jobId = j.job.id;
+            applyJob(it, j.job);
+            schedulePoll(1000);
           } else {
             it.status = 'error';
             it.msg = req.status === 401 ? '登入已過期,請重新整理頁面' : (j.error || 'HTTP ' + req.status);
@@ -209,13 +215,11 @@
     async function startAll() {
       if (running) return;
       running = true; syncButtons();
-      let done = 0;
       try {
         for (;;) {
           const it = items.find((x) => x.status === 'pending');
           if (!it) break;
           await uploadOne(it);
-          if (it.status === 'done') done += 1;
           // 空間不足就不必再試後面的
           if (it.status === 'error' && /空間不足/.test(it.msg)) {
             items.filter((x) => x.status === 'pending').forEach((x) => { x.status = 'error'; x.msg = '空間不足,已停止'; });
@@ -226,7 +230,40 @@
       } finally {
         running = false; syncButtons();
       }
-      if (done) { onUploaded && onUploaded(done); loadUsage(); }
+    }
+
+    // ── 伺服器處理進度 ──
+    function applyJob(it, job) {
+      const before = it.status;
+      it.status = job.status;
+      if (job.status === 'queued') it.msg = job.position > 1 ? `前面還有 ${job.position - 1} 首` : '下一首就輪到';
+      else if (job.status === 'processing') it.msg = job.mode === 'original' ? '儲存中…' : '轉檔／統一音量中,大檔案可能要一兩分鐘…';
+      else if (job.status === 'done') {
+        const r = job.result || {};
+        it.msg = (RESULT_TEXT[r.method] || (() => '完成'))(r) + ' → ' + String(job.filename || '').replace(/^\.private\/\d+\//, '🔒 ');
+      } else if (job.status === 'error') it.msg = job.error || '處理失敗';
+      return before !== 'done' && job.status === 'done';
+    }
+
+    function schedulePoll(ms = 3000) {
+      clearTimeout(pollTimer);
+      pollTimer = setTimeout(poll, ms);
+    }
+    async function poll() {
+      let j;
+      try { const r = await fetch('/web/api/upload/jobs'); if (!r.ok) throw 0; j = await r.json(); } catch { return schedulePoll(10000); }
+      let newlyDone = 0;
+      for (const job of j.jobs || []) {
+        let it = items.find((x) => x.jobId === job.id);
+        if (!it) { // 重新整理頁面前上傳的:只剩伺服器紀錄
+          it = { id: ++seq, file: null, name: job.name, size: job.inputBytes, title: job.title, pct: 100, jobId: job.id, status: '' };
+          items.push(it);
+        }
+        if (applyJob(it, job)) newlyDone += 1;
+      }
+      render();
+      if (newlyDone) { onUploaded && onUploaded(newlyDone); loadUsage(); }
+      if (items.some((x) => x.status === 'queued' || x.status === 'processing')) schedulePoll();
     }
 
     // ── 事件 ──
@@ -242,14 +279,16 @@
     $('upOriginal').addEventListener('change', () => { syncTarget(); schedulePreflight(); render(); });
     $('upStart').addEventListener('click', startAll);
     $('upClear').addEventListener('click', () => {
-      items = items.filter((it) => it.status !== 'done' && it.status !== 'blocked'); render(); schedulePreflight();
+      items = items.filter((it) => it.status !== 'done' && it.status !== 'blocked' && !(it.status === 'error' && !it.file));
+      render(); schedulePreflight();
+      fetch('/web/api/upload/jobs/clear', { method: 'POST' }).catch(() => {}); // 伺服器上的完成／失敗紀錄也清掉
     });
     window.addEventListener('beforeunload', (e) => { if (running) { e.preventDefault(); e.returnValue = ''; } });
 
     syncTarget();
     render();
     return {
-      show() { loadUsage(); },
+      show() { loadUsage(); poll(); },
       hide() {},
       busy: () => running,
     };

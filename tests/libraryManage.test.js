@@ -142,3 +142,22 @@ test('publishFile：overwrite=false 時目標已存在 → 409，來源與目標
   assert.equal(fs.readFileSync(target.absPath, 'utf8'), 'new');
   assert.equal(fs.existsSync(src), false);
 });
+
+test('多選刪除：逐首刪除、一首失敗不影響其他首；私人歌曲沒有 scope 刪不掉；參數檢查', async () => {
+  touch(MUSIC, 'batch/a.mp3'); touch(MUSIC, 'batch/b.mp3');
+  touch(MUSIC, '.private/111111111111111111/p.mp3');
+  const del = (body) => fetch(base + '/web/api/library/delete', {
+    method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body),
+  });
+  const r = await del({ files: ['batch/a.mp3', 'batch/b.mp3', 'batch/none.mp3', '.private/111111111111111111/p.mp3', '../x.mp3'] });
+  assert.equal(r.status, 200);
+  const j = await r.json();
+  assert.equal(j.ok, false);
+  assert.deepEqual(j.deleted, ['batch/a.mp3', 'batch/b.mp3']);
+  assert.equal(j.failed.length, 3);
+  assert.ok(!exists('batch/a.mp3') && !exists('batch/b.mp3'));
+  assert.ok(exists('.private/111111111111111111/p.mp3'), '這個測試沒有掛 privateScope：私人檔不能被刪');
+  assert.equal((await del({ files: [] })).status, 400);
+  assert.equal((await del({ files: [1] })).status, 400);
+  assert.equal((await del({ files: Array.from({ length: 501 }, (_, i) => `x${i}.mp3`) })).status, 400);
+});

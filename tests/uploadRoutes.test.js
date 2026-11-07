@@ -16,7 +16,7 @@ const store = require('../musicStore');
 const { mountUploadRoutes, estimateOutputBytes, sanitizeFilename } = require('../webplayer/uploadRoutes');
 
 const OWNER = '111111111111111111';
-let base, server, user = { id: OWNER, admin: true };
+let base, server, routes, user = { id: OWNER, admin: true };
 const origError = console.error, origLog = console.log;
 test.before(async () => {
   console.error = () => {}; console.log = () => {};
@@ -25,7 +25,7 @@ test.before(async () => {
     if (!user) return res.status(401).json({ error: '請先登入' });
     req.webUser = user; next();
   };
-  mountUploadRoutes(app, { store, requireWebAuth });
+  routes = mountUploadRoutes(app, { store, requireWebAuth });
   await new Promise((r) => { server = app.listen(0, '127.0.0.1', r); });
   base = `http://127.0.0.1:${server.address().port}`;
 });
@@ -109,12 +109,17 @@ test('target / mode 不合法：400；保留原檔只限私人上傳', async () 
   assert.match((await r.json()).error, /只有私人上傳/);
 });
 
-test('私人上傳＋保留原檔：存到 .private/<uid>/，副檔名不變，不出現在共用清單', async () => {
+test('私人上傳＋保留原檔：先回 202 排隊，背景處理後存到 .private/<uid>/，副檔名不變，不出現在共用清單', async () => {
   const r = await upload({ 'x-upload-filename': 'Song.flac', 'x-upload-title': '我的歌', 'x-upload-folder': 'live', 'x-upload-target': 'private', 'x-upload-mode': 'original' }, Buffer.from('flac-bytes'));
-  assert.equal(r.status, 201);
-  const j = await r.json();
-  assert.equal(j.filename, `.private/${OWNER}/live/我的歌.flac`);
-  assert.equal(j.method, 'original');
+  assert.equal(r.status, 202);
+  const { job } = await r.json();
+  assert.equal(job.filename, `.private/${OWNER}/live/我的歌.flac`);
+  assert.ok(['queued', 'processing'].includes(job.status));
+  await routes.idle();
+  const jobs = (await (await fetch(base + '/web/api/upload/jobs')).json()).jobs;
+  const done = jobs.find((x) => x.id === job.id);
+  assert.equal(done.status, 'done');
+  assert.equal(done.result.method, 'original');
   assert.equal(fs.readFileSync(path.join(MUSIC, '.private', OWNER, 'live', '我的歌.flac'), 'utf8'), 'flac-bytes');
   store.invalidateList();
   assert.deepEqual((await store.listAll()).map((f) => f.filename), [], '共用清單（Bot、快取清理）看不到');
@@ -177,4 +182,58 @@ test('估算：MP3 不變、無損格式大幅縮小、保留原檔不變', () =
   assert.ok(estimateOutputBytes('a.flac', 1000, 'transcode') < 500);
   assert.ok(estimateOutputBytes('a.wav', 1000, 'transcode') < 300);
   assert.equal(estimateOutputBytes('a.wav', 1000, 'original'), 1000);
+});
+
+test('工作清單只看得到自己的；清除只清掉已完成的', async () => {
+  user = { id: '333333333333333333', admin: true };
+  try {
+    assert.deepEqual((await (await fetch(base + '/web/api/upload/jobs')).json()).jobs, []);
+  } finally { user = { id: OWNER, admin: true }; }
+  assert.ok((await (await fetch(base + '/web/api/upload/jobs')).json()).jobs.length > 0);
+  assert.equal((await postJson('/web/api/upload/jobs/clear', {})).status, 200);
+  assert.deepEqual((await (await fetch(base + '/web/api/upload/jobs')).json()).jobs, []);
+});
+
+test('背景佇列：一次處理一首、依上傳順序；同名的歌還在排隊時回 409；處理失敗時狀態 error 且不留暫存檔', async () => {
+  const normalizer = require('../ytdlp/musicNormalizer');
+  const orig = normalizer.processUpload;
+  const order = [];
+  let release;
+  const gate = new Promise((r) => { release = r; });
+  normalizer.processUpload = async (input, output, opts) => {
+    order.push(path.basename(output).split('.')[0]);
+    await gate;
+    if (/壞掉/.test(output)) throw new Error('模擬轉檔失敗');
+    fs.copyFileSync(input, output);
+    return { method: 'transcode' };
+  };
+  try {
+    const send = (title) => upload({ 'x-upload-filename': 'a.flac', 'x-upload-title': title, 'x-upload-folder': 'q' });
+    const ids = [];
+    for (const t of ['第一首', '壞掉', '第三首']) {
+      const r = await send(t);
+      assert.equal(r.status, 202, t);
+      ids.push((await r.json()).job.id);
+    }
+    assert.equal((await send('第三首')).status, 409, '同名的歌還在排隊');
+    let jobs = (await (await fetch(base + '/web/api/upload/jobs')).json()).jobs;
+    assert.equal(jobs.filter((j) => j.status === 'processing').length, 1, '一次只處理一首');
+    assert.equal(jobs.find((j) => j.id === ids[2]).position, 2);
+
+    release();
+    await routes.idle();
+    assert.deepEqual(order, ['第一首', '壞掉', '第三首']);
+    jobs = (await (await fetch(base + '/web/api/upload/jobs')).json()).jobs;
+    const st = Object.fromEntries(jobs.filter((j) => ids.includes(j.id)).map((j) => [j.title, j]));
+    assert.equal(st['第一首'].status, 'done');
+    assert.equal(st['第三首'].status, 'done');
+    assert.equal(st['壞掉'].status, 'error');
+    assert.match(st['壞掉'].error, /模擬轉檔失敗/);
+    assert.ok(fs.existsSync(path.join(MUSIC, 'q', '第一首.mp3')));
+    assert.ok(!fs.existsSync(path.join(MUSIC, 'q', '壞掉.mp3')));
+    assert.deepEqual(leftovers().filter((f) => /\.tmp/.test(f)), []);
+  } finally {
+    normalizer.processUpload = orig;
+    release();
+  }
 });

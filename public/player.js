@@ -424,8 +424,34 @@
     libSel.setMode(on);
     $('selectBtn').hidden = on;
     $('selBot').hidden = !bots.hasTargets(); // 有 Bot 在語音頻道才顯示「點給 Bot」
+    $('selDel').hidden = !me.admin || isOffline(); // 刪除共用音樂庫的檔案只限管理員
     render();
   }
+  // 多選刪除:兩次確認(第一次列出內容,第二次再確認一次無法復原),再一次送給伺服器
+  $('selDel').addEventListener('click', async () => {
+    const files = view.filter((f) => libSel.set.has(f.filename));
+    if (!files.length) return setStatus('選取的歌曲已不在音樂庫中');
+    const priv = files.filter((f) => isPrivateFile(f.filename)).length;
+    const pub = files.length - priv;
+    const names = files.slice(0, 8).map((f) => '・' + f.name).join('\n') + (files.length > 8 ? `\n…還有 ${files.length - 8} 首` : '');
+    const scope = [pub ? `公開 ${pub} 首` : '', priv ? `🔒 私人 ${priv} 首` : ''].filter(Boolean).join('、');
+    if (!await askConfirm(`刪除選取的 ${files.length} 首歌?`, `${scope}\n\n${names}`, { ok: '下一步', danger: true })) return;
+    const warn = pub ? '伺服器上的檔案會被刪除,所有人與 Bot 都無法再播放,所有人播放清單裡的這些歌會變成找不到。' : '伺服器上的私人檔案會被刪除。';
+    if (!await askConfirm('再確認一次:真的要刪除?', `${files.length} 首歌將被永久刪除,無法復原。\n${warn}`, { ok: `刪除 ${files.length} 首`, danger: true })) return;
+    $('selDel').disabled = true;
+    setStatus(`刪除中…(${files.length} 首)`, true);
+    try {
+      const j = await libApi('POST', '/web/api/library/delete', { files: files.map((f) => f.filename) });
+      setLibSelecting(false);
+      setStatus(j.failed.length
+        ? `已刪除 ${j.deleted.length} 首,${j.failed.length} 首失敗(${j.failed[0].error})`
+        : `已刪除 ${j.deleted.length} 首`);
+      loadList();
+    } catch (err) {
+      setStatus('刪除失敗:' + err.message);
+      libSel.update();
+    }
+  });
   $('selectBtn').addEventListener('click', () => setLibSelecting(true));
   $('selCancel').addEventListener('click', () => setLibSelecting(false));
   $('selAdd').addEventListener('click', () => {

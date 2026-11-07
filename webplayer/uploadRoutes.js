@@ -5,7 +5,9 @@
 //   GET  /upload                    舊網址：導到 /player?panel=upload
 //   GET  /web/api/upload/usage      用量：公開音樂庫、快取、自己的私人空間、磁碟剩餘、各項上限
 //   POST /web/api/upload/preflight  { target, mode, files:[{ name, size }] } 批量上傳前的預估與檢查
-//   POST /web/api/upload            原始位元組 body，欄位放 header（URL 編碼）：
+//   GET  /web/api/upload/jobs       自己的上傳工作（排隊中／處理中／完成／失敗，保留 6 小時）
+//   POST /web/api/upload/jobs/clear 清掉自己已完成／失敗的紀錄
+//   POST /web/api/upload            原檔寫進暫存後立刻回 202 { job }，由背景佇列一次一首處理。原始位元組 body，欄位放 header（URL 編碼）：
 //        x-upload-filename  原始檔名（判斷格式）
 //        x-upload-title     曲名（可省略，預設用原始檔名）
 //        x-upload-folder    子資料夾（可省略）
@@ -114,14 +116,21 @@ function mountUploadRoutes(app, { store, requireWebAuth, requireWebPage = requir
 
       const warnings = [];
       let ok = true;
-      if (u.disk.freeBytes != null && u.disk.freeBytes - estimated < u.disk.minFreeBytes) {
+      // 整批會先全部傳上來排隊：原檔＋處理後的檔案同時佔空間；還在排隊的工作也算進去
+      const rawTotal = items.reduce((sum, it, i) => sum + (it.ok ? Math.max(0, Number(files[i].size) || 0) : 0), 0);
+      const pending = pendingJobs();
+      const pendingOut = pending.reduce((sum, j) => sum + j.estimate, 0);
+      if (u.disk.freeBytes != null && u.disk.freeBytes - rawTotal - estimated - pendingOut < u.disk.minFreeBytes) {
         ok = false;
-        warnings.push(`磁碟剩餘 ${fmtMB(u.disk.freeBytes)}，整批上傳後會低於保留水位 ${fmtMB(u.disk.minFreeBytes)}`);
+        warnings.push(`磁碟剩餘 ${fmtMB(u.disk.freeBytes)}，整批上傳（原檔＋處理後）會低於保留水位 ${fmtMB(u.disk.minFreeBytes)}`);
       }
-      if (target === 'private' && u.private.quotaBytes > 0 && u.private.bytes + estimated > u.private.quotaBytes) {
+      const pendingPrivate = target === 'private'
+        ? pending.filter((j) => j.target === 'private' && j.uid === uidOf(req)).reduce((sum, j) => sum + j.estimate, 0) : 0;
+      if (target === 'private' && u.private.quotaBytes > 0 && u.private.bytes + pendingPrivate + estimated > u.private.quotaBytes) {
         ok = false;
         warnings.push(`私人空間已用 ${fmtMB(u.private.bytes)} / ${fmtMB(u.private.quotaBytes)}，整批預估再用 ${fmtMB(estimated)}，會超過配額`);
       }
+      if (pending.length) warnings.push(`伺服器目前還有 ${pending.length} 首在排隊處理，新上傳的會排在後面`);
       res.json({ ok, estimatedBytes: estimated, items, warnings, usage: u });
     } catch (err) {
       const status = err.status >= 400 && err.status < 600 ? err.status : 400;
@@ -129,10 +138,94 @@ function mountUploadRoutes(app, { store, requireWebAuth, requireWebPage = requir
     }
   });
 
+  // ── 背景處理佇列 ───────────────────────────────────────────
+  // 上傳只負責把原檔寫進暫存檔就回 202；轉檔／調音量／發布交給這條佇列，一次一首（VPS CPU 不多，慢慢做）。
+  // 工作只存在記憶體：服務重啟時排隊中的工作會中斷（暫存原檔由下次啟動的 cleanupStaleTemps 清掉），要重新上傳。
+  const jobs = new Map();       // id → job
+  const waiting = [];           // 排隊中的 job id
+  let working = false;
+  let jobSeq = 0;
+  const JOB_KEEP_MS = 6 * 60 * 60 * 1000; // 完成／失敗的工作保留 6 小時給前端查
+  const MAX_JOBS_PER_USER = 500;
+
+  const ownerKey = (req) => (req.webUser && req.webUser.id) || 'key';
+  const pendingJobs = () => [...jobs.values()].filter((j) => j.status === 'queued' || j.status === 'processing');
+  const publicJob = (j) => ({
+    id: j.id, name: j.name, title: j.title, filename: j.filename, target: j.target, mode: j.mode,
+    status: j.status, error: j.error, result: j.result, inputBytes: j.inputBytes,
+    position: j.status === 'queued' ? waiting.indexOf(j.id) + 1 : 0,
+    createdAt: j.createdAt, finishedAt: j.finishedAt,
+  });
+
+  const pruneTimer = setInterval(() => {
+    const cutoff = Date.now() - JOB_KEEP_MS;
+    for (const [id, j] of jobs) if (j.finishedAt && j.finishedAt < cutoff) jobs.delete(id);
+  }, 10 * 60 * 1000);
+  pruneTimer.unref();
+
+  async function runJob(j) {
+    let tempOutputPath = `${j.staged.absPath}.transcode_${Date.now()}_${Math.random().toString(36).slice(2, 8)}.tmp${j.outExt}`;
+    try {
+      const result = await normalizer.processUpload(j.staged.tmpPath, tempOutputPath, { mode: j.mode });
+      // 處理後的實際大小再對一次私人配額（估算可能偏小）
+      if (j.target === 'private') {
+        const outSize = fs.statSync(tempOutputPath).size;
+        const now = await store.usage(j.uid);
+        if (now.private.quotaBytes > 0 && now.private.bytes + outSize > now.private.quotaBytes) {
+          throw new StoreError(507, `私人空間不足（已用 ${fmtMB(now.private.bytes)} / ${fmtMB(now.private.quotaBytes)}）`);
+        }
+      }
+      try {
+        store.publishFile(tempOutputPath, j.staged, { overwrite: false });
+      } catch (err) {
+        if (err.status === 409) err.message = '已有同名檔案，請換一個標題或資料夾';
+        throw err;
+      }
+      tempOutputPath = null;
+      j.status = 'done';
+      j.result = result;
+      console.log(`✅ [MusicLibrary] 已上傳（${j.target}／${result.method}）: ${j.filename}`);
+    } catch (err) {
+      j.status = 'error';
+      j.error = err.code === 'ENOSPC' ? '磁碟空間不足' : (err.message || '處理失敗');
+      console.error(`❌ [MusicLibrary] 上傳處理失敗 ${j.filename}:`, err.message);
+    } finally {
+      for (const fp of [j.staged.tmpPath, tempOutputPath]) {
+        if (fp) { try { fs.unlinkSync(fp); } catch {} }
+      }
+      j.finishedAt = Date.now();
+    }
+  }
+
+  async function pump() {
+    if (working) return;
+    working = true;
+    try {
+      while (waiting.length) {
+        const j = jobs.get(waiting.shift());
+        if (!j || j.status !== 'queued') continue;
+        j.status = 'processing';
+        await runJob(j);
+      }
+    } finally { working = false; }
+  }
+
+  // 自己的上傳工作（最近 6 小時；重新整理頁面後前端用它接回進度）
+  app.get('/web/api/upload/jobs', requireWebAuth, (req, res) => {
+    const me = ownerKey(req);
+    res.set('Cache-Control', 'no-store');
+    res.json({ jobs: [...jobs.values()].filter((j) => j.owner === me).map(publicJob) });
+  });
+
+  // 清掉自己已完成／失敗的工作紀錄
+  app.post('/web/api/upload/jobs/clear', requireWebAuth, (req, res) => {
+    const me = ownerKey(req);
+    for (const [id, j] of jobs) if (j.owner === me && j.finishedAt) jobs.delete(id);
+    res.json({ ok: true });
+  });
+
   app.post('/web/api/upload', requireWebAuth, async (req, res) => {
-    let finalRelPath;
-    let tempInputPath;
-    let tempOutputPath;
+    let staged = null;
 
     // 解碼也要在 try 裡：這是 async 函式，丟出去的例外會變成沒人處理的 rejection，讓整個服務行程結束
     try {
@@ -147,61 +240,60 @@ function mountUploadRoutes(app, { store, requireWebAuth, requireWebPage = requir
       const uid = target === 'private' ? uidOf(req) : null;
       const root = target === 'private' ? store.privatePrefix(uid) : '';
       const outExt = mode === 'original' ? originalExtension : '.mp3';
-      finalRelPath = [root, folder, `${title}${outExt}`].filter(Boolean).join('/');
+      const finalRelPath = [root, folder, `${title}${outExt}`].filter(Boolean).join('/');
       const scope = { uid };
+      const owner = ownerKey(req);
 
-      // 同名檔案已存在就先擋下，不必等整個檔案傳完、轉檔完才失敗（發布時還會再原子檢查一次）
-      if ((await store.exists(finalRelPath, scope)).exists) {
+      if ([...jobs.values()].filter((j) => j.owner === owner).length >= MAX_JOBS_PER_USER) {
+        throw new StoreError(429, '上傳工作太多，請先清除已完成的紀錄');
+      }
+      // 同名檔案已存在、或同名的歌還在排隊處理：先擋下（發布時還會再原子檢查一次）
+      const pending = pendingJobs();
+      if ((await store.exists(finalRelPath, scope)).exists
+        || pending.some((j) => j.filename.toLowerCase() === finalRelPath.toLowerCase())) {
         throw new StoreError(409, '已有同名檔案，請換一個標題或資料夾');
       }
 
-      // 空間檢查（傳輸前）：原檔＋處理後的檔案都會暫時佔空間
+      // 空間檢查（傳輸前）：這個原檔＋處理後的檔案，加上還在排隊的工作之後會寫出的檔案
+      // （排隊中工作的原檔已經寫在磁碟上，剩餘空間已經扣掉了）
       const declared = Number(req.get('content-length')) || 0;
       const u = await store.usage(uid);
       const estimated = estimateOutputBytes(originalName, declared, mode);
-      if (u.disk.freeBytes != null && u.disk.freeBytes - declared - estimated < u.disk.minFreeBytes) {
+      const pendingOut = pending.reduce((sum, j) => sum + j.estimate, 0);
+      if (u.disk.freeBytes != null && u.disk.freeBytes - declared - estimated - pendingOut < u.disk.minFreeBytes) {
         throw new StoreError(507, `磁碟空間不足（剩 ${fmtMB(u.disk.freeBytes)}，需保留 ${fmtMB(u.disk.minFreeBytes)}）`);
       }
-      if (target === 'private' && u.private.quotaBytes > 0 && u.private.bytes + estimated > u.private.quotaBytes) {
-        throw new StoreError(507, `私人空間不足（已用 ${fmtMB(u.private.bytes)} / ${fmtMB(u.private.quotaBytes)}）`);
-      }
-
-      const staged = await store.writeTempFileFromStream(finalRelPath, req, originalExtension, scope);
-      tempInputPath = staged.tmpPath;
-      tempOutputPath = `${staged.absPath}.transcode_${Date.now()}_${Math.random().toString(36).slice(2, 8)}.tmp${outExt}`;
-
-      const result = await normalizer.processUpload(tempInputPath, tempOutputPath, { mode });
-
-      // 處理後的實際大小再對一次私人配額（估算可能偏小）
       if (target === 'private' && u.private.quotaBytes > 0) {
-        const outSize = fs.statSync(tempOutputPath).size;
-        const now = await store.usage(uid);
-        if (now.private.bytes + outSize > now.private.quotaBytes) {
-          throw new StoreError(507, `私人空間不足（已用 ${fmtMB(now.private.bytes)} / ${fmtMB(now.private.quotaBytes)}）`);
+        const pendingPrivate = pending.filter((j) => j.target === 'private' && j.uid === uid).reduce((sum, j) => sum + j.estimate, 0);
+        if (u.private.bytes + pendingPrivate + estimated > u.private.quotaBytes) {
+          throw new StoreError(507, `私人空間不足（已用 ${fmtMB(u.private.bytes)}，排隊中約 ${fmtMB(pendingPrivate)}，上限 ${fmtMB(u.private.quotaBytes)}）`);
         }
       }
 
-      try {
-        store.publishFile(tempOutputPath, staged, { overwrite: false });
-      } catch (err) {
-        if (err.status === 409) err.message = '已有同名檔案，請換一個標題或資料夾';
-        throw err;
-      }
-      tempOutputPath = null;
-      try { fs.unlinkSync(tempInputPath); } catch {}
-
-      console.log(`✅ [MusicLibrary] 已上傳（${target}／${result.method}）: ${finalRelPath}`);
-      return res.status(201).json({ ok: true, filename: finalRelPath, target, ...result });
+      staged = await store.writeTempFileFromStream(finalRelPath, req, originalExtension, scope);
+      const inputBytes = fs.statSync(staged.tmpPath).size;
+      const job = {
+        id: `${Date.now().toString(36)}${(++jobSeq).toString(36)}`,
+        owner, uid, name: originalName, title, filename: finalRelPath, target, mode, outExt, staged,
+        inputBytes, estimate: estimateOutputBytes(originalName, inputBytes, mode),
+        status: 'queued', error: null, result: null, createdAt: Date.now(), finishedAt: null,
+      };
+      jobs.set(job.id, job);
+      waiting.push(job.id);
+      staged = null; // 之後由佇列負責清理
+      pump();
+      return res.status(202).json({ ok: true, job: publicJob(job) });
     } catch (err) {
-      if (!tempInputPath) req.resume(); // 還沒開始讀 body：排掉，避免連線卡住
-      for (const filePath of [tempInputPath, tempOutputPath]) {
-        if (filePath) { try { fs.unlinkSync(filePath); } catch {} }
-      }
+      if (staged) { try { fs.unlinkSync(staged.tmpPath); } catch {} }
+      else req.resume(); // 還沒讀 body（或讀到一半失敗）：排掉，避免連線卡住
       console.error('❌ [MusicLibrary] 網頁上傳失敗:', err.message);
       const status = err.code === 'ENOSPC' ? 507 : err.status >= 400 && err.status < 600 ? err.status : 400;
       if (!res.headersSent) return res.status(status).json({ error: err.message || '上傳失敗' });
     }
   });
+
+  // 測試用：等佇列清空
+  return { idle: async () => { while (working || waiting.length) await new Promise((r) => setTimeout(r, 10)); } };
 }
 
 module.exports = { mountUploadRoutes, estimateOutputBytes, sanitizeFilename, sanitizeFolder };
