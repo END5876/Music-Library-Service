@@ -25,11 +25,12 @@ ENV NODE_ENV=production
 # yt-dlp 放在 node 使用者可寫的資料夾：服務以 node 身分執行，自動更新（yt-dlp -U）要能取代執行檔
 ENV PATH=/opt/yt-dlp:$PATH
 
-# 安裝 ffmpeg、python3(yt-dlp 執行需要)、curl、tini(PID 1：轉送訊號並回收孤兒子行程)、gosu(啟動時降權成 node)
+# 安裝 ffmpeg、python3(yt-dlp 執行需要)、curl、tini(PID 1：轉送訊號並回收孤兒子行程)、gosu(啟動時降權成 node)、
+# mp3gain(網頁上傳的低位元率 MP3 不重新編碼，無損調整音量)
 # yt-dlp 用官方發布的 SHA2-256SUMS 檢查下載內容
 RUN apt-get update && \
     apt-get install -y --no-install-recommends \
-      ffmpeg python3 curl ca-certificates tini gosu && \
+      ffmpeg mp3gain python3 curl ca-certificates tini gosu && \
     mkdir -p /opt/yt-dlp && cd /opt/yt-dlp && \
     curl -fsSL https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp -o yt-dlp && \
     curl -fsSL https://github.com/yt-dlp/yt-dlp/releases/latest/download/SHA2-256SUMS \

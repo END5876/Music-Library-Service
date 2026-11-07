@@ -51,6 +51,7 @@
   <symbol id="i-downloaded" viewBox="0 0 24 24"><path d="M12 2C6.49 2 2 6.49 2 12s4.49 10 10 10 10-4.49 10-10S17.51 2 12 2zm-1 8V6h2v4h3l-4 4-4-4h3zm6 7H7v-2h10v2z"/></symbol>
   <symbol id="i-play-next" viewBox="0 0 24 24"><path d="M4 10h12v2H4zm0-4h12v2H4zm0 8h8v2H4zm10 0v6l5-3z"/></symbol>
   <symbol id="i-queue-add" viewBox="0 0 24 24"><path d="M21 3H3c-1.11 0-2 .89-2 2v12c0 1.1.89 2 2 2h5v2h8v-2h5c1.1 0 1.99-.9 1.99-2L23 5c0-1.11-.9-2-2-2zm0 14H3V5h18v12zm-5-7v2h-3v3h-2v-3H8v-2h3V7h2v3h3z"/></symbol>
+  <symbol id="i-upload" viewBox="0 0 24 24"><path d="M9 16h6v-6h4l-7-7-7 7h4zm-4 2h14v2H5z"/></symbol>
   <symbol id="i-back" viewBox="0 0 24 24"><path d="M20 11H7.83l5.59-5.59L12 4l-8 8 8 8 1.41-1.41L7.83 13H20v-2z"/></symbol>
 </svg>
 
@@ -71,6 +72,7 @@
   <button class="navitem" data-view="offline"><svg><use href="#i-offline"/></svg>離線歌曲</button>
   <button class="navitem needs-online" data-view="online" hidden><svg><use href="#i-explore"/></svg>線上搜尋</button>
   <button class="navitem" data-view="bots" hidden><svg><use href="#i-bot"/></svg>Bot 正在播放</button>
+  <button class="navitem" data-view="upload" hidden><svg><use href="#i-upload"/></svg>上傳音樂</button>
   <button class="navitem subtle" id="helpBtn" title="鍵盤快捷鍵 (?)"><svg><use href="#i-keyboard"/></svg>鍵盤快捷鍵</button>
 </aside>
 
@@ -139,6 +141,37 @@
       <div class="hint" id="botsHint" hidden></div>
       <div id="botsList"></div>
       <div class="empty" id="botsEmpty" hidden><svg><use href="#i-bot"/></svg><b>目前沒有 Bot 連上</b><span>Bot 設定好 MUSIC_LIB_URL 指向這個服務後,就會出現在這裡。<br>可以看到各伺服器正在播的歌、遠端控制,並從音樂庫點歌給 Bot。</span></div>
+    </section>
+  </div>
+
+  <!-- 上傳(只有管理員;邏輯在 playerUpload.js) -->
+  <div id="viewUpload" hidden>
+    <section style="margin-top:0">
+      <div class="sec-head"><h2>上傳音樂<small id="upLimitNote"></small></h2></div>
+      <div class="up-usage" id="upUsage"></div>
+      <div class="up-opts">
+        <div class="chips" id="upTarget">
+          <button class="chip active" type="button" data-target="library">放進音樂庫</button>
+          <button class="chip" type="button" data-target="private">🔒 私人上傳</button>
+        </div>
+        <p class="hint" id="upTargetHint"></p>
+        <label class="check-line" id="upOriginalLine" hidden><input type="checkbox" id="upOriginal">保留原檔、不轉檔(占用較多空間)</label>
+        <p class="hint" id="upModeHint"></p>
+        <label class="up-field">儲存資料夾<input type="text" id="upFolder" maxlength="200" autocomplete="off"></label>
+      </div>
+      <label class="up-drop" id="upDrop">
+        <svg><use href="#i-upload"/></svg>
+        <b>拖曳音檔到這裡,或點一下選擇(可多選)</b>
+        <span>支援 MP3、WAV、OGG、FLAC、M4A、AAC</span>
+        <input type="file" id="upFiles" multiple accept="audio/mpeg,audio/wav,audio/ogg,audio/flac,audio/mp4,audio/aac,.mp3,.wav,.ogg,.flac,.m4a,.aac" hidden>
+      </label>
+      <div class="up-summary" id="upSummary" hidden></div>
+      <ul class="up-list" id="upList"></ul>
+      <div class="empty" id="upEmpty"><svg><use href="#i-note"/></svg><b>還沒有選擇檔案</b><span>每首的曲名可以在上傳前修改;上傳會一首一首進行,失敗的可以重試。</span></div>
+      <div class="up-actions">
+        <button class="btn btn-primary" id="upStart" type="button" disabled><svg><use href="#i-upload"/></svg><span>開始上傳</span></button>
+        <button class="btn btn-secondary" id="upClear" type="button" hidden>清除已完成</button>
+      </div>
     </section>
   </div>
 
@@ -232,8 +265,9 @@
   <button data-view="playlists"><svg><use href="#i-playlist"/></svg>播放清單</button>
   <button data-view="offline"><svg><use href="#i-offline"/></svg>離線</button>
   <button class="needs-online" data-view="online" hidden><svg><use href="#i-explore"/></svg>線上搜尋</button>
-  <!-- Bot 頁籤只有管理員看得到(player.js 的 showAdminUi) -->
+  <!-- Bot、上傳頁籤只有管理員看得到(player.js 的 showAdminUi) -->
   <button data-view="bots" hidden><svg><use href="#i-bot"/></svg>Bot</button>
+  <button data-view="upload" hidden><svg><use href="#i-upload"/></svg>上傳</button>
 </nav>
 
 <div class="full" id="full" data-tab="player">
@@ -356,6 +390,7 @@
 <script src="/player-assets/playerPlatform.js"></script>
 <script src="/player-assets/playerGestures.js"></script>
 <script src="/player-assets/playerBots.js"></script>
+<script src="/player-assets/playerUpload.js"></script>
 <script src="/player-assets/player.js"></script>
 </body>
 </html>

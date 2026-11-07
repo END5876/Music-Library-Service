@@ -171,9 +171,18 @@
     if (me.admin) bots.refresh();
   }
   function showAdminUi() {
-    document.querySelectorAll('[data-view="bots"]').forEach((b) => { b.hidden = !me.admin; });
-    if (!me.admin && mode === 'bots') setMode('library');
+    document.querySelectorAll('[data-view="bots"], [data-view="upload"]').forEach((b) => { b.hidden = !me.admin; });
+    if (!me.admin && (mode === 'bots' || mode === 'upload')) setMode('library');
+    // 舊的 /upload 網址會導到 /player?panel=upload:確認是管理員後直接打開上傳頁籤
+    if (me.admin && openUploadPanel) { openUploadPanel = false; setMode('upload'); }
   }
+  let openUploadPanel = (() => {
+    const u = new URL(location.href);
+    if (u.searchParams.get('panel') !== 'upload') return false;
+    u.searchParams.delete('panel');
+    window.history.replaceState(window.history.state, '', u.pathname + u.search + u.hash);
+    return true;
+  })();
   // Discord 登入導回來的結果(?login=denied 等):第一次叫出登入框時顯示,並從網址拿掉
   // 注意:這個閉包裡的 history 是播放紀錄陣列,瀏覽器的要用 window.history
   let loginNotice = (() => {
@@ -334,9 +343,16 @@
     $, setStatus, askConfirm, pushLayer, dropLayer, fmt, makeRow, showLogin,
     libInfo: (fn) => { const f = byFile.get(fn); return f ? { name: f.name, duration: f.duration || 0 } : null; },
   });
+  // ── 上傳音樂(管理員;面板在 playerUpload.js)──上傳完成後重新載入音樂庫清單
+  const uploader = window.MLUpload.create({ onUploaded: (n) => { loadList(); setStatus(`已上傳 ${n} 首`); } });
 
   const folderOf = (f) => f.filename.includes('/') ? f.filename.split('/')[0] : '';
-  const libSub = (f) => folderOf(f) || '音樂庫';
+  // 私人上傳(.private/<自己的 ID>/...,只有管理員本人的清單裡會有):資料夾顯示成「🔒 私人」,不能點給 Bot
+  const PRIVATE_DIR = '.private';
+  const isPrivateFile = (fn) => typeof fn === 'string' && fn.startsWith(PRIVATE_DIR + '/');
+  const privSubdir = (fn) => fn.split('/').slice(2, -1).join('/'); // .private/<id>/<這段>/檔名
+  const folderLabel = (k) => (k === PRIVATE_DIR ? '🔒 私人' : k);
+  const libSub = (f) => folderLabel(folderOf(f)) || '音樂庫';
   const onlineSub = (r) => [r.platform, r.author].filter(Boolean).join(' · ') || '線上歌曲';
 
   // 使用者主動點選一首歌:重置歷史;若隨機開啟,立刻重新排出不重複的隨機佇列
@@ -348,7 +364,7 @@
   }
   const libRow = (f, i) => {
     const li = makeRow({
-      key: 'lib:' + f.filename, title: f.name, sub: folderOf(f), dur: libDur(f), idx: i + 1,
+      key: 'lib:' + f.filename, title: f.name, sub: folderLabel(folderOf(f)), dur: libDur(f), idx: i + 1,
       btn: { icon: 'more', title: '更多', dlmenu: 'lib:' + f.filename, onClick: (b) => openRowMenu(b, f) },
       onClick: (ev) => libSel.on ? libSel.toggle(f.filename, ev.shiftKey) : start(f.filename),
     });
@@ -516,7 +532,7 @@
     for (const f of ['', ...folders]) {
       const b = document.createElement('button');
       b.className = 'chip' + (f === folder ? ' active' : '');
-      b.textContent = f || '全部';
+      b.textContent = folderLabel(f) || '全部';
       b.addEventListener('click', () => { folder = f; renderChips(); applyFilter(); });
       box.appendChild(b);
     }
@@ -1256,12 +1272,15 @@
     $('viewPlaylists').hidden = m !== 'playlists';
     $('viewOffline').hidden = m !== 'offline';
     $('viewBots').hidden = m !== 'bots';
+    $('viewUpload').hidden = m !== 'upload';
     if (m === 'bots') bots.show(); else bots.hide();
+    if (m === 'upload') uploader.show();
     document.body.classList.toggle('pl-detail', m === 'playlists' && !!plOpen && !!plById(plOpen));
     document.querySelectorAll('[data-view]').forEach(b => b.classList.toggle('active', b.dataset.view === m));
     const s = $('search');
-    s.disabled = m === 'bots'; // Bot 頁籤沒有可搜尋的內容:找歌請到音樂庫／線上搜尋,再從「⋮」點給 Bot
+    s.disabled = m === 'bots' || m === 'upload'; // Bot、上傳頁籤沒有可搜尋的內容:找歌請到音樂庫／線上搜尋,再從「⋮」點給 Bot
     if (m === 'bots') { s.placeholder = '到「音樂庫」或「線上搜尋」找歌,從「⋮」點給 Bot'; s.value = ''; }
+    else if (m === 'upload') { s.placeholder = ''; s.value = ''; }
     else if (m === 'online') { s.placeholder = '搜尋 YouTube / Bilibili,或貼上影片網址,按 Enter'; s.value = onlineQuery; }
     else if (m === 'playlists') { s.placeholder = '搜尋播放清單…'; s.value = plQuery; renderPlaylists(); }
     else if (m === 'offline') { s.placeholder = '搜尋離線歌曲…'; s.value = offQuery; renderOffline(); updateQuota(); }
@@ -1324,7 +1343,8 @@
   function queueMenuItems(it) {
     menuItem('play-next', '下一首播放', () => queueItem(it, true));
     menuItem('queue-add', '加入佇列', () => queueItem(it, false));
-    if (bots.hasTargets()) menuItem('bot', '點給 Bot 播放', () => bots.sendToBot(it));
+    // 私人歌曲 Bot 讀不到(伺服器也會擋):不提供點給 Bot
+    if (bots.hasTargets() && !(it.kind === 'lib' && isPrivateFile(it.filename))) menuItem('bot', '點給 Bot 播放', () => bots.sendToBot(it));
   }
 
   let searchTok = 0; // 連續送出搜尋時,只顯示最後一次的結果
@@ -1753,7 +1773,7 @@
     }
     return { id: key, kind: 'online', url: key.slice(3), title: m.title || '未知標題', author: m.author, platform: m.platform, duration: m.duration, at: m.at || 0 };
   }
-  const offSub = (it) => it.kind === 'lib' ? (it.filename.includes('/') ? it.filename.split('/')[0] : '音樂庫') : onlineSub(it);
+  const offSub = (it) => it.kind === 'lib' ? (it.filename.includes('/') ? folderLabel(it.filename.split('/')[0]) : '音樂庫') : onlineSub(it);
   function renderOffline() {
     const q = zhFold(offQuery.trim());
     let list = [...offlineKeys].map(offItem);
@@ -2158,14 +2178,22 @@
       isOff ? '移除離線檔案' : (dlState.has(key) ? '下載中…' : '下載離線'),
       () => toggleOffline(item));
     menuItem('playlist-add', '加入播放清單', () => pickPlaylist([item]));
+    const priv = isPrivateFile(f.filename);
     if (me.admin && !isOffline()) { // 音樂庫是共用的:移動／改名／刪除只限管理員
-      if (!folderOf(f)) menuItem('downloaded', '收藏(移到資料夾)', () => moveLibFile(f, 'folder'));
-      else menuItem('lib', '移到其他資料夾', () => moveLibFile(f, 'folder'));
+      if (priv) {
+        menuItem('lib', '移到其他私人資料夾', () => moveLibFile(f, 'folder'));
+        menuItem('downloaded', '公開到音樂庫', () => moveLibFile(f, 'publish'));
+      } else {
+        if (!folderOf(f)) menuItem('downloaded', '收藏(移到資料夾)', () => moveLibFile(f, 'folder'));
+        else menuItem('lib', '移到其他資料夾', () => moveLibFile(f, 'folder'));
+        if (me.id) menuItem('offline', '設為私人', () => moveLibFile(f, 'private'));
+      }
       menuItem('edit', '重新命名', () => moveLibFile(f, 'rename'));
-      menuItem('delete', '從音樂庫刪除', () => deleteLibFile(f), 'danger');
+      menuItem('delete', priv ? '刪除私人歌曲' : '從音樂庫刪除', () => deleteLibFile(f), 'danger');
     }
     menuInfo([
-      ['資料夾:', folderOf(f) || '(音樂庫根目錄)'],
+      ['資料夾:', priv ? '🔒 私人' + (privSubdir(f.filename) ? ' / ' + privSubdir(f.filename) : '') : (folderOf(f) || '(音樂庫根目錄)')],
+      ...(priv ? [['可見範圍:', '只有你;其他帳號和 Bot 都看不到']] : []),
       ...(f.duration ? [['長度:', fmt(f.duration)]] : []),
       ['檔案大小:', fmtSize(f.size)],
       ['離線狀態:', isOff ? '已下載到此裝置' : (dlState.has(key) ? '下載中' : '未下載')],
@@ -2219,17 +2247,27 @@
   }
 
   // how:'folder' 移到資料夾(保留檔名)／'rename' 改檔名(保留資料夾)
+  // 另外:'publish' 私人 → 公開資料夾／'private' 公開 → 自己的私人空間
   async function moveLibFile(f, how) {
     const parts = f.filename.split('/');
     const file = parts.pop();
     const ext = (file.match(/\.[^.]+$/) || [''])[0];
     const stem = file.slice(0, file.length - ext.length);
     const dir = parts.join('/');
+    const privRoot = PRIVATE_DIR + '/' + me.id;
+    const cleanDir = (d) => d.replace(/\\/g, '/').replace(/^\/+|\/+$/g, '');
     let to;
-    if (how === 'folder') {
-      const folders = [...new Set(all.map(folderOf).filter(Boolean))];
+    if (how === 'private') {
+      if (!await askConfirm('設為私人?', f.name + '\n只有你看得到、聽得到;其他人的播放清單裡這首會變成找不到,Bot 也不能再播放。', { ok: '設為私人' })) return;
+      to = privRoot + '/' + stem;
+    } else if (how === 'folder' && isPrivateFile(f.filename)) {
+      const d = await askText('移到哪個私人資料夾?(留空＝私人空間最上層)', privSubdir(f.filename));
+      if (d === null) return;
+      to = privRoot + '/' + (cleanDir(d) ? cleanDir(d) + '/' : '') + stem;
+    } else if (how === 'folder' || how === 'publish') {
+      const folders = [...new Set(all.map(folderOf).filter((k) => k && k !== PRIVATE_DIR))];
       const hint = folders.length ? '(現有:' + folders.slice(0, 5).join('、') + (folders.length > 5 ? '…' : '') + ')' : '';
-      const d = await askText('移到哪個資料夾?' + hint, dir || 'favorites');
+      const d = await askText((how === 'publish' ? '公開到哪個資料夾?' : '移到哪個資料夾?') + hint, how === 'publish' ? 'uploads' : (dir || 'favorites'));
       if (d === null) return;
       const clean = d.replace(/\\/g, '/').replace(/^\/+|\/+$/g, '');
       if (!clean) return setStatus('請輸入資料夾名稱(根目錄的歌會被快取清理)');
@@ -2242,14 +2280,18 @@
     try {
       const j = await libApi('POST', '/web/api/library/move', { from: f.filename, to });
       await renameLocalRefs(j.from, j.to);
-      setStatus(how === 'folder' ? '已收藏到「' + j.to.split('/').slice(0, -1).join('/') + '」' : '已重新命名');
+      const where = isPrivateFile(j.to) ? '🔒 私人' + (privSubdir(j.to) ? ' / ' + privSubdir(j.to) : '') : j.to.split('/').slice(0, -1).join('/');
+      setStatus(how === 'private' ? '已設為私人' : how === 'publish' ? '已公開到「' + where + '」' : how === 'folder' ? '已移到「' + where + '」' : '已重新命名');
       // 正在播的就是這首:清單重新載入後把播放資訊換成新名稱
       loadList().then(() => { const t = currentFile === j.to && byFile.get(j.to); if (t) setNow({ title: t.name, sub: libSub(t) }); });
     } catch (err) { setStatus('移動失敗:' + err.message); }
   }
 
   async function deleteLibFile(f) {
-    if (!await askConfirm('從音樂庫刪除這首歌?', f.name + '\n伺服器上的檔案會被刪除,所有裝置與 Bot 都無法再播放,無法復原。', { ok: '刪除', danger: true })) return;
+    const priv = isPrivateFile(f.filename);
+    if (!await askConfirm(priv ? '刪除這首私人歌曲?' : '從音樂庫刪除這首歌?',
+      f.name + (priv ? '\n伺服器上的私人檔案會被刪除,無法復原。' : '\n伺服器上的檔案會被刪除,所有裝置與 Bot 都無法再播放,無法復原。'),
+      { ok: '刪除', danger: true })) return;
     try {
       await libApi('DELETE', streamUrl(f.filename).replace('/web/stream/', '/web/api/library/file/'));
       setStatus('已刪除');

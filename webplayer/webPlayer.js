@@ -17,7 +17,7 @@
 //   webAuth.js         Discord 登入、管理員、Cookie、主畫面 App 的代碼交接（/auth/*、/web/api/me、POST /auth/logout）
 //   onlineRoutes.js    線上串流 API（/web/api/capabilities|search|info、/web/play）
 //   playlistRoutes.js  播放清單 API（/web/api/playlists/*，每個帳號各自一份）
-//   uploadRoutes.js    受控音檔上傳（/upload?upload=1、/web/api/upload?upload=1；管理員）
+//   uploadRoutes.js    音檔上傳（/web/api/upload*；管理員；可選私人上傳 .private/<uid>/，只有本人看得到）
 //   durationStore.js   歌曲長度快取（ffprobe 讀取，/web/api/list 會帶上 duration）
 //   libraryManageRoutes.js  音樂庫管理：移動（收藏到資料夾）／重新命名／刪除（/web/api/library/*；管理員）
 //   ../botSync/routes.js    Bot 正在播放＋遠端控制（/web/api/bots/*；管理員）
@@ -44,6 +44,9 @@ function mountWebPlayer(app, { store, libSecret, status, botHub }) {
   if (!auth) return false;
   const { requireWebAuth, requireWebAdmin, requireAdminPage, isAdmin } = auth;
 
+  // 私人上傳只限管理員本人（OWNER_USER_ID）：其他帳號、只帶內部金鑰的呼叫端（沒有 id）一律不帶 uid，私人路徑會被拒絕
+  const privateScope = (req) => (req.webUser && req.webUser.admin && req.webUser.id ? { uid: req.webUser.id } : {});
+
   app.get('/', (req, res) => res.redirect('/player'));
   app.use('/player-assets', express.static(path.join(__dirname, '..', 'public'), { index: false, maxAge: 0 }));
   app.get('/manifest.webmanifest', (req, res) => {
@@ -63,14 +66,18 @@ function mountWebPlayer(app, { store, libSecret, status, botHub }) {
 
   app.get('/web/api/list', requireWebAuth, async (req, res) => {
     try {
-      const files = await store.listAll();
+      // 管理員本人的私人上傳（.private/<uid>/）只會出現在自己的清單裡；其他人、Bot 的 /api/music/list 都看不到
+      const scope = privateScope(req);
+      const files = scope.uid ? [...await store.listAll(), ...await store.listPrivate(scope.uid)] : await store.listAll();
       // duration:歌曲長度(秒),還沒讀到的曲目不帶;durationsPending=true 表示背景還在讀,前端可稍後再要一次
-      const { durations, pending } = durationStore.lookup(files, (fn) => store.resolveForRead(fn));
+      const { durations, pending } = durationStore.lookup(files, (fn) => store.resolveForRead(fn, scope));
       res.set('Cache-Control', 'no-store');
       res.json({
-        files: files.map(({ filename, name, size }) => {
+        files: files.map(({ filename, name, size, private: priv }) => {
           const duration = durations.get(filename);
-          return duration ? { filename, name, size, duration } : { filename, name, size };
+          const f = duration ? { filename, name, size, duration } : { filename, name, size };
+          if (priv) f.private = true;
+          return f;
         }),
         durationsPending: pending,
       });
@@ -83,7 +90,7 @@ function mountWebPlayer(app, { store, libSecret, status, botHub }) {
   // res.sendFile 內建 Range / If-Range / ETag，<audio> 拖曳進度靠它
   app.get('/web/stream/*', requireWebAuth, (req, res) => {
     try {
-      const absPath = store.resolveForRead(req.params[0]);
+      const absPath = store.resolveForRead(req.params[0], privateScope(req));
       if (!absPath) return res.status(404).json({ error: '找不到檔案' });
       store.touchCache(absPath); // 播放＝使用中，延後被快取清理（LRU）
       res.sendFile(absPath, { dotfiles: 'allow', headers: { 'Cache-Control': 'private, max-age=3600' } }, (err) => {
@@ -100,10 +107,10 @@ function mountWebPlayer(app, { store, libSecret, status, botHub }) {
 
   mountOnlineRoutes(app, { requireWebAuth });
 
-  mountPlaylists(app, { requireWebAuth, online });
+  mountPlaylists(app, { requireWebAuth, online, privateScope });
   // 以下會影響所有人（共用音樂庫、Bot 所在的伺服器）或屬於內部資訊：只限管理員（OWNER_USER_ID）
   mountUploadRoutes(app, { store, requireWebAuth: requireWebAdmin, requireWebPage: requireAdminPage });
-  mountLibraryManageRoutes(app, { store, requireWebAuth: requireWebAdmin });
+  mountLibraryManageRoutes(app, { store, requireWebAuth: requireWebAdmin, privateScope });
   if (botHub) {
     mountBotWebApi(app, {
       hub: botHub, requireWebAuth: requireWebAdmin, isAuthenticated: isAdmin,

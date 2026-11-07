@@ -34,6 +34,10 @@ const SAFE_INPUT_ARGS = [
   '-format_whitelist', 'mp3,wav,ogg,flac,aac,mov,mp4,m4a,3gp,3g2,mj2,matroska,webm',
 ];
 const RESERVED_TOP_DIR = '.web';        // 舊版播放清單資料夾：仍不對外提供讀寫、不列入清單
+// 私人上傳：.private/<Discord 使用者 ID>/...。跟 .web 一樣不列入共用清單（Bot、快取清理、狀態統計都看不到），
+// 一般路徑檢查一律拒絕；只有呼叫端明確帶上「這個請求的登入帳號」（opts.uid）時，才能存取自己的那一份。
+const PRIVATE_TOP_DIR = '.private';
+const UID_RE = /^\d{5,25}$/;
 const MAX_UPLOAD_MB = parseInt(process.env.MAX_UPLOAD_MB || '512', 10);
 const LIST_TTL_MS = 3000;               // listAll 結果的短暫快取
 const STALE_TMP_MS = 60 * 60 * 1000;    // 殘留暫存檔超過 1 小時視為垃圾
@@ -71,7 +75,8 @@ function isCachePath(relPath) {
 
 // ── 路徑安全檢查：拒絕任何跳出 MUSIC_DIR 範圍的相對路徑 ──────
 // 所有 filename 都是外部（其他 Bot）傳進來的字串，一律視為不可信任輸入。
-function toSafeRelPath(rawRelPath) {
+//   opts.uid  這個請求的登入帳號：有帶才允許 .private/<uid>/ 底下（而且只限自己的 uid）
+function toSafeRelPath(rawRelPath, { uid } = {}) {
   const raw = normalizeSlashes(rawRelPath);
   if (raw.includes('\0')) throw new Error('不合法的檔案路徑');
   const cleaned = raw.replace(/^\/+/, '');
@@ -81,7 +86,15 @@ function toSafeRelPath(rawRelPath) {
     throw new Error('不合法的檔案路徑');
   }
   // 內部資料夾（播放清單 JSON 等）不可經由 API 讀寫（不分大小寫：Windows / macOS 上 .WEB 就是同一個資料夾）
-  if (isReservedTopDir(normalized.split('/')[0])) throw new Error('不合法的檔案路徑');
+  const parts = normalized.split('/');
+  if (isPrivateTopDir(parts[0])) {
+    // 大小寫必須完全一致（.PRIVATE 在 Windows 上是同一個資料夾，但不能拿來繞過擁有者比對）
+    if (!uid || !UID_RE.test(String(uid)) || parts[0] !== PRIVATE_TOP_DIR || parts[1] !== String(uid) || parts.length < 3) {
+      throw new Error('不合法的檔案路徑');
+    }
+  } else if (isReservedTopDir(parts[0])) {
+    throw new Error('不合法的檔案路徑');
+  }
 
   const absPath = path.resolve(path.join(MUSIC_DIR, normalized));
   const rootPath = path.resolve(MUSIC_DIR);
@@ -93,8 +106,21 @@ function toSafeRelPath(rawRelPath) {
   return { relPath: normalized, absPath };
 }
 
+// 不列入共用清單、一般 API 不能讀寫的頂層資料夾（.web、.private）
 function isReservedTopDir(name) {
-  return String(name).toLowerCase() === RESERVED_TOP_DIR;
+  const n = String(name).toLowerCase();
+  return n === RESERVED_TOP_DIR || n === PRIVATE_TOP_DIR;
+}
+function isPrivateTopDir(name) {
+  return String(name).toLowerCase() === PRIVATE_TOP_DIR;
+}
+// 某個帳號的私人資料夾（相對路徑）；uid 不合法時丟錯
+function privatePrefix(uid) {
+  if (!UID_RE.test(String(uid || ''))) throw new StoreError(403, '這個帳號不能使用私人上傳');
+  return `${PRIVATE_TOP_DIR}/${uid}`;
+}
+function isPrivatePath(relPath) {
+  return isPrivateTopDir(normalizeSlashes(relPath).replace(/^\/+/, '').split('/')[0]);
 }
 
 // 與 Mousebot 過去 localMusicHandler.js 的 cleanLocalTitle() 完全相同的
@@ -208,8 +234,8 @@ function isServableName(relPath) {
   return SUPPORTED_EXTENSIONS.includes(path.extname(base).toLowerCase()) && !isTempName(base);
 }
 
-async function exists(rawRelPath) {
-  const { relPath, absPath } = toSafeRelPath(rawRelPath);
+async function exists(rawRelPath, opts) {
+  const { relPath, absPath } = toSafeRelPath(rawRelPath, opts);
   if (!isServableName(relPath)) return { exists: false, filename: relPath };
   try {
     const stat = await fsp.stat(absPath);
@@ -223,8 +249,8 @@ async function exists(rawRelPath) {
 // 只做路徑檢查，不 stat：檔案存不存在交給 res.sendFile（它本來就會 stat），
 // 失敗時呼叫端用 isNotFoundError() 判斷要不要回 404。
 // 這樣每個 Range 請求（拖曳進度）不必再多一次同步 stat 卡住 event loop。
-function resolveForRead(rawRelPath) {
-  const { relPath, absPath } = toSafeRelPath(rawRelPath);
+function resolveForRead(rawRelPath, opts) {
+  const { relPath, absPath } = toSafeRelPath(rawRelPath, opts);
   return isServableName(relPath) ? absPath : null;
 }
 
@@ -239,11 +265,11 @@ function isNotFoundError(err) {
 // ════════════════════════════════════════════════════════
 // 將原始上傳內容先寫到不可見暫存檔。呼叫端必須在後續處理成功後才發布它，
 // 因此轉檔／正規化期間不會有半成品出現在音樂庫清單或被播放器讀取。
-function writeTempFileFromStream(rawRelPath, readableStream, tempExtension = '') {
+function writeTempFileFromStream(rawRelPath, readableStream, tempExtension = '', opts) {
   return new Promise((resolve, reject) => {
     let relPath, absPath;
     try {
-      ({ relPath, absPath } = toSafeRelPath(rawRelPath));
+      ({ relPath, absPath } = toSafeRelPath(rawRelPath, opts));
       if (!isServableName(relPath)) throw new Error('只允許上傳音訊檔（' + SUPPORTED_EXTENSIONS.join(' ') + '）');
       if (tempExtension && !SUPPORTED_EXTENSIONS.includes(String(tempExtension).toLowerCase())) {
         throw new Error('不支援的音訊格式');
@@ -338,14 +364,14 @@ function writeErrorStatus(err) {
 }
 
 // from / to 都是相對路徑；to 沒有副檔名時沿用 from 的（不允許改副檔名：檔案內容不會被轉檔）
-async function moveFile(rawFrom, rawTo) {
+async function moveFile(rawFrom, rawTo, opts) {
   let from, to;
   try {
-    from = toSafeRelPath(rawFrom);
+    from = toSafeRelPath(rawFrom, opts);
     let toRaw = normalizeSlashes(rawTo).trim();
     const fromExt = path.posix.extname(from.relPath);
     if (path.posix.extname(toRaw).toLowerCase() !== fromExt.toLowerCase()) toRaw += fromExt;
-    to = toSafeRelPath(toRaw);
+    to = toSafeRelPath(toRaw, opts);
   } catch (err) {
     throw new StoreError(400, err.message);
   }
@@ -369,9 +395,9 @@ async function moveFile(rawFrom, rawTo) {
   return { from: from.relPath, to: to.relPath };
 }
 
-async function deleteFile(rawRelPath) {
+async function deleteFile(rawRelPath, opts) {
   let relPath, absPath;
-  try { ({ relPath, absPath } = toSafeRelPath(rawRelPath)); } catch (err) { throw new StoreError(400, err.message); }
+  try { ({ relPath, absPath } = toSafeRelPath(rawRelPath, opts)); } catch (err) { throw new StoreError(400, err.message); }
   if (!isServableName(relPath)) throw new StoreError(400, '只能刪除音訊檔');
   try {
     await fsp.unlink(absPath);
@@ -405,6 +431,56 @@ async function diskHealth() {
     freeMB = Math.floor((Number(st.bavail) * Number(st.bsize)) / (1024 * 1024));
   } catch { /* 平台不支援就不回報 */ }
   return { readable, volume, freeMB };
+}
+
+// ════════════════════════════════════════════════════════
+//  私人上傳（.private/<uid>/）：只有本人看得到，不進共用清單
+// ════════════════════════════════════════════════════════
+const PRIVATE_QUOTA_MB = Math.max(0, parseInt(process.env.PRIVATE_QUOTA_MB || '5120', 10) || 0); // 0 = 不限
+const MIN_FREE_MB = Math.max(0, parseInt(process.env.MIN_FREE_MB || '2048', 10) || 0);
+
+// 這個帳號的私人曲目，格式同 listAll（filename 是完整相對路徑 .private/<uid>/...），另外帶 private: true
+async function listPrivate(uid) {
+  const prefix = privatePrefix(uid);
+  const dir = path.join(MUSIC_DIR, ...prefix.split('/'));
+  let all;
+  try { all = await walkFiles(dir, 1); } catch (err) {
+    if (err.code === 'ENOENT') return [];
+    throw err;
+  }
+  const files = all.filter(fp => SUPPORTED_EXTENSIONS.includes(path.extname(fp).toLowerCase()));
+  const stats = await statBatched(files);
+  const out = [];
+  files.forEach((fp, k) => {
+    if (!stats[k]) return;
+    const relPath = normalizeSlashes(path.relative(MUSIC_DIR, fp));
+    out.push({
+      filename: relPath,
+      name: cleanDisplayName(path.basename(fp, path.extname(fp))),
+      size: stats[k].size,
+      mtimeMs: stats[k].mtimeMs,
+      private: true,
+    });
+  });
+  const collator = new Intl.Collator('zh-Hant');
+  return out.sort((a, b) => collator.compare(a.name, b.name));
+}
+
+// 上傳面板的用量：公開音樂庫、快取、自己的私人空間、磁碟剩餘
+async function usage(uid) {
+  const [sum, disk] = await Promise.all([summary(), diskHealth()]);
+  let privateBytes = 0, privateFiles = 0;
+  if (uid && UID_RE.test(String(uid))) {
+    for (const f of await listPrivate(uid)) { privateBytes += f.size; privateFiles += 1; }
+  }
+  const MB = 1024 * 1024;
+  return {
+    library: { bytes: sum.totalBytes - sum.cacheBytes, files: sum.files - sum.cacheFiles },
+    cache: { bytes: sum.cacheBytes, files: sum.cacheFiles, limitBytes: sum.cacheLimitBytes },
+    private: { bytes: privateBytes, files: privateFiles, quotaBytes: PRIVATE_QUOTA_MB * MB },
+    disk: { freeBytes: disk.freeMB == null ? null : disk.freeMB * MB, minFreeBytes: MIN_FREE_MB * MB },
+    maxUploadBytes: MAX_UPLOAD_MB * MB,
+  };
 }
 
 // 狀態頁用：曲目數、總大小、快取（根目錄第一層的快取格式檔名）佔用
@@ -522,7 +598,8 @@ async function cleanupStaleTemps(dir = MUSIC_DIR, depth = 0) {
   for (const e of entries) {
     const fp = path.join(dir, e.name);
     if (e.isDirectory()) {
-      if (depth === 0 && isReservedTopDir(e.name)) continue;
+      // .private 底下也有上傳暫存檔，要一起清；只跳過 .web
+      if (depth === 0 && e.name.toLowerCase() === RESERVED_TOP_DIR) continue;
       n += await cleanupStaleTemps(fp, depth + 1);
     } else if (e.isFile() && isTempName(e.name)) {
       try {
@@ -560,4 +637,12 @@ module.exports = {
   summary,
   diskHealth,
   isCacheFileName,
+  PRIVATE_TOP_DIR,
+  PRIVATE_QUOTA_MB,
+  MIN_FREE_MB,
+  MAX_UPLOAD_MB,
+  privatePrefix,
+  isPrivatePath,
+  listPrivate,
+  usage,
 };

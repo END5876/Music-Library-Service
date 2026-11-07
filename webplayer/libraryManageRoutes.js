@@ -13,7 +13,7 @@
 const express = require('express');
 const pl = require('./playlistStore');
 
-function mountLibraryManageRoutes(app, { store, requireWebAuth }) {
+function mountLibraryManageRoutes(app, { store, requireWebAuth, privateScope = () => ({}) }) {
   const json = express.json({ limit: '4kb' });
 
   const fail = (res, err, what) => {
@@ -28,9 +28,11 @@ function mountLibraryManageRoutes(app, { store, requireWebAuth }) {
       return res.status(400).json({ error: '缺少 from / to' });
     }
     try {
-      const { from, to } = await store.moveFile(b.from, b.to);
+      const { from, to } = await store.moveFile(b.from, b.to, privateScope(req));
       let playlists = 0;
-      try { playlists = pl.renameLibFile(from, to); } catch (err) {
+      // 搬進私人資料夾：只改自己的播放清單（別人的清單不能指向私人路徑，那些項目會顯示為找不到）
+      const intoPrivate = store.isPrivatePath(to) && !store.isPrivatePath(from);
+      try { playlists = pl.renameLibFile(from, to, intoPrivate ? { onlyOwner: req.webUser.id } : {}); } catch (err) {
         console.error('❌ [Playlists] 更新播放清單路徑失敗:', err.message);
       }
       res.json({ ok: true, from, to, playlists });
@@ -41,7 +43,7 @@ function mountLibraryManageRoutes(app, { store, requireWebAuth }) {
 
   app.delete('/web/api/library/file/*', requireWebAuth, async (req, res) => {
     try {
-      const { filename } = await store.deleteFile(req.params[0]);
+      const { filename } = await store.deleteFile(req.params[0], privateScope(req));
       res.json({ ok: true, filename });
     } catch (err) {
       fail(res, err, '刪除檔案');

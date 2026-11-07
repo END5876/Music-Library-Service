@@ -138,13 +138,14 @@ function find(owner, id) {
 const itemKey = (it) => (it.kind === 'lib' ? `lib:${it.filename}` : `on:${it.url}`);
 
 // 輸入全部視為不可信：lib 必須真的存在於音樂庫；online 必須是允許的網域
-async function normalizeItem(raw, { isAllowedUrl, cleanUrl }) {
+// scope：{ uid } 時允許這個帳號自己的私人上傳（見 musicStore 的 .private）
+async function normalizeItem(raw, { isAllowedUrl, cleanUrl, scope }) {
   if (!raw || typeof raw !== 'object') return null;
 
   if (raw.kind === 'lib') {
     if (typeof raw.filename !== 'string') return null;
     let info;
-    try { info = await store.exists(raw.filename); } catch { return null; }
+    try { info = await store.exists(raw.filename, scope); } catch { return null; }
     if (!info.exists) return null;
     const base = path.posix.basename(info.filename).replace(/\.[^.]+$/, '');
     return { kind: 'lib', filename: info.filename, title: str(raw.title, 200) || base };
@@ -286,10 +287,13 @@ function reorder(owner, id, order) {
 
 // 音樂庫檔案被移動／重新命名後，所有帳號的播放清單裡指向舊路徑的項目跟著改（音樂庫是共用的）。
 // 同一份清單裡新路徑已經存在時，移除舊的那筆（維持「同一清單不重複歌曲」）。回傳受影響的清單數。
-function renameLibFile(from, to) {
+// onlyOwner：只改這個帳號的清單（公開歌曲搬進自己的私人資料夾時，別人的清單不能指向私人路徑）
+function renameLibFile(from, to, { onlyOwner } = {}) {
   if (!from || !to || from === to) return 0;
   let changed = 0;
-  for (const p of Object.values(load().owners).flat()) {
+  const owners = load().owners;
+  const lists = onlyOwner ? (owners[onlyOwner] || []) : Object.values(owners).flat();
+  for (const p of lists) {
     if (!p.items.some((it) => it.kind === 'lib' && it.filename === from)) continue;
     const hasTo = p.items.some((it) => it.kind === 'lib' && it.filename === to);
     p.items = hasTo

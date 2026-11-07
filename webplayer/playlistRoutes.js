@@ -16,7 +16,7 @@
 const express = require('express');
 const pl = require('./playlistStore');
 
-function mountPlaylists(app, { requireWebAuth, online }) {
+function mountPlaylists(app, { requireWebAuth, online, privateScope = () => ({}) }) {
   const deps = { isAllowedUrl: online.isAllowedUrl, cleanUrl: online.cleanUrl };
   const json = express.json({ limit: '512kb' });
   const BASE = '/web/api/playlists';
@@ -63,7 +63,7 @@ function mountPlaylists(app, { requireWebAuth, online }) {
 
   app.post(BASE, requireWebAuth, json, handle(async (req) => {
     const b = req.body || {};
-    return { playlist: await pl.create(owner(req), b.name, b.items, deps) };
+    return { playlist: await pl.create(owner(req), b.name, b.items, { ...deps, scope: privateScope(req) }) };
   }));
 
   app.patch(`${BASE}/:id`, requireWebAuth, json, handle((req) => ({
@@ -76,7 +76,7 @@ function mountPlaylists(app, { requireWebAuth, online }) {
   }));
 
   app.post(`${BASE}/:id/items`, requireWebAuth, json, handle((req) =>
-    pl.addItems(owner(req), req.params.id, (req.body || {}).items, deps)));
+    pl.addItems(owner(req), req.params.id, (req.body || {}).items, { ...deps, scope: privateScope(req) })));
 
   app.post(`${BASE}/:id/items/remove`, requireWebAuth, json, handle((req) =>
     pl.removeItems(owner(req), req.params.id, (req.body || {}).ids)));
