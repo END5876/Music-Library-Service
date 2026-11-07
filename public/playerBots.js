@@ -258,9 +258,14 @@
     $('botPickClose').addEventListener('click', closePick);
     $('botPick').addEventListener('click', (e) => { if (e.target === $('botPick')) closePick(); });
 
+    // 私人歌曲（.private/<id>/...）Bot 讀不到（伺服器也會擋）：送出前就濾掉，選 Bot 之前先說清楚
+    const isPrivateLib = (it) => it && it.kind === 'lib' && String(it.filename || '').startsWith('.private/');
     async function sendToBot(items, onDone) {
-      const list = (Array.isArray(items) ? items : [items]).filter(Boolean);
-      if (!list.length) return;
+      const all = (Array.isArray(items) ? items : [items]).filter(Boolean);
+      const list = all.filter((it) => !isPrivateLib(it));
+      const skippedPrivate = all.length - list.length;
+      if (!all.length) return;
+      if (!list.length) return setStatus(skippedPrivate > 1 ? `選取的 ${skippedPrivate} 首都是私人歌曲,Bot 不能播放` : '私人歌曲不能點給 Bot');
       await refresh();
       const ts = targets();
       if (!ts.length) return setStatus('沒有可以點歌的 Bot:Bot 要先在 Discord 的語音頻道裡');
@@ -269,6 +274,7 @@
       $('botPickSong').textContent = list.length > 1
         ? `「${itemTitle(list[0])}」等 ${list.length} 首` + (list.length > MAX_BATCH ? `\n一次最多 ${MAX_BATCH} 首,只會送出前 ${MAX_BATCH} 首` : '')
         : itemTitle(list[0]);
+      if (skippedPrivate) $('botPickSong').textContent += `\n已略過 ${skippedPrivate} 首私人歌曲(Bot 不能播放)`;
       $('botPickNext').parentElement.lastChild.textContent = list.length > 1 ? '下一首播放(整批插到 Bot 佇列最前面)' : '下一首播放(插到 Bot 佇列最前面)';
       const ul = $('botPickList');
       ul.textContent = '';
