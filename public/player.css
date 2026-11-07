@@ -435,3 +435,6 @@ body.pl-detail header .search{visibility:hidden}
 .nav-badge{margin-left:auto;min-width:20px;padding:1px 6px;border-radius:10px;background:var(--accent);color:#fff;font-size:11px;font-weight:700;line-height:18px;text-align:center}
 .bottom-nav button{position:relative}
 .bottom-nav .nav-badge{position:absolute;top:4px;left:calc(50% + 6px);margin:0}
+/* 音樂庫標題列的上傳鈕:處理中的數字徽章疊在右上角 */
+.up-entry{position:relative}
+.up-entry .nav-badge{position:absolute;top:-4px;right:-6px;margin:0;min-width:18px;line-height:16px;font-size:10px;padding:1px 5px}

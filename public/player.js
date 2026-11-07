@@ -57,7 +57,7 @@
   let lastSrc = null;        // { key, url } 最近一次 loadSource,必要時重新載入
   let endHandled = false;  // 這次 ended 是否已處理過
   let mode = 'library';
-  let folder = '';
+  let folder = ''; // 音樂庫上方標籤:''＝全部、'public'、'private'(見 renderChips)
   let libQuery = '', onlineQuery = '', offQuery = '';
   // 佇列:統一存放「接下來要播的」項目,可拖曳排序
   // 項目:{ id, kind:'lib', filename } 或 { id, kind:'online', item }
@@ -171,7 +171,11 @@
     if (me.admin) bots.refresh();
   }
   function showAdminUi() {
-    document.querySelectorAll('[data-view="bots"], [data-view="upload"]').forEach((b) => { b.hidden = !me.admin; });
+    document.querySelectorAll('[data-view="bots"], [data-view="upload"], #libUploadBtn, #libBotBtn').forEach((b) => { b.hidden = !me.admin; });
+    // 音樂庫上方的全部／公開／私人標籤:清單比帳號資訊先載入,確認身分後重畫(登出時收起並回到「全部」)
+    const before = folder;
+    renderChips();
+    if (folder !== before) applyFilter();
     if (!me.admin && (mode === 'bots' || mode === 'upload')) setMode('library');
     // 管理員:背景接回伺服器上的上傳處理進度(頁籤徽章、處理完自動重新載入音樂庫)
     if (me.admin && !uploaderStarted) { uploaderStarted = true; uploader.init(); }
@@ -352,7 +356,7 @@
   // 頁籤上的數字徽章＝還在上傳／排隊／處理的首數
   const uploader = window.MLUpload.create({
     onUploaded: (n) => { loadList(); setStatus(`伺服器已處理完 ${n} 首`); },
-    onPending: (n) => document.querySelectorAll('[data-view="upload"]').forEach((b) => {
+    onPending: (n) => document.querySelectorAll('[data-view="upload"], #libUploadBtn').forEach((b) => {
       let badge = b.querySelector('.nav-badge');
       if (!n) { if (badge) badge.remove(); return; }
       if (!badge) { badge = document.createElement('span'); badge.className = 'nav-badge'; b.appendChild(badge); }
@@ -360,6 +364,8 @@
       badge.title = `還有 ${n} 首在上傳或等伺服器處理`;
     }),
   });
+  $('libUploadBtn').addEventListener('click', () => setMode('upload'));
+  $('libBotBtn').addEventListener('click', () => setMode('bots'));
   let uploaderStarted = false;
   const UPLOAD_TAB_KEY = 'ml-upload-tab'; // 重新整理／關掉重開前停在上傳頁籤:回來時直接打開
 
@@ -608,16 +614,18 @@
     });
   }
 
+  // 上方標籤:全部／公開／私人。私人歌曲只會出現在管理員本人的清單裡,
+  // 所以只有管理員(或清單裡真的有私人歌曲時)才顯示;要找某個資料夾的歌,直接在搜尋列打資料夾名稱
+  const SCOPES = [['', '全部'], ['public', '公開'], ['private', '🔒 私人']];
   function renderChips() {
-    const folders = [...new Set(all.map(folderOf).filter(Boolean))].sort();
-    if (folder && !folders.includes(folder)) folder = '';
     const box = $('chips'); box.textContent = '';
-    box.hidden = folders.length === 0;
-    for (const f of ['', ...folders]) {
+    box.hidden = !me.admin && !all.some((f) => isPrivateFile(f.filename));
+    if (box.hidden) folder = '';
+    for (const [key, label] of SCOPES) {
       const b = document.createElement('button');
-      b.className = 'chip' + (f === folder ? ' active' : '');
-      b.textContent = folderLabel(f) || '全部';
-      b.addEventListener('click', () => { folder = f; renderChips(); applyFilter(); });
+      b.className = 'chip' + (key === folder ? ' active' : '');
+      b.textContent = label;
+      b.addEventListener('click', () => { folder = key; renderChips(); applyFilter(); });
       box.appendChild(b);
     }
   }
@@ -625,7 +633,7 @@
   function applyFilter() {
     const q = zhFold(libQuery.trim());
     view = all.filter(f =>
-      (!folder || f.filename.startsWith(folder + '/')) &&
+      (!folder || (folder === 'private') === isPrivateFile(f.filename)) &&
       (!q || f.q.includes(q)));
     libLimit = LIB_PAGE;
     if (shuffle) syncShuffleQueue(); // 篩選條件變了,隨機佇列要跟著畫面上的清單走(重新開頁時也靠這裡排好)

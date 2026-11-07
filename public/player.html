@@ -88,6 +88,9 @@
       <div class="sec-head">
         <h2>音樂庫<small id="libCount"></small></h2>
         <div class="sec-btns">
+          <!-- Bot 正在播放、上傳的入口(管理員):手機底部不放這兩個頁籤,從這裡進去;電腦側欄也有 -->
+          <button class="btn-icon" id="libBotBtn" title="Bot 正在播放" aria-label="Bot 正在播放" hidden><svg><use href="#i-bot"/></svg></button>
+          <button class="btn-icon up-entry" id="libUploadBtn" title="上傳音樂" aria-label="上傳音樂" hidden><svg><use href="#i-upload"/></svg></button>
           <button class="btn-icon" id="selectBtn" title="多選" aria-label="多選"><svg><use href="#i-select"/></svg></button>
           <button class="btn btn-primary" id="shuffleAll"><svg><use href="#i-shuffle"/></svg>隨機播放</button>
         </div>
@@ -104,7 +107,7 @@
         <button class="btn btn-sm btn-secondary" id="selCancel">取消</button>
       </div>
       <ul class="quick" id="list"></ul>
-      <div class="empty" id="empty" hidden><svg><use href="#i-search"/></svg><b>沒有符合的曲目</b><span>換個關鍵字,或切換上方的資料夾試試看</span></div>
+      <div class="empty" id="empty" hidden><svg><use href="#i-search"/></svg><b>沒有符合的曲目</b><span>換個關鍵字,或切換上方的標籤試試看</span></div>
     </section>
   </div>
 
@@ -270,9 +273,7 @@
   <button data-view="playlists"><svg><use href="#i-playlist"/></svg>播放清單</button>
   <button data-view="offline"><svg><use href="#i-offline"/></svg>離線</button>
   <button class="needs-online" data-view="online" hidden><svg><use href="#i-explore"/></svg>線上搜尋</button>
-  <!-- Bot、上傳頁籤只有管理員看得到(player.js 的 showAdminUi) -->
-  <button data-view="bots" hidden><svg><use href="#i-bot"/></svg>Bot</button>
-  <button data-view="upload" hidden><svg><use href="#i-upload"/></svg>上傳</button>
+  <!-- Bot、上傳不放這裡(手機底部太擠):入口在音樂庫標題列,只有管理員看得到(player.js 的 showAdminUi) -->
 </nav>
 
 <div class="full" id="full" data-tab="player">
