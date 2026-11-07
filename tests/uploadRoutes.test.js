@@ -9,6 +9,8 @@ const express = require('express');
 const { tempDir, touch } = require('./helpers');
 
 const MUSIC = tempDir();
+const DATA = tempDir();
+const JOBS_FILE = path.join(DATA, 'upload-jobs.json');
 process.env.MUSIC_DIR = MUSIC;
 process.env.PRIVATE_QUOTA_MB = '1';
 process.env.MIN_FREE_MB = '0';
@@ -25,7 +27,7 @@ test.before(async () => {
     if (!user) return res.status(401).json({ error: '請先登入' });
     req.webUser = user; next();
   };
-  routes = mountUploadRoutes(app, { store, requireWebAuth });
+  routes = mountUploadRoutes(app, { store, requireWebAuth, jobsFile: JOBS_FILE });
   await new Promise((r) => { server = app.listen(0, '127.0.0.1', r); });
   base = `http://127.0.0.1:${server.address().port}`;
 });
@@ -33,6 +35,7 @@ test.after(() => {
   console.error = origError; console.log = origLog;
   server.close();
   fs.rmSync(MUSIC, { recursive: true, force: true });
+  fs.rmSync(DATA, { recursive: true, force: true });
 });
 
 const upload = (headers, body = Buffer.from('fake audio')) => fetch(base + '/web/api/upload', {
@@ -236,4 +239,44 @@ test('背景佇列：一次處理一首、依上傳順序；同名的歌還在�
     normalizer.processUpload = orig;
     release();
   }
+});
+
+test('工作紀錄存檔：服務重啟後查得到；還沒處理的工作暫存檔還在就接續處理，不在就標成失敗；啟動清理不會刪排隊中的原檔', async () => {
+  const OWN = OWNER;
+  const dir = path.join(MUSIC, '.private', OWN, 'resume');
+  fs.mkdirSync(dir, { recursive: true });
+  const absPath = path.join(dir, '接續.flac');
+  const tmpPath = `${absPath}.upload_1_ab.tmp.flac`;
+  fs.writeFileSync(tmpPath, 'resume-bytes');
+  const old = new Date(Date.now() - 2 * 60 * 60 * 1000); // 比啟動清理的 1 小時還舊
+  fs.utimesSync(tmpPath, old, old);
+  const file = path.join(DATA, 'restart-jobs.json');
+  const base0 = { owner: OWN, uid: OWN, target: 'private', mode: 'original', outExt: '.flac', inputBytes: 12, estimate: 12, error: null, result: null, finishedAt: null };
+  fs.writeFileSync(file, JSON.stringify({ version: 1, jobs: [
+    { ...base0, id: 'r1', name: '接續.flac', title: '接續', filename: `.private/${OWN}/resume/接續.flac`, status: 'processing', createdAt: 1,
+      staged: { relPath: `.private/${OWN}/resume/接續.flac`, absPath, tmpPath } },
+    { ...base0, id: 'r2', name: '遺失.flac', title: '遺失', filename: `.private/${OWN}/resume/遺失.flac`, status: 'queued', createdAt: 2,
+      staged: { relPath: `.private/${OWN}/resume/遺失.flac`, absPath: path.join(dir, '遺失.flac'), tmpPath: path.join(dir, '遺失.flac.upload_2_cd.tmp.flac') } },
+    { ...base0, id: 'r3', name: '舊的.flac', title: '舊的', filename: 'x', status: 'done', createdAt: 0, finishedAt: Date.now() - 48 * 3600 * 1000,
+      staged: { relPath: 'x', absPath: 'x', tmpPath: 'x' } },
+  ] }));
+
+  const app2 = express();
+  app2.use((req, res, next) => { req.webUser = { id: OWN, admin: true }; next(); });
+  const routes2 = mountUploadRoutes(app2, { store, requireWebAuth: (req, res, next) => next(), jobsFile: file });
+  await store.cleanupStaleTemps(); // 啟動清理：排隊中的原檔受保護
+  await routes2.idle();
+  const srv = await new Promise((r) => { const x = app2.listen(0, '127.0.0.1', () => r(x)); });
+  try {
+    const jobs = (await (await fetch(`http://127.0.0.1:${srv.address().port}/web/api/upload/jobs`)).json()).jobs;
+    const by = Object.fromEntries(jobs.map((j) => [j.id, j]));
+    assert.equal(by.r1.status, 'done', by.r1.error);
+    assert.equal(fs.readFileSync(absPath, 'utf8'), 'resume-bytes');
+    assert.equal(by.r2.status, 'error');
+    assert.match(by.r2.error, /暫存檔已遺失/);
+    assert.equal(by.r3, undefined, '超過 24 小時的紀錄丟掉');
+    await new Promise((r) => setTimeout(r, 400)); // 等存檔（合併寫入 300ms）
+    const saved = JSON.parse(fs.readFileSync(file, 'utf8')).jobs;
+    assert.equal(saved.find((j) => j.id === 'r1').status, 'done', '處理結果有寫回檔案');
+  } finally { srv.close(); }
 });

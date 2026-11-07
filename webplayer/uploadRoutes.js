@@ -5,7 +5,7 @@
 //   GET  /upload                    舊網址：導到 /player?panel=upload
 //   GET  /web/api/upload/usage      用量：公開音樂庫、快取、自己的私人空間、磁碟剩餘、各項上限
 //   POST /web/api/upload/preflight  { target, mode, files:[{ name, size }] } 批量上傳前的預估與檢查
-//   GET  /web/api/upload/jobs       自己的上傳工作（排隊中／處理中／完成／失敗，保留 6 小時）
+//   GET  /web/api/upload/jobs       自己的上傳工作（排隊中／處理中／完成／失敗，保留 24 小時；存檔，服務重啟後接續處理）
 //   POST /web/api/upload/jobs/clear 清掉自己已完成／失敗的紀錄
 //   POST /web/api/upload            原檔寫進暫存後立刻回 202 { job }，由背景佇列一次一首處理。原始位元組 body，欄位放 header（URL 編碼）：
 //        x-upload-filename  原始檔名（判斷格式）
@@ -73,7 +73,10 @@ function estimateOutputBytes(name, size, mode) {
 
 const fmtMB = (bytes) => `${Math.round(bytes / 1024 / 1024)} MB`;
 
-function mountUploadRoutes(app, { store, requireWebAuth, requireWebPage = requireWebAuth }) {
+// 上傳工作紀錄存檔位置（跟播放清單同一個資料夾；Docker 內為 /app/data，要掛 Volume 才能跨部署保留）
+const DEFAULT_JOBS_FILE = process.env.UPLOAD_JOBS_FILE || path.join(__dirname, '..', 'data', 'upload-jobs.json');
+
+function mountUploadRoutes(app, { store, requireWebAuth, requireWebPage = requireWebAuth, jobsFile = DEFAULT_JOBS_FILE }) {
   const uidOf = (req) => (req.webUser && req.webUser.id) || null;
 
   // 舊的獨立上傳頁：面板已經搬進播放器
@@ -140,13 +143,63 @@ function mountUploadRoutes(app, { store, requireWebAuth, requireWebPage = requir
 
   // ── 背景處理佇列 ───────────────────────────────────────────
   // 上傳只負責把原檔寫進暫存檔就回 202；轉檔／調音量／發布交給這條佇列，一次一首（VPS CPU 不多，慢慢做）。
-  // 工作只存在記憶體：服務重啟時排隊中的工作會中斷（暫存原檔由下次啟動的 cleanupStaleTemps 清掉），要重新上傳。
+  // 工作紀錄寫進 jobsFile：關掉網頁、服務重啟（例如部署）後都還查得到進度；
+  // 重啟時還沒處理完的工作，暫存原檔還在就重新排隊（原檔受 store.protectTemp 保護，啟動清理不會刪），不在就標成失敗。
   const jobs = new Map();       // id → job
   const waiting = [];           // 排隊中的 job id
   let working = false;
   let jobSeq = 0;
-  const JOB_KEEP_MS = 6 * 60 * 60 * 1000; // 完成／失敗的工作保留 6 小時給前端查
+  const JOB_KEEP_MS = 24 * 60 * 60 * 1000; // 完成／失敗的工作保留 24 小時給前端查
   const MAX_JOBS_PER_USER = 500;
+
+  // ── 存檔（寫入合併成 300ms 一次；先寫暫存檔再 rename，寫到一半當機也不會壞掉）──
+  let saveTimer = null;
+  function saveJobs() {
+    if (saveTimer) return;
+    saveTimer = setTimeout(() => {
+      saveTimer = null;
+      try {
+        fs.mkdirSync(path.dirname(jobsFile), { recursive: true });
+        const tmp = `${jobsFile}.${process.pid}.tmp`;
+        fs.writeFileSync(tmp, JSON.stringify({ version: 1, jobs: [...jobs.values()] }));
+        fs.renameSync(tmp, jobsFile);
+      } catch (err) {
+        console.error('❌ [MusicLibrary] 上傳工作紀錄存檔失敗:', err.message);
+      }
+    }, 300);
+    saveTimer.unref();
+  }
+  function loadJobs() {
+    let data;
+    try { data = JSON.parse(fs.readFileSync(jobsFile, 'utf8')); } catch (err) {
+      if (err.code !== 'ENOENT') console.error('⚠️ [MusicLibrary] 上傳工作紀錄讀取失敗，從空的開始:', err.message);
+      return;
+    }
+    const cutoff = Date.now() - JOB_KEEP_MS;
+    const list = (Array.isArray(data && data.jobs) ? data.jobs : [])
+      .filter((j) => j && typeof j.id === 'string' && j.staged && typeof j.staged.tmpPath === 'string')
+      .sort((a, b) => (a.createdAt || 0) - (b.createdAt || 0));
+    let resumed = 0, lost = 0;
+    for (const j of list) {
+      if (j.finishedAt && j.finishedAt < cutoff) continue;
+      if (j.status === 'queued' || j.status === 'processing') {
+        if (fs.existsSync(j.staged.tmpPath)) {
+          j.status = 'queued';
+          waiting.push(j.id);
+          store.protectTemp(j.staged.tmpPath);
+          resumed += 1;
+        } else {
+          j.status = 'error';
+          j.error = '服務重新啟動時暫存檔已遺失，請重新上傳';
+          j.finishedAt = Date.now();
+          lost += 1;
+        }
+      }
+      jobs.set(j.id, j);
+    }
+    if (resumed || lost) console.log(`📤 [MusicLibrary] 上傳佇列：接續 ${resumed} 首${lost ? `，${lost} 首暫存檔已遺失` : ''}`);
+    if (lost) saveJobs();
+  }
 
   const ownerKey = (req) => (req.webUser && req.webUser.id) || 'key';
   const pendingJobs = () => [...jobs.values()].filter((j) => j.status === 'queued' || j.status === 'processing');
@@ -159,12 +212,18 @@ function mountUploadRoutes(app, { store, requireWebAuth, requireWebPage = requir
 
   const pruneTimer = setInterval(() => {
     const cutoff = Date.now() - JOB_KEEP_MS;
-    for (const [id, j] of jobs) if (j.finishedAt && j.finishedAt < cutoff) jobs.delete(id);
+    let n = 0;
+    for (const [id, j] of jobs) if (j.finishedAt && j.finishedAt < cutoff) { jobs.delete(id); n += 1; }
+    if (n) saveJobs();
   }, 10 * 60 * 1000);
   pruneTimer.unref();
 
   async function runJob(j) {
     let tempOutputPath = `${j.staged.absPath}.transcode_${Date.now()}_${Math.random().toString(36).slice(2, 8)}.tmp${j.outExt}`;
+    // 處理中的輸出檔也要保護：「保留原檔」用 copyFile，Windows 上會沿用原檔的修改時間，
+    // 服務重啟後接續舊工作時，會被同時進行的啟動清理當成殘留暫存檔刪掉
+    const outPath = tempOutputPath;
+    store.protectTemp(outPath);
     try {
       const result = await normalizer.processUpload(j.staged.tmpPath, tempOutputPath, { mode: j.mode });
       // 處理後的實際大小再對一次私人配額（估算可能偏小）
@@ -193,7 +252,10 @@ function mountUploadRoutes(app, { store, requireWebAuth, requireWebPage = requir
       for (const fp of [j.staged.tmpPath, tempOutputPath]) {
         if (fp) { try { fs.unlinkSync(fp); } catch {} }
       }
+      store.unprotectTemp(j.staged.tmpPath);
+      store.unprotectTemp(outPath);
       j.finishedAt = Date.now();
+      saveJobs();
     }
   }
 
@@ -205,12 +267,13 @@ function mountUploadRoutes(app, { store, requireWebAuth, requireWebPage = requir
         const j = jobs.get(waiting.shift());
         if (!j || j.status !== 'queued') continue;
         j.status = 'processing';
+        saveJobs();
         await runJob(j);
       }
     } finally { working = false; }
   }
 
-  // 自己的上傳工作（最近 6 小時；重新整理頁面後前端用它接回進度）
+  // 自己的上傳工作（最近 24 小時；重新整理頁面、關掉重開後前端用它接回進度）
   app.get('/web/api/upload/jobs', requireWebAuth, (req, res) => {
     const me = ownerKey(req);
     res.set('Cache-Control', 'no-store');
@@ -221,6 +284,7 @@ function mountUploadRoutes(app, { store, requireWebAuth, requireWebPage = requir
   app.post('/web/api/upload/jobs/clear', requireWebAuth, (req, res) => {
     const me = ownerKey(req);
     for (const [id, j] of jobs) if (j.owner === me && j.finishedAt) jobs.delete(id);
+    saveJobs();
     res.json({ ok: true });
   });
 
@@ -278,8 +342,10 @@ function mountUploadRoutes(app, { store, requireWebAuth, requireWebPage = requir
         inputBytes, estimate: estimateOutputBytes(originalName, inputBytes, mode),
         status: 'queued', error: null, result: null, createdAt: Date.now(), finishedAt: null,
       };
+      store.protectTemp(staged.tmpPath);
       jobs.set(job.id, job);
       waiting.push(job.id);
+      saveJobs();
       staged = null; // 之後由佇列負責清理
       pump();
       return res.status(202).json({ ok: true, job: publicJob(job) });
@@ -291,6 +357,9 @@ function mountUploadRoutes(app, { store, requireWebAuth, requireWebPage = requir
       if (!res.headersSent) return res.status(status).json({ error: err.message || '上傳失敗' });
     }
   });
+
+  loadJobs();
+  pump();
 
   // 測試用：等佇列清空
   return { idle: async () => { while (working || waiting.length) await new Promise((r) => setTimeout(r, 10)); } };

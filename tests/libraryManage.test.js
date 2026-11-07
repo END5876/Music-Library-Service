@@ -161,3 +161,18 @@ test('多選刪除：逐首刪除、一首失敗不影響其他首；私人歌�
   assert.equal((await del({ files: [1] })).status, 400);
   assert.equal((await del({ files: Array.from({ length: 501 }, (_, i) => `x${i}.mp3`) })).status, 400);
 });
+
+test('多選移動：逐首搬移、一首失敗不影響其他首；參數檢查', async () => {
+  touch(MUSIC, 'mb/a.mp3'); touch(MUSIC, 'mb/b.mp3'); touch(MUSIC, 'mb2/b.mp3');
+  const mv = (body) => fetch(base + '/web/api/library/move-batch', {
+    method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body),
+  });
+  const r = await mv({ moves: [{ from: 'mb/a.mp3', to: 'mbx/a' }, { from: 'mb/b.mp3', to: 'mbx/b' }, { from: 'mb2/b.mp3', to: 'mbx/b' }, { from: 'none.mp3', to: 'mbx/n' }] });
+  assert.equal(r.status, 200);
+  const j = await r.json();
+  assert.deepEqual(j.moved, [{ from: 'mb/a.mp3', to: 'mbx/a.mp3' }, { from: 'mb/b.mp3', to: 'mbx/b.mp3' }]);
+  assert.equal(j.failed.length, 2, '撞名、找不到');
+  assert.ok(exists('mbx/a.mp3') && exists('mb2/b.mp3'));
+  assert.equal((await mv({ moves: [] })).status, 400);
+  assert.equal((await mv({ moves: [{ from: 'a.mp3' }] })).status, 400);
+});

@@ -173,8 +173,13 @@
   function showAdminUi() {
     document.querySelectorAll('[data-view="bots"], [data-view="upload"]').forEach((b) => { b.hidden = !me.admin; });
     if (!me.admin && (mode === 'bots' || mode === 'upload')) setMode('library');
-    // 舊的 /upload 網址會導到 /player?panel=upload:確認是管理員後直接打開上傳頁籤
-    if (me.admin && openUploadPanel) { openUploadPanel = false; setMode('upload'); }
+    // 管理員:背景接回伺服器上的上傳處理進度(頁籤徽章、處理完自動重新載入音樂庫)
+    if (me.admin && !uploaderStarted) { uploaderStarted = true; uploader.init(); }
+    if (!me.admin) uploaderStarted = false;
+    // 舊的 /upload 網址會導到 /player?panel=upload,或上次停在上傳頁籤:確認是管理員後直接打開
+    let lastTab = false;
+    try { lastTab = localStorage.getItem(UPLOAD_TAB_KEY) === '1'; } catch {}
+    if (me.admin && (openUploadPanel || lastTab) && mode !== 'upload') { openUploadPanel = false; setMode('upload'); }
   }
   let openUploadPanel = (() => {
     const u = new URL(location.href);
@@ -344,13 +349,31 @@
     libInfo: (fn) => { const f = byFile.get(fn); return f ? { name: f.name, duration: f.duration || 0 } : null; },
   });
   // ── 上傳音樂(管理員;面板在 playerUpload.js)──上傳完成後重新載入音樂庫清單
-  const uploader = window.MLUpload.create({ onUploaded: (n) => { loadList(); setStatus(`已上傳 ${n} 首`); } });
+  // 頁籤上的數字徽章＝還在上傳／排隊／處理的首數
+  const uploader = window.MLUpload.create({
+    onUploaded: (n) => { loadList(); setStatus(`伺服器已處理完 ${n} 首`); },
+    onPending: (n) => document.querySelectorAll('[data-view="upload"]').forEach((b) => {
+      let badge = b.querySelector('.nav-badge');
+      if (!n) { if (badge) badge.remove(); return; }
+      if (!badge) { badge = document.createElement('span'); badge.className = 'nav-badge'; b.appendChild(badge); }
+      badge.textContent = n > 99 ? '99+' : String(n);
+      badge.title = `還有 ${n} 首在上傳或等伺服器處理`;
+    }),
+  });
+  let uploaderStarted = false;
+  const UPLOAD_TAB_KEY = 'ml-upload-tab'; // 重新整理／關掉重開前停在上傳頁籤:回來時直接打開
 
   const folderOf = (f) => f.filename.includes('/') ? f.filename.split('/')[0] : '';
   // 私人上傳(.private/<自己的 ID>/...,只有管理員本人的清單裡會有):資料夾顯示成「🔒 私人」,不能點給 Bot
   const PRIVATE_DIR = '.private';
   const isPrivateFile = (fn) => typeof fn === 'string' && fn.startsWith(PRIVATE_DIR + '/');
   const privSubdir = (fn) => fn.split('/').slice(2, -1).join('/'); // .private/<id>/<這段>/檔名
+  // 公開歌曲設為私人後的路徑:保留原本的資料夾(uploads/歌.mp3 → .private/<id>/uploads/歌),避免不同資料夾的同名歌撞名
+  const privateTarget = (fn) => {
+    const parts = fn.split('/');
+    const file = parts.pop();
+    return [PRIVATE_DIR, me.id, ...parts, file.replace(/\.[^.]+$/, '')].join('/');
+  };
   const folderLabel = (k) => (k === PRIVATE_DIR ? '🔒 私人' : k);
   const libSub = (f) => folderLabel(folderOf(f)) || '音樂庫';
   const onlineSub = (r) => [r.platform, r.author].filter(Boolean).join(' · ') || '線上歌曲';
@@ -425,8 +448,43 @@
     $('selectBtn').hidden = on;
     $('selBot').hidden = !bots.hasTargets(); // 有 Bot 在語音頻道才顯示「點給 Bot」
     $('selDel').hidden = !me.admin || isOffline(); // 刪除共用音樂庫的檔案只限管理員
+    $('selPriv').hidden = !me.admin || !me.id || isOffline();
     render();
   }
+  // 多選下載離線:已經下載過的略過,其餘排進下載佇列(同播放清單的「下載離線」)
+  $('selDl').addEventListener('click', () => {
+    const files = view.filter((f) => libSel.set.has(f.filename));
+    if (!files.length) return setStatus('選取的歌曲已不在音樂庫中');
+    const todo = files.filter((f) => !offlineKeys.has('lib:' + f.filename) && !dlState.has('lib:' + f.filename))
+      .map((f) => ({ kind: 'lib', filename: f.filename, title: f.name }));
+    if (!todo.length) return setStatus('選取的歌曲都已經下載過了');
+    enqueueDownloads(todo);
+    setLibSelecting(false);
+    setStatus(`開始下載 ${todo.length} 首` + (todo.length < files.length ? `(${files.length - todo.length} 首已下載,略過)` : ''));
+  });
+  // 多選設為私人:保留原本的資料夾結構搬進 .private/<自己的 ID>/,已經是私人的略過
+  $('selPriv').addEventListener('click', async () => {
+    const files = view.filter((f) => libSel.set.has(f.filename) && !isPrivateFile(f.filename));
+    if (!files.length) return setStatus('選取的歌曲都已經是私人的');
+    const names = files.slice(0, 8).map((f) => '・' + f.name).join('\n') + (files.length > 8 ? `\n…還有 ${files.length - 8} 首` : '');
+    if (!await askConfirm(`把 ${files.length} 首設為私人?`,
+      `只有你看得到、聽得到;其他人的播放清單裡這些歌會變成找不到,Bot 也不能再播放。之後可以在「⋮」選單公開回音樂庫。\n\n${names}`,
+      { ok: `設為私人(${files.length} 首)` })) return;
+    $('selPriv').disabled = true;
+    setStatus(`設為私人中…(${files.length} 首)`, true);
+    try {
+      const j = await libApi('POST', '/web/api/library/move-batch', { moves: files.map((f) => ({ from: f.filename, to: privateTarget(f.filename) })) });
+      for (const m of j.moved) await renameLocalRefs(m.from, m.to);
+      setLibSelecting(false);
+      setStatus(j.failed.length
+        ? `已設為私人 ${j.moved.length} 首,${j.failed.length} 首失敗(${j.failed[0].error})`
+        : `已設為私人 ${j.moved.length} 首`);
+      loadList();
+    } catch (err) {
+      setStatus('設為私人失敗:' + err.message);
+      libSel.update();
+    }
+  });
   // 多選刪除:兩次確認(第一次列出內容,第二次再確認一次無法復原),再一次送給伺服器
   $('selDel').addEventListener('click', async () => {
     const files = view.filter((f) => libSel.set.has(f.filename));
@@ -1301,6 +1359,7 @@
     $('viewUpload').hidden = m !== 'upload';
     if (m === 'bots') bots.show(); else bots.hide();
     if (m === 'upload') uploader.show();
+    try { if (m === 'upload') localStorage.setItem(UPLOAD_TAB_KEY, '1'); else localStorage.removeItem(UPLOAD_TAB_KEY); } catch {}
     document.body.classList.toggle('pl-detail', m === 'playlists' && !!plOpen && !!plById(plOpen));
     document.querySelectorAll('[data-view]').forEach(b => b.classList.toggle('active', b.dataset.view === m));
     const s = $('search');
@@ -2285,7 +2344,7 @@
     let to;
     if (how === 'private') {
       if (!await askConfirm('設為私人?', f.name + '\n只有你看得到、聽得到;其他人的播放清單裡這首會變成找不到,Bot 也不能再播放。', { ok: '設為私人' })) return;
-      to = privRoot + '/' + stem;
+      to = privateTarget(f.filename);
     } else if (how === 'folder' && isPrivateFile(f.filename)) {
       const d = await askText('移到哪個私人資料夾?(留空＝私人空間最上層)', privSubdir(f.filename));
       if (d === null) return;

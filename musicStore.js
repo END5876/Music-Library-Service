@@ -591,6 +591,11 @@ function scheduleEvict() {
 // 啟動時清掉當機／重啟遺留的暫存檔（.tmp / .upload_*.tmp / .norm_*.tmp.mp3），
 // 這些檔案不會出現在清單、也不會被快取清理刪掉，會一直佔用 Volume。
 // 只刪超過 STALE_TMP_MS 沒更新的，避免誤刪正在進行中的工作。
+// 還要用的暫存檔（網頁上傳排隊中、等背景處理的原檔，見 webplayer/uploadRoutes.js）：清理時跳過
+const protectedTemps = new Set();
+function protectTemp(absPath) { if (absPath) protectedTemps.add(path.resolve(absPath)); }
+function unprotectTemp(absPath) { if (absPath) protectedTemps.delete(path.resolve(absPath)); }
+
 async function cleanupStaleTemps(dir = MUSIC_DIR, depth = 0) {
   let entries;
   try { entries = await fsp.readdir(dir, { withFileTypes: true }); } catch { return 0; }
@@ -601,7 +606,7 @@ async function cleanupStaleTemps(dir = MUSIC_DIR, depth = 0) {
       // .private 底下也有上傳暫存檔，要一起清；只跳過 .web
       if (depth === 0 && e.name.toLowerCase() === RESERVED_TOP_DIR) continue;
       n += await cleanupStaleTemps(fp, depth + 1);
-    } else if (e.isFile() && isTempName(e.name)) {
+    } else if (e.isFile() && isTempName(e.name) && !protectedTemps.has(path.resolve(fp))) {
       try {
         const st = await fsp.stat(fp);
         if (Date.now() - st.mtimeMs > STALE_TMP_MS) { await fsp.unlink(fp); n++; }
@@ -645,4 +650,6 @@ module.exports = {
   isPrivatePath,
   listPrivate,
   usage,
+  protectTemp,
+  unprotectTemp,
 };

@@ -4,7 +4,8 @@
 //     前端每 3 秒問一次處理進度（GET /web/api/upload/jobs）；傳完就可以關掉網頁，重新打開會接回進度
 //   - 放進共用音樂庫，或私人上傳（.private/<自己的 ID>/，其他帳號、Bot 都看不到）；私人上傳可選「保留原檔、不轉檔」
 //   - 開始前整批預檢（格式、單檔上限、私人配額、磁碟水位），頁面上方顯示目前用量
-// 對外：window.MLUpload.create({ onUploaded }) → { show(), hide(), busy() }
+// 對外：window.MLUpload.create({ onUploaded, onPending }) → { init(), show(), hide(), busy() }
+//   init()：登入確認是管理員後呼叫，背景接回伺服器上的處理進度（不必打開頁籤）；onPending(n) 回報還在上傳／排隊／處理的首數（頁籤徽章用）
 
 (() => {
   const $ = (id) => document.getElementById(id);
@@ -26,7 +27,7 @@
     original: () => '原檔保存，未轉檔',
   };
 
-  function create({ onUploaded }) {
+  function create({ onUploaded, onPending }) {
     let items = [];          // { id, file?, name, size, title, status, pct, msg, jobId? }；file 為 null＝重新整理前上傳、只剩伺服器紀錄
     let pollTimer = 0;
     let seq = 0;
@@ -156,6 +157,7 @@
       $('upStart').lastChild.textContent = running ? '上傳中…' : pending ? `開始上傳（${pending} 首）` : '開始上傳';
       $('upClear').hidden = !items.some((it) => it.status === 'done' || it.status === 'blocked' || (it.status === 'error' && !it.file));
       const waitingServer = items.filter((it) => it.status === 'queued' || it.status === 'processing').length;
+      if (onPending) onPending(waitingServer + items.filter((it) => it.status === 'uploading').length);
       $('upServerNote').hidden = !waitingServer;
       $('upServerNote').textContent = `伺服器還有 ${waitingServer} 首在排隊處理,一次處理一首。已經傳完的話可以關掉網頁,處理會繼續進行;重新打開這個頁籤會接回進度。`;
       for (const el of document.querySelectorAll('#upTarget .chip, #upOriginal, #upFolder, #upFiles')) el.disabled = running;
@@ -251,7 +253,12 @@
     }
     async function poll() {
       let j;
-      try { const r = await fetch('/web/api/upload/jobs'); if (!r.ok) throw 0; j = await r.json(); } catch { return schedulePoll(10000); }
+      try {
+        const r = await fetch('/web/api/upload/jobs');
+        if (r.status === 401 || r.status === 403) return; // 登出了或不是管理員:不再輪詢
+        if (!r.ok) throw 0;
+        j = await r.json();
+      } catch { return schedulePoll(10000); }
       let newlyDone = 0;
       for (const job of j.jobs || []) {
         let it = items.find((x) => x.jobId === job.id);
@@ -288,6 +295,7 @@
     syncTarget();
     render();
     return {
+      init() { poll(); },
       show() { loadUsage(); poll(); },
       hide() {},
       busy: () => running,
