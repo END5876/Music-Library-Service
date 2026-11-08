@@ -124,7 +124,7 @@ function isPrivatePath(relPath) {
 }
 
 // 與 Mousebot 過去 localMusicHandler.js 的 cleanLocalTitle() 完全相同的
-// 清理規則，確保搬過來之後 /music local list 顯示出來的名稱不會改變。
+// 清理規則，確保搬過來之後 /music list 顯示出來的名稱不會改變。
 function cleanDisplayName(raw) {
   let t = String(raw || '').trim();
   t = t.replace(/\.(mp3|wav|ogg|flac|m4a|aac)$/i, '');
