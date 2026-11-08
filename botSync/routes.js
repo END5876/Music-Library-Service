@@ -13,7 +13,7 @@
 //   GET  /web/api/bots                                目前各 Bot／各伺服器的播放狀態
 //   GET  /web/api/bots/events                         SSE：狀態有變就推一次（event: state）
 //   POST /web/api/bots/:botId/command                 { guildId, action, ... } → 等 Bot 回報 { ok, message }
-//     action：skip | stop | clearQueue
+//     action：skip | stop | pause | resume | clearQueue
 //             loop { mode: off|one|all } | randomPlay { on } | removeQueue { index, key }
 //             enqueue { item: { kind:'lib', filename } | { kind:'online', url, title?... }, next? }
 //             enqueueMany { items:[...同上], next? }   一次最多 500 首；找不到的檔案、不支援的網址略過不計
@@ -128,7 +128,7 @@ function mountWebApi(app, { hub, requireWebAuth, isAuthenticated, store, isAllow
   // 指令參數全部在這裡驗證，送到 Bot 的只會是乾淨的值
   async function buildArgs(action, b) {
     switch (action) {
-      case 'skip': case 'stop': case 'clearQueue':
+      case 'skip': case 'stop': case 'pause': case 'resume': case 'clearQueue':
         return {};
       case 'loop':
         if (!LOOP_MODES.includes(b.mode)) throw new Error('不合法的循環模式');

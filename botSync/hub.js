@@ -27,7 +27,7 @@ const MAX_QUEUE_ITEMS = 50;              // 每個伺服器只存佇列前 50 �
 const MAX_PENDING_COMMANDS = 20;
 const DRIFT_MS = 3000;                   // 心跳回報的播放位置與推算值差在這範圍內，就不必通知網頁
 
-const ACTIONS = ['skip', 'stop', 'loop', 'randomPlay', 'enqueue', 'enqueueMany', 'clearQueue', 'removeQueue'];
+const ACTIONS = ['skip', 'stop', 'pause', 'resume', 'loop', 'randomPlay', 'enqueue', 'enqueueMany', 'clearQueue', 'removeQueue'];
 const LOOP_MODES = ['off', 'one', 'all'];
 const PLAYER_STATUSES = ['playing', 'buffering', 'paused', 'autopaused', 'idle'];
 const VOICE_STATUSES = ['ready', 'connecting', 'disconnected']; // Bot 的語音連線狀態（空字串＝不在語音頻道）

@@ -129,7 +129,12 @@
         progress.push({ g, durSec, cur, fill });
 
         const ctrls = el('div', 'bot-ctrls');
+        // 暫停中顯示「繼續」，其他狀態（播放、緩衝）顯示「暫停」；Bot 正在播報語音時會回覆請稍後再試
+        const paused = g.status === 'paused';
         ctrls.append(
+          paused
+            ? ctrlBtn('play', '繼續', () => run('resume'), { disabled: pending })
+            : ctrlBtn('pause', '暫停', () => run('pause'), { disabled: pending }),
           ctrlBtn('next', '跳過', () => run('skip'), { disabled: pending }),
           ctrlBtn('stop', '停止', async () => {
             const ok = await askConfirm('停止 Bot 播放?', `「${g.guildName}」的播放與佇列都會清除。`, { ok: '停止播放', danger: true });
