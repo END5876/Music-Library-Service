@@ -351,10 +351,15 @@ function buildInfoArgs(url) {
       '--add-header', `Origin:${BILIBILI_HEADERS['Origin']}`,
       '--extractor-args', 'bilibili:getcomments=false',
       '--extractor-args', 'bilibili:getdanmaku=false',
-      '--sleep-requests',     '2',
-      '--sleep-interval',     '2',
-      '--max-sleep-interval', '5'
     );
+    // B 站直播間取資訊要發 8～9 個請求，每個停 2 秒會超過 getInfo 的 15 秒時限（同 Bot 的修正）
+    if (parseUrl(url)?.hostname.toLowerCase() !== 'live.bilibili.com') {
+      base.push(
+        '--sleep-requests',     '2',
+        '--sleep-interval',     '2',
+        '--max-sleep-interval', '5'
+      );
+    }
   }
 
   base.push(url);
