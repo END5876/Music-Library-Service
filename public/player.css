@@ -179,8 +179,11 @@ input[type=range]::-moz-range-thumb{width:0;height:0;border:0}
 input[type=range]:not(:disabled):hover::-moz-range-thumb,input[type=range]:focus-visible::-moz-range-thumb,.full input[type=range]:not(:disabled)::-moz-range-thumb{width:13px;height:13px;border:0;background:#fff;border-radius:50%}
 input[type=range]:focus-visible{box-shadow:0 0 0 2px rgba(255,255,255,.35)}
 
-.toast{position:fixed;left:50%;bottom:calc(var(--player-h) + 16px);transform:translate(-50%,8px);max-width:min(560px,calc(100vw - 32px));background:var(--surface-3);color:var(--text);font-size:13px;line-height:1.5;padding:10px 16px;border-radius:12px;box-shadow:0 8px 30px rgba(0,0,0,.5);z-index:55;opacity:0;pointer-events:none;transition:.2s;overflow-wrap:anywhere}
+.toast{position:fixed;left:50%;bottom:calc(var(--player-h) + 16px);transform:translate(-50%,8px);max-width:min(560px,calc(100vw - 32px));background:var(--surface-3);color:var(--text);font-size:13px;line-height:1.5;padding:10px 16px;border-radius:12px;box-shadow:0 8px 30px rgba(0,0,0,.5);z-index:65;opacity:0;pointer-events:none;transition:.2s;overflow-wrap:anywhere}
 .toast.show{opacity:1;transform:translate(-50%,0)}
+/* 全螢幕播放頁(z-index 60)開著時,提示要浮在它上面,並移到頂端分頁列下方,不擋播放鍵 */
+.full-open .toast{top:calc(var(--safe-top) + 72px);bottom:auto;transform:translate(-50%,-8px)}
+.full-open .toast.show{transform:translate(-50%,0)}
 .toast{display:flex;align-items:center;gap:14px}
 .toast.has-action.show{pointer-events:auto}
 .toast-act{flex-shrink:0;font-weight:700;color:var(--text);padding:4px 10px;margin:-4px -8px -4px 0;border-radius:8px}
@@ -225,6 +228,8 @@ body.is-offline .row[data-key]:not(.offline){opacity:.4}
 /* ── 對話框(登入、命名、確認、加入播放清單、快捷鍵)── */
 .dialog{position:fixed;inset:0;background:rgba(0,0,0,.75);backdrop-filter:blur(8px);-webkit-backdrop-filter:blur(8px);display:none;align-items:center;justify-content:center;padding:16px;z-index:80}
 .dialog.show{display:flex}
+/* 確認框可能從其他對話框(例如除錯面板)裡打開,要疊在最上面 */
+#confirmDlg{z-index:90}
 .dialog .box{background:var(--surface-2);border:1px solid var(--border);border-radius:16px;padding:24px;width:100%;max-width:360px;display:flex;flex-direction:column;gap:14px;box-shadow:0 20px 60px rgba(0,0,0,.6)}
 .dialog .ttl{color:var(--text);font-size:17px;font-weight:700}
 .dialog .msg{color:var(--text-2);font-size:14px;line-height:1.6;white-space:pre-line}

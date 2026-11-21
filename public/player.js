@@ -360,7 +360,7 @@
   // ── 上傳音樂(管理員;面板在 playerUpload.js)──上傳完成後重新載入音樂庫清單
   // 頁籤上的數字徽章＝還在上傳／排隊／處理的首數
   const uploader = window.MLUpload.create({
-    onUploaded: (n) => { loadList(); setStatus(`伺服器已處理完 ${n} 首`); },
+    onUploaded: (n) => { setStatus(`${n} 首已加進音樂庫`); loadList(null, { quiet: true }); },
     onPending: (n) => document.querySelectorAll('[data-view="upload"], #libUploadBtn').forEach((b) => {
       let badge = b.querySelector('.nav-badge');
       if (!n) { if (badge) badge.remove(); return; }
@@ -487,10 +487,9 @@
       const j = await libApi('POST', '/web/api/library/move-batch', { moves: files.map((f) => ({ from: f.filename, to: privateTarget(f.filename) })) });
       for (const m of j.moved) await renameLocalRefs(m.from, m.to);
       setLibSelecting(false);
-      setStatus(j.failed.length
-        ? `已設為私人 ${j.moved.length} 首,${j.failed.length} 首失敗(${j.failed[0].error})`
-        : `已設為私人 ${j.moved.length} 首`);
-      loadList();
+      if (j.failed.length) setStatus(`已設為私人 ${j.moved.length} 首,${j.failed.length} 首失敗(${j.failed[0].error})`, true, { label: '知道了', fn: () => {} });
+      else setStatus(`已設為私人 ${j.moved.length} 首`);
+      loadList(null, { quiet: true });
     } catch (err) {
       setStatus('設為私人失敗:' + err.message);
       libSel.update();
@@ -506,16 +505,15 @@
     const scope = [pub ? `公開 ${pub} 首` : '', priv ? `私人 ${priv} 首` : ''].filter(Boolean).join('、');
     if (!await askConfirm(`刪除選取的 ${files.length} 首歌?`, `${scope}\n\n${names}`, { ok: '下一步', danger: true })) return;
     const warn = pub ? '伺服器上的檔案會被刪除,所有人與 Bot 都無法再播放,所有人播放清單裡的這些歌會變成找不到。' : '伺服器上的私人檔案會被刪除。';
-    if (!await askConfirm('再確認一次:真的要刪除?', `${files.length} 首歌將被永久刪除,無法復原。\n${warn}`, { ok: `刪除 ${files.length} 首`, danger: true })) return;
+    if (!await askConfirm('再確認一次:真的要刪除?', `${files.length} 首歌將被永久刪除,無法復原。\n${warn}`, { ok: `刪除 ${files.length} 首`, danger: true, delay: 1000 })) return;
     $('selDel').disabled = true;
     setStatus(`刪除中…(${files.length} 首)`, true);
     try {
       const j = await libApi('POST', '/web/api/library/delete', { files: files.map((f) => f.filename) });
       setLibSelecting(false);
-      setStatus(j.failed.length
-        ? `已刪除 ${j.deleted.length} 首,${j.failed.length} 首失敗(${j.failed[0].error})`
-        : `已刪除 ${j.deleted.length} 首`);
-      loadList();
+      if (j.failed.length) setStatus(`已刪除 ${j.deleted.length} 首,${j.failed.length} 首失敗(${j.failed[0].error})`, true, { label: '知道了', fn: () => {} });
+      else setStatus(`已刪除 ${j.deleted.length} 首`);
+      loadList(null, { quiet: true });
     } catch (err) {
       setStatus('刪除失敗:' + err.message);
       libSel.update();
@@ -563,8 +561,9 @@
 
   // ── 音樂庫清單 ──
   // listReq:可傳入已經發出的請求(初始化時與 IndexedDB 掃描同時進行,省一段等待)
-  async function loadList(listReq) {
-    setStatus('載入清單中…', true);
+  // quiet:管理動作(移動、改名、刪除、設為私人、上傳完成)後的重新載入,不動提示訊息,免得結果一出現就被蓋掉
+  async function loadList(listReq, { quiet = false } = {}) {
+    if (!quiet) setStatus('載入清單中…', true);
     let r;
     try { r = await (listReq || fetch('/web/api/list')); } catch (err) {
       dbg('loadList 連線失敗', err);
@@ -581,7 +580,7 @@
     byFile = new Map(all.map(f => [f.filename, f]));
     queue = queue.filter(e => e.kind !== 'lib' || libAvailable(e.filename)); // 已被刪除(且沒有離線檔)的檔案移出佇列
     $('logoutBtn').hidden = false;
-    setStatus('');
+    if (!quiet) setStatus('');
     renderChips();
     applyFilter();
     loadCapabilities();
@@ -1340,12 +1339,12 @@
   // 全螢幕播放頁
   function openFull() {
     if (isFullOpen()) return;
-    $('full').classList.add('open'); if (nextDirty) flushNext();
+    $('full').classList.add('open'); document.body.classList.add('full-open'); if (nextDirty) flushNext();
     pushLayer('full', closeFull);
   }
   function closeFull() {
     if (!isFullOpen()) return;
-    $('full').classList.remove('open');
+    $('full').classList.remove('open'); document.body.classList.remove('full-open');
     dropLayer('full');
   }
   $('nowOpen').addEventListener('click', openFull);
@@ -2415,7 +2414,7 @@
       const where = isPrivateFile(j.to) ? '私人' + (privSubdir(j.to) ? ' / ' + privSubdir(j.to) : '') : j.to.split('/').slice(0, -1).join('/');
       setStatus(how === 'private' ? '已設為私人' : how === 'publish' ? '已公開到「' + where + '」' : how === 'folder' ? '已移到「' + where + '」' : '已重新命名');
       // 正在播的就是這首:清單重新載入後把播放資訊換成新名稱
-      loadList().then(() => { const t = currentFile === j.to && byFile.get(j.to); if (t) setNow({ title: t.name, sub: libSub(t) }); });
+      loadList(null, { quiet: true }).then(() => { const t = currentFile === j.to && byFile.get(j.to); if (t) setNow({ title: t.name, sub: libSub(t) }); });
     } catch (err) { setStatus('移動失敗:' + err.message); }
   }
 
@@ -2426,8 +2425,8 @@
       { ok: '刪除歌曲', danger: true })) return;
     try {
       await libApi('DELETE', streamUrl(f.filename).replace('/web/stream/', '/web/api/library/file/'));
-      setStatus('已刪除');
-      loadList();
+      setStatus(`已刪除「${f.name}」`);
+      loadList(null, { quiet: true });
     } catch (err) { setStatus('刪除失敗:' + err.message); }
   }
 
@@ -2537,7 +2536,7 @@
     return li;
   }
 
-  if (DEBUG_UI) setupDebugPanel({ $, setStatus, IS_ANDROID, ANDROID_BY, KEEP });
+  if (DEBUG_UI) setupDebugPanel({ $, setStatus, IS_ANDROID, ANDROID_BY, KEEP, isBusy: () => !audio.paused || uploader.busy() });
   // 切到背景時預載下一首(只在 Android 生效,見 preloadNext)
   document.addEventListener('visibilitychange', () => { if (document.hidden) preloadNext(); });
 

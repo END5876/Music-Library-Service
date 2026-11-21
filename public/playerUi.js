@@ -96,17 +96,24 @@
   }
 
   // ── 確認對話框(取代瀏覽器原生 confirm)──────────────
-  // danger:確定鍵改成紅色;Esc／點遮罩 = 取消
-  function askConfirm(title, msg = '', { ok = '確定', danger = false } = {}) {
+  // ok:確認鍵的文字,必填,寫具體動作(例如「刪除歌曲」),不要用「確定」
+  // danger:確認鍵改成紅色,預設聚焦「取消」,避免連按 Enter 就執行;Esc／點遮罩 = 取消
+  // delay:確認鍵要等幾毫秒後才能按(兩步確認的第二步,避免連點直接通過)
+  function askConfirm(title, msg = '', { ok, danger = false, delay = 0 } = {}) {
+    if (!ok) console.warn('askConfirm: 缺少 ok,請寫具體的動作', title);
     return new Promise((resolve) => {
       const dlg = $('confirmDlg'), okBtn = $('confirmOk'), cancel = $('confirmCancel');
       $('confirmTitle').textContent = title;
       $('confirmMsg').textContent = msg; $('confirmMsg').hidden = !msg;
-      okBtn.textContent = ok; okBtn.classList.toggle('danger', danger);
+      okBtn.textContent = ok || '繼續'; okBtn.classList.toggle('danger', danger);
+      okBtn.disabled = delay > 0;
+      const unlock = delay > 0 ? setTimeout(() => { okBtn.disabled = false; }, delay) : 0;
       dlg.classList.add('show');
       pushLayer('confirmDlg', () => done(false));
-      setTimeout(() => okBtn.focus(), 50);
+      // 確認鍵還不能按(delay)時也先聚焦「取消」,不然焦點會留在對話框後面的頁面
+      setTimeout(() => (danger || delay > 0 ? cancel : okBtn).focus(), 50);
       const done = (v) => {
+        clearTimeout(unlock); okBtn.disabled = false;
         dlg.classList.remove('show');
         okBtn.removeEventListener('click', onOk); cancel.removeEventListener('click', onCancel);
         dlg.removeEventListener('click', onBackdrop); window.removeEventListener('keydown', onKey, true);

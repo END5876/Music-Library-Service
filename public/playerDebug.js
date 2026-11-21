@@ -4,7 +4,7 @@
 // 從 player.js 拆出，邏輯不變。
 //   DEBUG_UI                 是否顯示除錯介面（沒開啟時不建立按鈕、不掛監聽、不寫日誌）
 //   dbg(...args)             寫一行日誌（除錯模式關閉時什麼都不做）
-//   setupDebugPanel(deps)    建立 🐞 面板；deps = { $, setStatus, IS_ANDROID, ANDROID_BY, KEEP }
+//   setupDebugPanel(deps)    建立除錯面板；deps = { $, setStatus, IS_ANDROID, ANDROID_BY, KEEP, isBusy }
 // 載入順序：playerUi.js 之後、playerPlatform.js 與 player.js 之前。
 (() => {
   // 除錯功能預設完全關閉。用 /player?debug=1 開啟一次後會記在這個瀏覽器(ml_debug_ui),之後安裝成 PWA 也看得到;
@@ -53,7 +53,9 @@
   }
 
   // ── 除錯面板:🐞 按鈕 → 開關除錯模式、檢視／複製／匯出／清除日誌(只有 ?debug=1 才建立)──
-  function setupDebugPanel({ $, setStatus, IS_ANDROID, ANDROID_BY, KEEP }) {
+  // isBusy():正在播放或上傳時回傳 true,切換「靜音保活」要重新載入頁面,先問過再重新載入
+  function setupDebugPanel({ $, setStatus, IS_ANDROID, ANDROID_BY, KEEP, isBusy = () => false }) {
+  const { pushLayer, dropLayer, askConfirm } = window.MLUi;
   const _fetch = window.fetch.bind(window);
   window.fetch = (input, init) => {
     const u = typeof input === 'string' ? input : (input && input.url) || '';
@@ -94,26 +96,30 @@
     logBuf.join('\n') + '\n';
 
   const dbgStyle = document.createElement('style');
-  dbgStyle.textContent = '.dbg-btn{width:36px;height:36px;border-radius:50%;background:var(--surface2);flex-shrink:0;margin-left:auto;font-size:16px}' +
-    '.dbg-btn.on{box-shadow:inset 0 0 0 2px var(--accent)}.dbg-btn + #logoutBtn{margin-left:0}' +
-    '#dbgDlg .box{max-width:560px;max-height:calc(100dvh - 32px);overflow:hidden}' +
-    '#dbgText{width:100%;height:45vh;min-height:140px;background:#101010;color:#cfcfcf;border:1px solid #2a2a2a;border-radius:10px;padding:8px;font:11px/1.5 ui-monospace,Menlo,Consolas,monospace;resize:none;overflow:auto;white-space:pre;-webkit-appearance:none;appearance:none}' +
-    '#dbgDlg .row2{display:flex;gap:8px}#dbgDlg .row2 .go{flex:1;padding:10px 4px;font-size:14px}';
+  dbgStyle.textContent = '.dbg-btn{width:36px;height:36px;border-radius:50%;flex-shrink:0;margin-left:auto;display:inline-flex;align-items:center;justify-content:center;color:var(--text-2)}' +
+    '.dbg-btn:hover{background:var(--hover);color:var(--text)}.dbg-btn svg{width:20px;height:20px;fill:currentColor}' +
+    '.dbg-btn.on{color:var(--text);box-shadow:inset 0 0 0 2px var(--accent)}.dbg-btn + #logoutBtn{margin-left:0}' +
+    '#dbgDlg .box{max-width:560px;max-height:calc(100dvh - 32px);overflow:auto}' +
+    '#dbgInfo{color:var(--text-2);font-size:13px}' +
+    '#dbgText{width:100%;height:45vh;min-height:140px;flex-shrink:0;background:#101010;color:#cfcfcf;border:1px solid var(--border);border-radius:10px;padding:8px;font:11px/1.5 ui-monospace,Menlo,Consolas,monospace;resize:none;overflow:auto;white-space:pre;-webkit-appearance:none;appearance:none}' +
+    '#dbgDlg .row2{display:flex;gap:8px;flex-wrap:wrap}#dbgDlg .row2 .btn{flex:1 1 0;min-width:0;padding:0 8px}';
   document.head.appendChild(dbgStyle);
 
   const dbgBtn = document.createElement('button');
-  dbgBtn.className = 'dbg-btn'; dbgBtn.id = 'dbgBtn'; dbgBtn.textContent = '🐞';
+  dbgBtn.className = 'dbg-btn'; dbgBtn.id = 'dbgBtn'; dbgBtn.type = 'button';
+  // 單色蟲子圖示(跟著文字顏色,不用彩色 emoji)
+  dbgBtn.innerHTML = '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M20 8h-2.81a5.985 5.985 0 00-1.82-1.96L17 4.41 15.59 3l-2.17 2.17a6.002 6.002 0 00-2.83 0L8.41 3 7 4.41l1.62 1.63C7.88 6.55 7.26 7.22 6.81 8H4v2h2.09c-.05.33-.09.66-.09 1v1H4v2h2v1c0 .34.04.67.09 1H4v2h2.81c1.04 1.79 2.97 3 5.19 3s4.15-1.21 5.19-3H20v-2h-2.09c.05-.33.09-.66.09-1v-1h2v-2h-2v-1c0-.34-.04-.67-.09-1H20V8zm-6 8h-4v-2h4v2zm0-4h-4v-2h4v2z"/></svg>';
   dbgBtn.title = '除錯模式'; dbgBtn.setAttribute('aria-label', '除錯模式');
   $('logoutBtn').before(dbgBtn);
 
   const dlg = document.createElement('div');
-  dlg.className = 'login'; dlg.id = 'dbgDlg';
-  dlg.innerHTML = '<div class="box"><p class="ttl">除錯模式</p><p id="dbgInfo"></p>' +
-    '<button class="go alt" id="dbgToggle" type="button"></button>' +
-    '<textarea id="dbgText" readonly spellcheck="false" placeholder="尚無日誌。開啟除錯模式後重現問題,再回來複製或匯出。"></textarea>' +
-    '<div class="row2"><button class="go ghost" id="dbgKeep" type="button"></button></div>' +
-    '<div class="row2"><button class="go alt" id="dbgCopy" type="button">複製</button><button class="go alt" id="dbgExport" type="button">匯出</button><button class="go ghost" id="dbgClear" type="button">清除</button></div>' +
-    '<button class="go ghost" id="dbgClose" type="button">關閉</button></div>';
+  dlg.className = 'dialog'; dlg.id = 'dbgDlg';
+  dlg.innerHTML = '<div class="box" role="dialog" aria-modal="true" aria-labelledby="dbgTitle"><p class="ttl" id="dbgTitle">除錯模式</p><p id="dbgInfo"></p>' +
+    '<button class="btn btn-primary" id="dbgToggle" type="button"></button>' +
+    '<textarea id="dbgText" readonly spellcheck="false" aria-label="除錯日誌" placeholder="還沒有日誌。開啟除錯模式後重現問題,再回來複製或匯出。"></textarea>' +
+    '<div class="row2"><button class="btn btn-secondary" id="dbgKeep" type="button"></button></div>' +
+    '<div class="row2"><button class="btn btn-secondary" id="dbgCopy" type="button">複製日誌</button><button class="btn btn-secondary" id="dbgExport" type="button">匯出日誌</button><button class="btn btn-secondary" id="dbgClear" type="button">清除日誌</button></div>' +
+    '<div class="dlg-actions"><button class="btn btn-secondary" id="dbgClose" type="button">關閉</button></div></div>';
   document.body.appendChild(dlg);
   const ta = $('dbgText');
 
@@ -132,10 +138,27 @@
   }
   logLive = () => { if (dlg.classList.contains('show') && !liveTimer) liveTimer = setTimeout(() => { liveTimer = 0; showLog(); }, 300); };
 
-  dbgBtn.addEventListener('click', () => { dlg.classList.add('show'); showLog(); ta.scrollTop = ta.scrollHeight; });
-  $('dbgClose').addEventListener('click', () => dlg.classList.remove('show'));
+  // 接上返回鍵(pushLayer／dropLayer):Android 返回、Esc 都會關閉面板
+  const closeDbg = () => {
+    if (!dlg.classList.contains('show')) return;
+    dlg.classList.remove('show');
+    dropLayer('dbgDlg');
+    dbgBtn.focus();
+  };
+  dbgBtn.addEventListener('click', () => {
+    dlg.classList.add('show'); showLog(); ta.scrollTop = ta.scrollHeight;
+    pushLayer('dbgDlg', closeDbg);
+    $('dbgClose').focus();
+  });
+  $('dbgClose').addEventListener('click', closeDbg);
+  dlg.addEventListener('click', (e) => { if (e.target === dlg) closeDbg(); });
+  dlg.addEventListener('keydown', (e) => { if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); closeDbg(); } });
   const flipFlag = (k, on) => { try { localStorage.setItem(k, on ? '0' : '1'); } catch {} location.reload(); };
-  $('dbgKeep').addEventListener('click', () => flipFlag('ml_keep', KEEP));
+  $('dbgKeep').addEventListener('click', async () => {
+    // 正在播放或上傳時,重新載入會中斷,先確認
+    if (isBusy() && !await askConfirm('重新載入播放器?', '切換「靜音保活」要重新載入頁面,正在播放的歌和進行中的上傳都會中斷。', { ok: '重新載入' })) return;
+    flipFlag('ml_keep', KEEP);
+  });
   $('dbgToggle').addEventListener('click', () => {
     DEBUG = !DEBUG;
     try { localStorage.setItem('ml_debug', DEBUG ? '1' : '0'); } catch {}
