@@ -1,7 +1,7 @@
 'use strict';
 // sw.js — 讓播放器頁面與清單在離線時仍能開啟（離線音檔本身存在 IndexedDB，由 player.js 處理）
 // 由 /player-sw.js 提供（scope 為 /），改版時把 VERSION 加一即可讓舊快取失效。
-const VERSION = 'v27';
+const VERSION = 'v28';
 const SHELL = `ml-shell-${VERSION}`;
 const DATA = `ml-data-${VERSION}`;
 const SHELL_URLS = [
@@ -43,17 +43,24 @@ self.addEventListener('activate', (e) => {
 
 // 網路優先；網路失敗或逾時才用快取。只快取成功（2xx）的回應，401 之類不會被存起來
 function networkFirst(req, cacheName) {
+  let netFailed = false; // 真的連不上（不是只是慢）才標成快取
   const net = fetch(req).then((res) => {
     if (res.ok) {
       const copy = res.clone();
       caches.open(cacheName).then((c) => c.put(req, copy)).catch(() => {});
     }
     return res;
-  });
+  }, (err) => { netFailed = true; throw err; });
   const timeout = new Promise((_, rej) => setTimeout(() => rej(new Error('timeout')), TIMEOUT_MS));
   return Promise.race([net, timeout]).catch(async () => {
     const hit = await caches.match(req, { cacheName });
-    return hit || net.catch(() => Response.error());
+    if (!hit) return net.catch(() => Response.error());
+    // 清單等資料因為連不上而改用快取時加上標頭，頁面才分得出「連不上伺服器、看到的是舊資料」；
+    // 只是回應太慢（逾時）不算，免得網路慢就把整個音樂庫標成無法播放
+    if (cacheName !== DATA || !netFailed) return hit;
+    const headers = new Headers(hit.headers);
+    headers.set('X-ML-Cached', '1');
+    return new Response(hit.body, { status: hit.status, statusText: hit.statusText, headers });
   });
 }
 

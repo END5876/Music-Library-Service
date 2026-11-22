@@ -348,8 +348,40 @@
       b.addEventListener('click', (ev) => { ev.stopPropagation(); bt.onClick(b); });
       li.appendChild(b);
     }
-    if (onClick) li.addEventListener('click', onClick);
+    if (onClick) {
+      li.addEventListener('click', onClick);
+      kbRow(li);
+    }
     return li;
+  }
+
+  // ── 鍵盤操作清單:整列可以聚焦,Enter／空白鍵＝點一下(播放或打開),↑↓／Home／End 在列之間移動 ──
+  // 同一個清單只有一列在 Tab 順序裡(roving tabindex),不然幾百首歌要按幾百次 Tab 才離得開清單
+  function kbRow(el) { el.dataset.kb = '1'; el.tabIndex = -1; }
+  const kbItems = (list) => [...list.children].filter((c) => c.dataset && c.dataset.kb);
+  function fixRoving(list) {
+    const items = kbItems(list);
+    if (items.length && !items.some((c) => c.tabIndex === 0)) items[0].tabIndex = 0;
+  }
+  // 清單重畫(加入新列)後補回「可 Tab 進來的那一列」
+  new MutationObserver((muts) => {
+    const lists = new Set();
+    for (const m of muts) if (m.addedNodes.length && m.target.nodeType === 1 && m.target.matches('ul, ol')) lists.add(m.target);
+    lists.forEach(fixRoving);
+  }).observe(document.body, { childList: true, subtree: true });
+  // 回傳 true 表示這個按鍵已經處理(全域快捷鍵不要再處理)
+  function rowKey(e) {
+    const el = e.target;
+    if (!el.dataset || !el.dataset.kb) return false;
+    if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); el.click(); return true; }
+    const moves = { ArrowDown: 1, ArrowUp: -1, Home: -Infinity, End: Infinity };
+    if (!(e.key in moves)) return false;
+    e.preventDefault();
+    const items = kbItems(el.parentElement);
+    const i = items.indexOf(el), d = moves[e.key];
+    const next = items[d === -Infinity ? 0 : d === Infinity ? items.length - 1 : Math.max(0, Math.min(items.length - 1, i + d))];
+    if (next && next !== el) { el.tabIndex = -1; next.tabIndex = 0; next.focus(); }
+    return true;
   }
 
   // ── Bot 正在播放(頁籤畫面與遠端控制在 playerBots.js)──
@@ -361,13 +393,16 @@
   // 頁籤上的數字徽章＝還在上傳／排隊／處理的首數
   const uploader = window.MLUpload.create({
     onUploaded: (n) => { setStatus(`${n} 首已加進音樂庫`); loadList(null, { quiet: true }); },
-    onPending: (n) => document.querySelectorAll('[data-view="upload"], #libUploadBtn').forEach((b) => {
+    // 徽章:有還沒看過的失敗時顯示「!」(打開上傳頁才清掉),否則顯示還在進行的首數
+    onPending: (n, failed) => document.querySelectorAll('[data-view="upload"], #libUploadBtn').forEach((b) => {
       let badge = b.querySelector('.nav-badge');
-      if (!n) { if (badge) badge.remove(); return; }
+      if (!n && !failed) { if (badge) badge.remove(); return; }
       if (!badge) { badge = document.createElement('span'); badge.className = 'nav-badge'; b.appendChild(badge); }
-      badge.textContent = n > 99 ? '99+' : String(n);
-      badge.title = `還有 ${n} 首在上傳或等伺服器處理`;
+      badge.classList.toggle('warn', !!failed);
+      badge.textContent = failed ? '!' : n > 99 ? '99+' : String(n);
+      badge.title = failed ? `${failed} 首沒有加進音樂庫` : `還有 ${n} 首在上傳或等伺服器處理`;
     }),
+    onFailed: (n) => setStatus(`${n} 首沒有加進音樂庫`, true, { label: '查看', fn: () => { setMode('upload'); uploader.showFailed(); } }),
   });
   $('libUploadBtn').addEventListener('click', () => setMode('upload'));
   $('libBotBtn').addEventListener('click', () => setMode('bots'));
@@ -549,11 +584,11 @@
   // scroll=true 才捲動(只有換歌時需要,搜尋輸入／重畫清單時不該一直把畫面拉回去)
   function markPlaying(scroll = false) {
     const k = nowKey();
-    document.querySelectorAll('.row.playing').forEach((r) => { if (r.dataset.key !== k) r.classList.remove('playing'); });
+    document.querySelectorAll('.row.playing').forEach((r) => { if (r.dataset.key !== k) { r.classList.remove('playing'); r.removeAttribute('aria-current'); } });
     if (!k) return;
     let firstMatch = null;
     document.querySelectorAll(`.row[data-key="${CSS.escape(k)}"]`).forEach((r) => {
-      r.classList.add('playing');
+      r.classList.add('playing'); r.setAttribute('aria-current', 'true');
       if (!firstMatch && r.closest('#list')) firstMatch = r;
     });
     if (scroll && firstMatch && !$('viewLibrary').hidden) firstMatch.scrollIntoView({ block: 'nearest' });
@@ -568,13 +603,16 @@
     try { r = await (listReq || fetch('/web/api/list')); } catch (err) {
       dbg('loadList 連線失敗', err);
       serverDown = true; updateNetState();
-      if (offlineKeys.size && mode === 'library') { setMode('offline'); return setStatus('目前無法連線,已切換到離線歌曲'); }
+      if (offlineKeys.size && mode === 'library' && !autoOfflineDone) { autoOfflineDone = true; setMode('offline'); return setStatus('目前無法連線,已切換到離線歌曲'); }
       return setStatus('連線失敗,請檢查網路後再試一次');
     }
     if (r.status === 401) { setStatus(''); return showLogin(); }
     if (!r.ok) return setStatus('讀取清單失敗,請重新整理頁面再試一次');
+    // Service Worker 在伺服器沒回應時會改給快取的清單(帶 X-ML-Cached):手機有網路卻拿到快取＝連不上音樂庫
+    const cached = r.headers.get('X-ML-Cached') === '1';
     const j = await r.json();
-    if (serverDown) { serverDown = false; updateNetState(); }
+    if (cached) { if (!serverDown && navigator.onLine !== false) { serverDown = true; updateNetState(); } }
+    else if (serverDown) { serverDown = false; updateNetState(); }
     all = j.files || [];
     for (const f of all) f.q = zhFold(f.name + '\n' + f.filename); // 搜尋用,先算好小寫+繁轉簡,打字時不必每個字都重算
     byFile = new Map(all.map(f => [f.filename, f]));
@@ -587,6 +625,17 @@
     // 先確認是哪個帳號(換帳號時會先清掉上一個人的資料)再載入播放清單;管理員才會接著更新 Bot 狀態
     loadMe().finally(loadPlaylists);
     scheduleDurations(j.durationsPending);
+    autoOpenOffline();
+  }
+
+  // 沒網路(或連不上音樂庫)時從主畫面打開:直接帶到離線歌曲,不要停在大半淡掉的音樂庫。
+  // 每次開啟只自動切一次,使用者自己切回音樂庫後就不再切
+  let autoOfflineDone = false;
+  function autoOpenOffline() {
+    if (autoOfflineDone || !isOffline() || !offlineKeys.size || mode !== 'library') return;
+    autoOfflineDone = true;
+    setMode('offline');
+    setStatus(navigator.onLine === false ? '目前沒有網路，已為你打開離線歌曲' : '暫時連不上音樂庫，已為你打開離線歌曲');
   }
 
   // ── 歌曲長度:伺服器第一次用 ffprobe 讀整個音樂庫需要一點時間,讀到的陸續補進畫面(只改文字,不重畫列表)──
@@ -1361,6 +1410,7 @@
   document.addEventListener('keyup', (e) => { if (e.key === ' ' && !skipKey(e)) e.preventDefault(); });
   document.addEventListener('keydown', (e) => {
     if (skipKey(e)) return;
+    if (rowKey(e)) return;
     if (e.key === ' ') { e.preventDefault(); toggle(); }
     else if (e.key === 'n' || e.key === 'N') advance();
     else if (e.key === 'p' || e.key === 'P') prev();
@@ -1404,7 +1454,7 @@
     $('viewBots').hidden = m !== 'bots';
     $('viewUpload').hidden = m !== 'upload';
     if (m === 'bots') bots.show(); else bots.hide();
-    if (m === 'upload') uploader.show();
+    if (m === 'upload') uploader.show(); else uploader.hide();
     try { if (m === 'upload') localStorage.setItem(UPLOAD_TAB_KEY, '1'); else localStorage.removeItem(UPLOAD_TAB_KEY); } catch {}
     document.body.classList.toggle('pl-detail', m === 'playlists' && !!plOpen && !!plById(plOpen));
     document.querySelectorAll('[data-view]').forEach(b => b.classList.toggle('active', b.dataset.view === m));
@@ -1642,12 +1692,42 @@
   let serverDown = false;
   const isOffline = () => navigator.onLine === false || serverDown;
   const entryPlayable = (e) => !isOffline() || offlineKeys.has(entryKey(e));
+  // 橫幅分兩種:手機沒有網路／有網路但連不上音樂庫(伺服器更新或當掉)。後者每 30 秒探測一次,連上就自動恢復
+  let probeTimer = 0;
   function updateNetState() {
     const off = isOffline();
+    const noNet = navigator.onLine === false;
     document.body.classList.toggle('is-offline', off);
     $('netBanner').hidden = !off;
+    $('netText').textContent = noNet
+      ? '手機目前沒有網路。可以播放已下載的歌曲。'
+      : '暫時連不上音樂庫，可能正在更新。先播放已下載的歌曲，連上後會自動恢復。';
+    $('netRetry').hidden = noNet;
     $('netGoOff').hidden = mode === 'offline' || !offlineKeys.size;
+    if (serverDown && !noNet && !probeTimer) probeTimer = setInterval(() => probeServer(false), 30 * 1000);
+    else if ((!serverDown || noNet) && probeTimer) { clearInterval(probeTimer); probeTimer = 0; }
   }
+  // 伺服器重啟時前面的 nginx 會回 502／503:有回應不代表恢復,要看狀態碼
+  async function serverOk() {
+    if (navigator.onLine === false) return false;
+    const ctl = new AbortController();
+    const timer = setTimeout(() => ctl.abort(), 5000);
+    try { const r = await fetch('/health?_=' + Date.now(), { cache: 'no-store', signal: ctl.signal }); return r.status < 500; }
+    catch { return false; }
+    finally { clearTimeout(timer); }
+  }
+  async function probeServer(manual) {
+    if (manual) $('netRetry').disabled = true;
+    const ok = await serverOk();
+    if (manual) $('netRetry').disabled = false;
+    if (!serverDown) return;
+    if (ok) {
+      serverDown = false; updateNetState();
+      setStatus('已重新連上音樂庫');
+      loadList(null, { quiet: true });
+    } else if (manual) setStatus('還是連不上音樂庫，30 秒後會再試一次');
+  }
+  $('netRetry').addEventListener('click', () => probeServer(true));
   window.addEventListener('offline', () => {
     updateNetState();
     const c = currentEntry();
@@ -2533,6 +2613,8 @@
     info.append(t, a);
     li.append(art, info, mkPlay('pl-card-pm'));
     li.addEventListener('click', () => openPlaylist(p.id));
+    li.setAttribute('aria-label', `${p.name},${p.items.length} 首歌曲`);
+    kbRow(li);
     return li;
   }
 

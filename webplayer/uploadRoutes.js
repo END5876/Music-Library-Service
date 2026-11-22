@@ -280,6 +280,25 @@ function mountUploadRoutes(app, { store, requireWebAuth, requireWebPage = requir
     res.json({ jobs: [...jobs.values()].filter((j) => j.owner === me).map(publicJob) });
   });
 
+  // 取消自己還在排隊的工作：刪掉暫存的原檔、移出佇列，不會發布到音樂庫。
+  // 正在處理的那首停不下來（轉檔已經開始），回 409 說明原因
+  app.post('/web/api/upload/jobs/:id/cancel', requireWebAuth, (req, res) => {
+    const j = jobs.get(req.params.id);
+    if (!j || j.owner !== ownerKey(req)) return res.status(404).json({ error: '找不到這個上傳工作' });
+    if (j.status === 'processing') {
+      return res.status(409).json({ error: '這首正在處理，沒辦法中途取消。處理完會放進音樂庫，之後可以從清單刪除。' });
+    }
+    if (j.status !== 'queued') return res.status(409).json({ error: '這首已經處理完了' });
+    const i = waiting.indexOf(j.id);
+    if (i >= 0) waiting.splice(i, 1);
+    try { fs.unlinkSync(j.staged.tmpPath); } catch {}
+    store.unprotectTemp(j.staged.tmpPath);
+    jobs.delete(j.id);
+    saveJobs();
+    console.log(`🚫 [MusicLibrary] 已取消排隊中的上傳: ${j.filename}`);
+    res.json({ ok: true });
+  });
+
   // 清掉自己已完成／失敗的工作紀錄
   app.post('/web/api/upload/jobs/clear', requireWebAuth, (req, res) => {
     const me = ownerKey(req);

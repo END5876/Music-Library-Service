@@ -112,6 +112,8 @@ section{margin-top:28px;min-width:0}
 .quick > *{min-width:0}
 .row{display:flex;align-items:center;gap:12px;padding:6px 8px;border-radius:10px;cursor:pointer;position:relative;min-width:0}
 .row:hover,.row.playing{background:var(--surface-1)}
+/* 鍵盤焦點框往內縮,不會被清單的 overflow 裁掉 */
+.row:focus-visible,.pl-card:focus-visible{outline:2px solid var(--text);outline-offset:-2px}
 .row .idx{width:28px;text-align:right;color:var(--text-3);font-size:13px;font-variant-numeric:tabular-nums;flex-shrink:0}
 .row.playing .idx{color:var(--accent)}
 .row .cover{width:48px;flex-shrink:0;border-radius:6px}
@@ -434,10 +436,13 @@ body.pl-detail header .search{visibility:hidden}
 .up-item.error .up-state,.up-item.error .up-msg,.up-item.blocked .up-state,.up-item.blocked .up-msg{color:var(--danger)}
 .up-item.blocked .up-bar,.up-item.pending .up-bar{visibility:hidden}
 .up-item.processing .up-bar i{animation:up-pulse 1.2s ease-in-out infinite}
+.up-filter{display:flex;align-items:center;justify-content:space-between;gap:10px;padding:4px 2px;color:var(--text-2);font-size:13px}
 @keyframes up-pulse{50%{opacity:.35}}
 .up-actions{display:flex;gap:10px;flex-wrap:wrap;margin-top:16px}
 #viewUpload .empty{padding:28px 16px}
 .nav-badge{margin-left:auto;min-width:20px;padding:1px 6px;border-radius:10px;background:var(--accent);color:#fff;font-size:11px;font-weight:700;line-height:18px;text-align:center}
+/* 有上傳失敗還沒看過:琥珀色「!」,跟一般的進度數字分開 */
+.nav-badge.warn{background:#f5a524;color:#111}
 .bottom-nav button{position:relative}
 .bottom-nav .nav-badge{position:absolute;top:4px;left:calc(50% + 6px);margin:0}
 /* 音樂庫標題列的上傳鈕:處理中的數字徽章疊在右上角 */

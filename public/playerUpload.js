@@ -4,8 +4,11 @@
 //     前端每 3 秒問一次處理進度（GET /web/api/upload/jobs）；傳完就可以關掉網頁，重新打開會接回進度
 //   - 放進共用音樂庫，或私人上傳（.private/<自己的 ID>/，其他帳號、Bot 都看不到）；私人上傳可選「保留原檔、不轉檔」
 //   - 開始前整批預檢（格式、單檔上限、私人配額、磁碟水位），頁面上方顯示目前用量
-// 對外：window.MLUpload.create({ onUploaded, onPending }) → { init(), show(), hide(), busy() }
-//   init()：登入確認是管理員後呼叫，背景接回伺服器上的處理進度（不必打開頁籤）；onPending(n) 回報還在上傳／排隊／處理的首數（頁籤徽章用）
+// 對外：window.MLUpload.create({ onUploaded, onPending, onFailed }) → { init(), show(), hide(), busy(), showFailed() }
+//   init()：登入確認是管理員後呼叫，背景接回伺服器上的處理進度（不必打開頁籤）
+//   onPending(n, failed)：還在上傳／排隊／處理的首數，以及使用者還沒看過的失敗首數（頁籤徽章用）
+//   onFailed(n)：不在上傳頁時有新的失敗，n＝還沒看過的失敗首數（顯示不自動消失的提示）
+//   showFailed()：清單只顯示失敗的項目（提示上的「查看」）
 
 (() => {
   const $ = (id) => document.getElementById(id);
@@ -27,7 +30,7 @@
     original: () => '原檔保存，未轉檔',
   };
 
-  function create({ onUploaded, onPending }) {
+  function create({ onUploaded, onPending, onFailed }) {
     let items = [];          // { id, file?, name, size, title, status, pct, msg, jobId? }；file 為 null＝重新整理前上傳、只剩伺服器紀錄
     let pollTimer = 0;
     let seq = 0;
@@ -35,6 +38,11 @@
     let target = 'library';
     let preflightTimer = 0;
     let preflightTok = 0;
+    let currentReq = null;    // 正在傳的那一首（「停止上傳」時中斷它）
+    let stopRequested = false;
+    let visible = false;      // 上傳頁是否開著
+    let unseenFailed = 0;     // 上傳頁沒開著時新出現的失敗首數
+    let onlyFailed = false;   // 清單只顯示失敗的項目
 
     const listEl = $('upList');
     const original = () => target === 'private' && $('upOriginal').checked;
@@ -121,9 +129,27 @@
     }
 
     const STATUS_LABEL = { pending: '等待上傳', uploading: '上傳中', queued: '已上傳・排隊處理', processing: '伺服器處理中', done: '完成', error: '失敗', blocked: '略過' };
+    // 有新的失敗：上傳頁開著時清單上就看得到；沒開著時記下來，交給播放器顯示不自動消失的提示
+    function noteFailures(n) {
+      if (!n || visible) return;
+      unseenFailed += n;
+      if (onFailed) onFailed(unseenFailed);
+    }
+
     function render() {
       listEl.textContent = '';
+      const failedCount = items.filter((it) => it.status === 'error').length;
+      if (onlyFailed && !failedCount) onlyFailed = false;
+      if (onlyFailed) {
+        const bar = document.createElement('li');
+        bar.className = 'up-filter';
+        bar.innerHTML = '<span></span><button class="btn btn-sm btn-secondary" type="button">顯示全部</button>';
+        bar.querySelector('span').textContent = `只顯示沒有加進音樂庫的 ${failedCount} 首`;
+        bar.querySelector('button').addEventListener('click', () => { onlyFailed = false; render(); });
+        listEl.appendChild(bar);
+      }
       for (const it of items) {
+        if (onlyFailed && it.status !== 'error') continue;
         const li = document.createElement('li');
         li.className = 'up-item ' + it.status;
         li.innerHTML = '<div class="up-main"><input class="up-title" type="text" maxlength="180" aria-label="曲名"><div class="up-meta"><span class="up-state"></span><span class="up-size"></span><span class="up-msg"></span></div><div class="up-bar"><i></i></div></div><button class="btn-icon ghost up-act"></button>';
@@ -139,6 +165,10 @@
         if (it.status === 'error' && it.file) {
           act.innerHTML = '<svg><use href="#i-repeat"/></svg>'; act.title = '重試'; act.setAttribute('aria-label', '重試');
           act.addEventListener('click', () => { it.status = 'pending'; it.pct = 0; it.msg = ''; it.jobId = null; render(); schedulePreflight(); });
+        } else if (it.status === 'queued' && it.jobId) {
+          // 排隊中的可以取消：伺服器刪掉暫存的原檔，不會放進音樂庫
+          act.innerHTML = '<svg><use href="#i-close"/></svg>'; act.title = '取消這首'; act.setAttribute('aria-label', '取消這首');
+          act.addEventListener('click', () => cancelJob(it, act));
         } else if (['uploading', 'queued', 'processing'].includes(it.status)) {
           act.hidden = true;
         } else {
@@ -153,11 +183,16 @@
 
     function syncButtons() {
       const pending = items.filter((it) => it.status === 'pending').length;
-      $('upStart').disabled = running || !pending;
-      $('upStart').lastChild.textContent = running ? '上傳中…' : pending ? `開始上傳（${pending} 首）` : '開始上傳';
+      // 上傳中這顆按鈕變成「停止上傳」：中斷正在傳的那首，剩下的回到「等待上傳」
+      const start = $('upStart');
+      start.disabled = running ? stopRequested : !pending;
+      start.classList.toggle('btn-primary', !running);
+      start.classList.toggle('btn-secondary', running);
+      start.querySelector('use').setAttribute('href', running ? '#i-stop' : '#i-upload');
+      start.lastChild.textContent = running ? (stopRequested ? '停止中…' : '停止上傳') : pending ? `開始上傳（${pending} 首）` : '開始上傳';
       $('upClear').hidden = !items.some((it) => it.status === 'done' || it.status === 'blocked' || (it.status === 'error' && !it.file));
       const waitingServer = items.filter((it) => it.status === 'queued' || it.status === 'processing').length;
-      if (onPending) onPending(waitingServer + items.filter((it) => it.status === 'uploading').length);
+      if (onPending) onPending(waitingServer + items.filter((it) => it.status === 'uploading').length, unseenFailed);
       $('upServerNote').hidden = !waitingServer;
       $('upServerNote').textContent = `伺服器還有 ${waitingServer} 首在排隊處理,一次處理一首。已經傳完的話可以關掉網頁,處理會繼續進行;重新打開這個頁籤會接回進度。`;
       for (const el of document.querySelectorAll('#upTarget .chip, #upOriginal, #upFolder, #upFiles')) el.disabled = running;
@@ -179,8 +214,9 @@
     // ── 上傳(逐一)──
     function uploadOne(it) {
       return new Promise((resolve) => {
-        it.status = 'uploading'; it.pct = 0; it.msg = ''; render();
+        it.status = 'uploading'; it.pct = 0; it.msg = ''; it.sent = false; render();
         const req = new XMLHttpRequest();
+        currentReq = req;
         req.open('POST', '/web/api/upload');
         // HTTP header 只能可靠地傳 ASCII:URL 編碼保留中文曲名與資料夾名稱
         req.setRequestHeader('x-upload-filename', encodeURIComponent(it.file.name));
@@ -195,9 +231,13 @@
           const now = Date.now();
           if (now - lastPaint > 200) { lastPaint = now; render(); }
         };
-        req.upload.onload = () => { it.pct = 100; it.msg = '已傳完,等伺服器確認…'; render(); };
-        req.onerror = () => { it.status = 'error'; it.msg = '連線中斷'; render(); resolve(); };
+        // 檔案已經傳完:伺服器可能已經排進佇列,這時「停止上傳」不中斷這首,等回應回來再停
+        req.upload.onload = () => { it.pct = 100; it.msg = '已傳完,等伺服器確認…'; it.sent = true; render(); };
+        req.onerror = () => { currentReq = null; it.status = 'error'; it.msg = '連線中斷'; noteFailures(1); render(); resolve(); };
+        // 使用者按了「停止上傳」：這首回到等待上傳，之後可以再開始
+        req.onabort = () => { currentReq = null; it.status = 'pending'; it.pct = 0; it.msg = ''; render(); resolve(); };
         req.onload = () => {
+          currentReq = null;
           let j = {};
           try { j = JSON.parse(req.responseText); } catch {}
           if (req.status === 202 && j.job) {
@@ -207,6 +247,7 @@
           } else {
             it.status = 'error';
             it.msg = req.status === 401 ? '登入已過期,請重新整理頁面' : (j.error || 'HTTP ' + req.status);
+            noteFailures(1);
           }
           render(); resolve();
         };
@@ -214,11 +255,31 @@
       });
     }
 
+    function stopAll() {
+      if (!running || stopRequested) return;
+      stopRequested = true;
+      syncButtons();
+      const it = items.find((x) => x.status === 'uploading');
+      if (currentReq && !(it && it.sent)) currentReq.abort();
+    }
+
+    async function cancelJob(it, btn) {
+      btn.disabled = true;
+      let r, j = {};
+      try { r = await fetch(`/web/api/upload/jobs/${encodeURIComponent(it.jobId)}/cancel`, { method: 'POST' }); j = await r.json().catch(() => ({})); } catch { r = null; }
+      if (r && (r.ok || r.status === 404)) {
+        items = items.filter((x) => x !== it);
+        loadUsage(); schedulePreflight(); // 伺服器已經釋放這首的暫存空間
+      } else it.msg = r ? (j.error || '取消失敗') : '連不上伺服器,沒有取消';
+      render();
+    }
+
     async function startAll() {
       if (running) return;
-      running = true; syncButtons();
+      running = true; stopRequested = false; syncButtons();
       try {
         for (;;) {
+          if (stopRequested) break;
           const it = items.find((x) => x.status === 'pending');
           if (!it) break;
           await uploadOne(it);
@@ -230,7 +291,7 @@
           }
         }
       } finally {
-        running = false; syncButtons();
+        running = false; stopRequested = false; currentReq = null; syncButtons();
       }
     }
 
@@ -259,15 +320,19 @@
         if (!r.ok) throw 0;
         j = await r.json();
       } catch { return schedulePoll(10000); }
-      let newlyDone = 0;
+      let newlyDone = 0, newlyFailed = 0;
       for (const job of j.jobs || []) {
         let it = items.find((x) => x.jobId === job.id);
         if (!it) { // 重新整理頁面前上傳的:只剩伺服器紀錄
           it = { id: ++seq, file: null, name: job.name, size: job.inputBytes, title: job.title, pct: 100, jobId: job.id, status: '' };
           items.push(it);
         }
+        // 這次打開頁面才接回的舊紀錄(status 是空的)不算「新的失敗」
+        const wasKnown = it.status !== '' && it.status !== 'error';
         if (applyJob(it, job)) newlyDone += 1;
+        if (wasKnown && it.status === 'error') newlyFailed += 1;
       }
+      noteFailures(newlyFailed);
       render();
       if (newlyDone) { onUploaded && onUploaded(newlyDone); loadUsage(); }
       if (items.some((x) => x.status === 'queued' || x.status === 'processing')) schedulePoll();
@@ -284,7 +349,7 @@
       target = b.dataset.target; syncTarget(); schedulePreflight();
     }));
     $('upOriginal').addEventListener('change', () => { syncTarget(); schedulePreflight(); render(); });
-    $('upStart').addEventListener('click', startAll);
+    $('upStart').addEventListener('click', () => (running ? stopAll() : startAll()));
     $('upClear').addEventListener('click', () => {
       items = items.filter((it) => it.status !== 'done' && it.status !== 'blocked' && !(it.status === 'error' && !it.file));
       render(); schedulePreflight();
@@ -296,9 +361,10 @@
     render();
     return {
       init() { poll(); },
-      show() { loadUsage(); poll(); },
-      hide() {},
+      show() { visible = true; unseenFailed = 0; loadUsage(); poll(); syncButtons(); },
+      hide() { visible = false; },
       busy: () => running,
+      showFailed() { onlyFailed = true; render(); },
     };
   }
 

@@ -241,6 +241,37 @@ test('背景佇列：一次處理一首、依上傳順序；同名的歌還在�
   }
 });
 
+test('取消排隊中的工作：移出佇列、刪掉暫存原檔；處理中的回 409；別人的工作回 404', async () => {
+  const normalizer = require('../ytdlp/musicNormalizer');
+  const orig = normalizer.processUpload;
+  let release;
+  const gate = new Promise((r) => { release = r; });
+  normalizer.processUpload = async (input, output) => { await gate; fs.copyFileSync(input, output); return { method: 'transcode' }; };
+  try {
+    const send = (title) => upload({ 'x-upload-filename': 'a.flac', 'x-upload-title': title, 'x-upload-folder': 'c' });
+    const first = (await (await send('處理中')).json()).job.id;
+    const second = (await (await send('要取消')).json()).job.id;
+    const cancel = (id) => postJson(`/web/api/upload/jobs/${id}/cancel`, {});
+
+    assert.equal((await cancel(first)).status, 409, '正在處理的不能取消');
+    user = { id: '333333333333333333', admin: true };
+    try { assert.equal((await cancel(second)).status, 404, '別人的工作'); } finally { user = { id: OWNER, admin: true }; }
+    assert.equal((await cancel(second)).status, 200);
+    assert.equal((await cancel(second)).status, 404, '已經取消的');
+
+    release();
+    await routes.idle();
+    const jobs = (await (await fetch(base + '/web/api/upload/jobs')).json()).jobs;
+    assert.ok(!jobs.some((j) => j.id === second));
+    assert.ok(fs.existsSync(path.join(MUSIC, 'c', '處理中.mp3')));
+    assert.ok(!fs.existsSync(path.join(MUSIC, 'c', '要取消.mp3')));
+    assert.deepEqual(leftovers().filter((f) => /\.tmp/.test(f)), []);
+  } finally {
+    normalizer.processUpload = orig;
+    release();
+  }
+});
+
 test('工作紀錄存檔：服務重啟後查得到；還沒處理的工作暫存檔還在就接續處理，不在就標成失敗；啟動清理不會刪排隊中的原檔', async () => {
   const OWN = OWNER;
   const dir = path.join(MUSIC, '.private', OWN, 'resume');
