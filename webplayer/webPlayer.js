@@ -85,13 +85,14 @@ function mountWebPlayer(app, { store, libSecret, status, botHub }) {
           const duration = durations.get(filename);
           const f = duration ? { filename, name, size, duration } : { filename, name, size };
           if (priv) f.private = true;
+          if (store.isCachePath(filename)) f.cache = true; // 線上播放時自動存下的，空間不夠時會被清掉
           return f;
         }),
         durationsPending: pending,
       });
     } catch (err) {
       console.error('❌ [MusicLibrary] /web/api/list 失敗:', err);
-      res.status(500).json({ error: '讀取音樂庫清單失敗' });
+      res.status(500).json({ error: '音樂庫清單沒有載入成功，請稍後再試一次。' });
     }
   });
 
@@ -99,13 +100,13 @@ function mountWebPlayer(app, { store, libSecret, status, botHub }) {
   app.get('/web/stream/*', requireWebAuth, (req, res) => {
     try {
       const absPath = store.resolveForRead(req.params[0], privateScope(req));
-      if (!absPath) return res.status(404).json({ error: '找不到檔案' });
+      if (!absPath) return res.status(404).json({ error: '找不到這首歌的檔案，可能已被移除。' });
       store.touchCache(absPath); // 播放＝使用中，延後被快取清理（LRU）
       res.sendFile(absPath, { dotfiles: 'allow', headers: { 'Cache-Control': 'private, max-age=3600' } }, (err) => {
         if (err && !res.headersSent) {
-          if (store.isNotFoundError(err)) return res.status(404).json({ error: '找不到檔案' });
+          if (store.isNotFoundError(err)) return res.status(404).json({ error: '找不到這首歌的檔案，可能已被移除。' });
           console.error('❌ [MusicLibrary] 串流失敗:', err.message);
-          res.status(500).json({ error: '串流失敗' });
+          res.status(500).json({ error: '這首串流中斷了，請再試一次。' });
         }
       });
     } catch (err) {

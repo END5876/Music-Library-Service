@@ -78,13 +78,13 @@
   <button class="navitem needs-online" data-view="online" hidden><svg><use href="#i-explore"/></svg>線上搜尋</button>
   <button class="navitem" data-view="bots" hidden><svg><use href="#i-bot"/></svg><span>Bot<span class="nav-long"> 正在播放</span></span></button>
   <button class="navitem" data-view="upload" hidden><svg><use href="#i-upload"/></svg>上傳音樂</button>
-  <button class="navitem subtle" id="helpBtn" title="鍵盤快捷鍵 (?)"><svg><use href="#i-keyboard"/></svg>鍵盤快捷鍵</button>
+  <button class="navitem subtle" id="helpBtn" title="鍵盤快捷鍵（?）"><svg><use href="#i-keyboard"/></svg>鍵盤快捷鍵</button>
 </aside>
 
 <main id="main">
   <div class="net-banner" id="netBanner" hidden>
     <svg><use href="#i-offline"/></svg>
-    <span id="netText">目前離線,只能播放已下載的歌曲</span>
+    <span id="netText">目前離線，只能播放已下載的歌曲</span>
     <button class="btn btn-sm btn-secondary" id="netRetry" hidden>重試</button>
     <button class="btn btn-sm btn-secondary" id="netGoOff">離線歌曲</button>
   </div>
@@ -119,14 +119,14 @@
         <button class="btn btn-sm btn-secondary" id="selCancel">取消</button>
       </div>
       <ul class="quick" id="list"></ul>
-      <div class="empty" id="empty" hidden><svg><use href="#i-search"/></svg><b>沒有符合的曲目</b><span>換個關鍵字,或切換上方的標籤試試看</span></div>
+      <div class="empty" id="empty" hidden><svg><use href="#i-search"/></svg><b id="emptyText">沒有符合的歌。</b><span id="emptyHint"></span><button class="btn btn-primary" id="emptyOnline" type="button" hidden><svg><use href="#i-explore"/></svg><span></span></button><button class="btn btn-secondary" id="emptyClear" type="button" hidden>清除搜尋</button></div>
     </section>
   </div>
 
   <div id="viewOnline" hidden>
     <section style="margin-top:0">
       <div class="sec-head"><h2>線上搜尋<small>YouTube + Bilibili</small></h2></div>
-      <div class="hint" id="onlineHint">在上方搜尋列輸入關鍵字後按 Enter,或直接貼上影片網址。點一下立即播放,「＋」加入佇列。</div>
+      <div class="hint" id="onlineHint">在上方搜尋列輸入關鍵字後按 Enter，或直接貼上影片網址。點一下立即播放，「＋」加入佇列。</div>
       <ul class="quick" id="onlineResults"></ul>
     </section>
   </div>
@@ -150,7 +150,7 @@
         <button class="chip" data-sort="name">歌名</button>
       </div>
       <ul class="quick" id="offList"></ul>
-      <div class="empty" id="offEmpty" hidden><svg><use href="#i-offline"/></svg><b id="offEmptyText"></b><span id="offEmptyHint">在播放清單按下載鈕整份下載,或在歌曲的「⋮」選單選擇「下載離線」。<br>下載後沒有網路也能播放。</span><button class="btn btn-primary" id="offGoPl"><svg><use href="#i-playlist"/></svg>前往播放清單</button></div>
+      <div class="empty" id="offEmpty" hidden><svg><use href="#i-offline"/></svg><b id="offEmptyText"></b><span id="offEmptyHint">在播放清單按下載鈕整份下載，或在歌曲的「⋮」選單選擇「下載離線」。<br>下載後沒有網路也能播放。</span><button class="btn btn-primary" id="offGoPl"><svg><use href="#i-playlist"/></svg>前往播放清單</button></div>
     </section>
   </div>
 
@@ -159,7 +159,7 @@
       <div class="sec-head"><h2>Bot 正在播放<small id="botsCount"></small></h2></div>
       <div class="hint" id="botsHint" hidden></div>
       <div id="botsList"></div>
-      <div class="empty" id="botsEmpty" hidden><svg><use href="#i-bot"/></svg><b>目前沒有 Bot 連上</b><span>Bot 設定好 MUSIC_LIB_URL 指向這個服務後,就會出現在這裡。<br>可以看到各伺服器正在播的歌、遠端控制,並從音樂庫點歌給 Bot。</span></div>
+      <div class="empty" id="botsEmpty" hidden><svg><use href="#i-bot"/></svg><b>目前沒有 Bot 連上</b><span>Bot 連上這個音樂庫後，就會出現在這裡。<br>可以看到各伺服器正在播的歌、遠端控制，並從音樂庫點歌給 Bot。</span></div>
     </section>
   </div>
 
@@ -177,13 +177,13 @@
           <button class="chip lock" type="button" data-target="private">私人上傳</button>
         </div>
         <p class="hint" id="upTargetHint"></p>
-        <label class="check-line" id="upOriginalLine" hidden><input type="checkbox" id="upOriginal">保留原檔、不轉檔(占用較多空間)</label>
+        <label class="check-line" id="upOriginalLine" hidden><input type="checkbox" id="upOriginal">保留原檔、不轉檔（占用較多空間）</label>
         <p class="hint" id="upModeHint"></p>
-        <label class="up-field">儲存資料夾<input type="text" id="upFolder" maxlength="200" autocomplete="off"></label>
+        <label class="up-field">分類<input type="text" id="upFolder" maxlength="200" autocomplete="off"></label>
       </div>
       <label class="up-drop" id="upDrop">
         <svg><use href="#i-upload"/></svg>
-        <b>拖曳音檔到這裡,或點一下選擇(可多選)</b>
+        <b id="upDropText">拖曳音檔到這裡，或點一下選擇（可多選）</b>
         <span>支援 MP3、WAV、OGG、FLAC、M4A、AAC</span>
         <input type="file" id="upFiles" multiple accept="audio/mpeg,audio/wav,audio/ogg,audio/flac,audio/mp4,audio/aac,.mp3,.wav,.ogg,.flac,.m4a,.aac" hidden>
       </label>
@@ -192,7 +192,7 @@
       <div class="up-summary" id="upSummary" hidden></div>
       <p class="hint up-server" id="upServerNote" hidden></p>
       <ul class="up-list" id="upList"></ul>
-      <div class="empty" id="upEmpty"><svg><use href="#i-note"/></svg><b>還沒有選擇檔案</b><span>每首的曲名可以在上傳前修改。檔案會全部先傳上去,伺服器再一首一首慢慢處理;失敗的可以重試。</span></div>
+      <div class="empty" id="upEmpty"><svg><use href="#i-note"/></svg><b>還沒有選擇檔案</b><span>每首的曲名可以在上傳前修改。檔案會全部先傳上去，伺服器再一首一首慢慢處理；失敗的可以重試。</span></div>
       <div class="up-actions">
         <button class="btn btn-primary" id="upStart" type="button" disabled><svg><use href="#i-upload"/></svg><span>開始上傳</span></button>
         <button class="btn btn-secondary" id="upClear" type="button" hidden>清除已完成</button>
@@ -244,7 +244,7 @@
         <button class="btn btn-sm btn-secondary" id="plSelCancel">取消</button>
       </div>
       <ul class="quick" id="plItems"></ul>
-      <div class="empty" id="plItemsEmpty" hidden><svg><use href="#i-note"/></svg><b>這個播放清單還是空的</b><span>在音樂庫歌曲的「⋮」選單選擇「加入播放清單」,<br>或用音樂庫的「多選」一次加入多首。</span><button class="btn btn-primary" id="plGoLib"><svg><use href="#i-lib"/></svg>前往音樂庫</button></div>
+      <div class="empty" id="plItemsEmpty" hidden><svg><use href="#i-note"/></svg><b>這個播放清單還是空的</b><span>在音樂庫歌曲的「⋮」選單選擇「加入播放清單」，<br>或用音樂庫的「多選」一次加入多首。</span><button class="btn btn-primary" id="plGoLib"><svg><use href="#i-lib"/></svg>前往音樂庫</button></div>
       </div>
     </div>
   </div>
@@ -262,11 +262,11 @@
   </div>
   <div class="center">
     <div class="ctrls">
-      <button id="shuffle" title="隨機播放 (S)" aria-label="隨機播放"><svg><use href="#i-shuffle"/></svg></button>
-      <button id="prev" title="上一首 (P)" aria-label="上一首"><svg><use href="#i-prev"/></svg></button>
-      <button class="big" id="toggle" title="播放／暫停 (空白)" aria-label="播放／暫停"><svg><use href="#i-play"/></svg></button>
-      <button id="next" title="下一首 (N)" aria-label="下一首"><svg><use href="#i-next"/></svg></button>
-      <button id="repeat" title="循環模式 (R)" aria-label="循環模式"><svg><use href="#i-repeat"/></svg></button>
+      <button id="shuffle" title="隨機播放（S）" aria-label="隨機播放"><svg><use href="#i-shuffle"/></svg></button>
+      <button id="prev" title="上一首（P）" aria-label="上一首"><svg><use href="#i-prev"/></svg></button>
+      <button class="big" id="toggle" title="播放／暫停（空白）" aria-label="播放／暫停"><svg><use href="#i-play"/></svg></button>
+      <button id="next" title="下一首（N）" aria-label="下一首"><svg><use href="#i-next"/></svg></button>
+      <button id="repeat" title="循環模式（R）" aria-label="循環模式"><svg><use href="#i-repeat"/></svg></button>
     </div>
     <div class="bar-seek">
       <span id="barCur">0:00</span>
@@ -351,15 +351,16 @@
     <p class="ttl" id="botPickTitle">點給 Bot 播放</p>
     <p class="msg" id="botPickSong"></p>
     <ul class="pick-list" id="botPickList"></ul>
-    <label class="check-line"><input type="checkbox" id="botPickNext">下一首播放(插到 Bot 佇列最前面)</label>
+    <label class="check-line"><input type="checkbox" id="botPickNext">下一首播放（插到 Bot 佇列最前面）</label>
     <div class="dlg-actions"><button class="btn btn-secondary" id="botPickClose" type="button">取消</button></div>
   </div>
 </div>
 
 <div class="dialog" id="nameDlg">
-  <form class="box" id="nameForm" role="dialog" aria-modal="true">
+  <form class="box" id="nameForm" role="dialog" aria-modal="true" novalidate>
     <p class="ttl" id="nameTitle"></p>
-    <input type="text" id="nameInput" maxlength="50" autocomplete="off" placeholder="名稱" required>
+    <input type="text" id="nameInput" maxlength="50" autocomplete="off" required>
+    <p class="err" id="nameErr" role="alert"></p>
     <div class="dlg-actions">
       <button class="btn btn-secondary" type="button" id="nameCancel">取消</button>
       <button class="btn btn-primary" type="submit" id="nameOk">儲存</button>
@@ -373,7 +374,7 @@
     <p class="msg" id="confirmMsg"></p>
     <div class="dlg-actions">
       <button class="btn btn-secondary" type="button" id="confirmCancel">取消</button>
-      <button class="btn btn-primary" type="button" id="confirmOk">確定</button>
+      <button class="btn btn-primary" type="button" id="confirmOk">繼續</button>
     </div>
   </div>
 </div>
@@ -385,7 +386,7 @@
       <kbd>空白</kbd><span>播放／暫停</span>
       <kbd>N</kbd><span>下一首</span>
       <kbd>P</kbd><span>上一首</span>
-      <kbd>S</kbd><span>隨機播放</span>
+      <kbd>S</kbd><span>隨機播放（打亂順序）</span>
       <kbd>R</kbd><span>循環模式</span>
       <kbd>← / →</kbd><span>快退／快進 10 秒</span>
       <kbd>Esc</kbd><span>關閉播放頁／對話框、結束多選</span>
@@ -398,17 +399,18 @@
 <div class="dialog" id="login">
   <div class="box">
     <div class="logo"><i></i><span>裊器音樂</span></div>
-    <p>請用 Discord 帳號登入</p>
-    <a class="btn btn-lg btn-primary" id="loginBtn" href="/auth/discord/login">使用 Discord 登入</a>
+    <p>聽大家一起整理的音樂庫，建立自己的播放清單，下載起來離線聽。</p>
+    <a class="btn btn-lg btn-primary" id="loginBtn" href="/auth/discord/login">用 Discord 登入</a>
+    <p class="login-note">只會讀取你的 Discord 名稱與頭像。</p>
     <!-- 代碼交接(主畫面 App 用,見 webplayer/webAuth.js) -->
     <div class="handoff" id="handoff" hidden>
-      <p>在瀏覽器完成 Discord 登入後,確認頁上的代碼要和這裡相同:</p>
+      <p>在瀏覽器完成 Discord 登入後，確認頁上的代碼要和這裡相同：</p>
       <div class="handoff-code" id="handoffCode"></div>
-      <a class="btn btn-lg btn-primary" id="handoffOpen" target="_blank" rel="noopener">開啟 Discord 登入</a>
+      <a class="btn btn-lg btn-primary" id="handoffOpen" target="_blank" rel="noopener">在瀏覽器用 Discord 登入</a>
       <p id="handoffStatus"></p>
       <button class="btn btn-secondary" type="button" id="handoffCancel">取消</button>
     </div>
-    <button class="btn btn-secondary" type="button" id="handoffBtn" hidden>登入後回不到這裡?改用代碼登入</button>
+    <button class="btn btn-secondary" type="button" id="handoffBtn" hidden>登入後回不到這裡？改用代碼登入</button>
     <div class="err" id="loginErr"></div>
   </div>
 </div>

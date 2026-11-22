@@ -642,6 +642,7 @@ module.exports = {
   summary,
   diskHealth,
   isCacheFileName,
+  isCachePath,
   PRIVATE_TOP_DIR,
   PRIVATE_QUOTA_MB,
   MIN_FREE_MB,

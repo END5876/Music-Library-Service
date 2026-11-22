@@ -95,7 +95,7 @@
         if (!r.ok) throw new Error(j.error || 'HTTP ' + r.status);
       } catch (err) {
         if (tok !== preflightTok) return;
-        box.hidden = false; box.className = 'up-summary warn'; box.textContent = '無法預檢:' + err.message;
+        box.hidden = false; box.className = 'up-summary warn'; box.textContent = '沒辦法先檢查這些檔案：' + err.message;
         return syncButtons();
       }
       if (tok !== preflightTok) return;
@@ -128,7 +128,7 @@
       schedulePreflight();
     }
 
-    const STATUS_LABEL = { pending: '等待上傳', uploading: '上傳中', queued: '已上傳・排隊處理', processing: '伺服器處理中', done: '完成', error: '失敗', blocked: '略過' };
+    const STATUS_LABEL = { pending: '等待上傳', uploading: '上傳中', queued: '排隊處理中', processing: '伺服器處理中', done: '完成', error: '失敗', blocked: '略過' };
     // 有新的失敗：上傳頁開著時清單上就看得到；沒開著時記下來，交給播放器顯示不自動消失的提示
     function noteFailures(n) {
       if (!n || visible) return;
@@ -194,7 +194,7 @@
       const waitingServer = items.filter((it) => it.status === 'queued' || it.status === 'processing').length;
       if (onPending) onPending(waitingServer + items.filter((it) => it.status === 'uploading').length, unseenFailed);
       $('upServerNote').hidden = !waitingServer;
-      $('upServerNote').textContent = `伺服器還有 ${waitingServer} 首在排隊處理,一次處理一首。已經傳完的話可以關掉網頁,處理會繼續進行;重新打開這個頁籤會接回進度。`;
+      $('upServerNote').textContent = `伺服器還有 ${waitingServer} 首在排隊處理，一次處理一首。已經傳完的話可以關掉網頁，處理會繼續進行；重新打開這個頁籤會接回進度。`;
       for (const el of document.querySelectorAll('#upTarget .chip, #upOriginal, #upFolder, #upFiles')) el.disabled = running;
       $('upDrop').classList.toggle('disabled', running);
     }
@@ -202,13 +202,13 @@
     function syncTarget() {
       document.querySelectorAll('#upTarget .chip').forEach((b) => b.classList.toggle('active', b.dataset.target === target));
       $('upOriginalLine').hidden = target !== 'private';
-      $('upFolder').placeholder = target === 'private' ? '留空＝私人空間最上層' : '例如 uploads(留空＝音樂庫根目錄)';
+      $('upFolder').placeholder = target === 'private' ? '留空＝不分類' : '例如：uploads（留空＝不分類）';
       $('upTargetHint').textContent = target === 'private'
-        ? '只有你看得到、聽得到;其他帳號和 Bot 都看不到。會計入私人空間配額。'
+        ? '只有你看得到、聽得到；其他帳號和 Bot 都看不到。會計入私人空間配額。'
         : '所有登入的人和 Bot 都能播放。';
       $('upModeHint').textContent = original()
-        ? '原檔照存(FLAC、WAV 會占用數倍空間),不統一音量。'
-        : '一般音檔轉成高品質 MP3(約 190 kbps)並統一音量;已經是 200 kbps 以下的 MP3 不重新編碼,只無損調整音量。';
+        ? '原檔照存（FLAC、WAV 會占用數倍空間），不統一音量。'
+        : '一般音檔轉成高品質 MP3（約 190 kbps）並統一音量；已經是 200 kbps 以下的 MP3 不重新編碼，只無損調整音量。';
     }
 
     // ── 上傳(逐一)──
@@ -232,8 +232,8 @@
           if (now - lastPaint > 200) { lastPaint = now; render(); }
         };
         // 檔案已經傳完:伺服器可能已經排進佇列,這時「停止上傳」不中斷這首,等回應回來再停
-        req.upload.onload = () => { it.pct = 100; it.msg = '已傳完,等伺服器確認…'; it.sent = true; render(); };
-        req.onerror = () => { currentReq = null; it.status = 'error'; it.msg = '連線中斷'; noteFailures(1); render(); resolve(); };
+        req.upload.onload = () => { it.pct = 100; it.msg = '已傳完，等伺服器確認…'; it.sent = true; render(); };
+        req.onerror = () => { currentReq = null; it.status = 'error'; it.msg = navigator.onLine === false ? '網路斷了，連上後按「重試」。' : '連線中斷，請按「重試」。'; noteFailures(1); render(); resolve(); };
         // 使用者按了「停止上傳」：這首回到等待上傳，之後可以再開始
         req.onabort = () => { currentReq = null; it.status = 'pending'; it.pct = 0; it.msg = ''; render(); resolve(); };
         req.onload = () => {
@@ -246,7 +246,8 @@
             schedulePoll(1000);
           } else {
             it.status = 'error';
-            it.msg = req.status === 401 ? '登入已過期,請重新整理頁面' : (j.error || 'HTTP ' + req.status);
+            it.msg = req.status === 401 ? '登入已過期。重新登入後按「重試」，選好的檔案都還在。'
+        : (j.error || (req.status >= 500 ? '伺服器處理時出錯，請按「重試」。' : `沒有上傳成功，請按「重試」。（錯誤代碼 ${req.status}）`));
             noteFailures(1);
           }
           render(); resolve();
@@ -270,7 +271,7 @@
       if (r && (r.ok || r.status === 404)) {
         items = items.filter((x) => x !== it);
         loadUsage(); schedulePreflight(); // 伺服器已經釋放這首的暫存空間
-      } else it.msg = r ? (j.error || '取消失敗') : '連不上伺服器,沒有取消';
+      } else it.msg = r ? (j.error || '取消失敗') : '連不上伺服器，沒有取消';
       render();
     }
 
@@ -285,7 +286,7 @@
           await uploadOne(it);
           // 空間不足就不必再試後面的
           if (it.status === 'error' && /空間不足/.test(it.msg)) {
-            items.filter((x) => x.status === 'pending').forEach((x) => { x.status = 'error'; x.msg = '空間不足,已停止'; });
+            items.filter((x) => x.status === 'pending').forEach((x) => { x.status = 'error'; x.msg = '空間不足，已停止'; });
             render();
             break;
           }
@@ -300,7 +301,7 @@
       const before = it.status;
       it.status = job.status;
       if (job.status === 'queued') it.msg = job.position > 1 ? `前面還有 ${job.position - 1} 首` : '下一首就輪到';
-      else if (job.status === 'processing') it.msg = job.mode === 'original' ? '儲存中…' : '轉檔／統一音量中,大檔案可能要一兩分鐘…';
+      else if (job.status === 'processing') it.msg = job.mode === 'original' ? '儲存中…' : '轉檔／統一音量中，大檔案可能要一兩分鐘…';
       else if (job.status === 'done') {
         const r = job.result || {};
         it.msg = (RESULT_TEXT[r.method] || (() => '完成'))(r) + ' → ' + String(job.filename || '').replace(/^\.private\/\d+\//, '私人 / ');
@@ -341,6 +342,8 @@
     // ── 事件 ──
     $('upFiles').addEventListener('change', (e) => { addFiles(e.target.files); e.target.value = ''; });
     const drop = $('upDrop');
+    // 觸控裝置不能拖曳檔案：只說點一下選擇
+    if (matchMedia('(hover: none)').matches) $('upDropText').textContent = '點這裡選擇音檔（可多選）';
     ['dragenter', 'dragover'].forEach((t) => drop.addEventListener(t, (e) => { e.preventDefault(); if (!running) drop.classList.add('over'); }));
     ['dragleave', 'drop'].forEach((t) => drop.addEventListener(t, (e) => { e.preventDefault(); drop.classList.remove('over'); }));
     drop.addEventListener('drop', (e) => { if (!running && e.dataTransfer) addFiles(e.dataTransfer.files); });

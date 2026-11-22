@@ -25,7 +25,7 @@
     const LOOP_LABEL = { off: '不循環', one: '單曲循環', all: '列表循環' };
     // autopaused：@discordjs/voice 在「沒有可用的語音連線」時自動暫停（例如 Bot 被踢出、連線重建中）
     const STATUS_LABEL = { paused: '已暫停', autopaused: '已暫停（語音連線中斷）', buffering: '緩衝中…' };
-    const VOICE_LABEL = { connecting: '連線中…', disconnected: '連線中斷,重新連線中…' };
+    const VOICE_LABEL = { connecting: '連線中…', disconnected: '連線中斷，重新連線中…' };
 
     const el = (tag, cls, text) => {
       const e = document.createElement(tag);
@@ -38,7 +38,7 @@
     const itemKey = (it) => (it.kind === 'lib' ? 'lib:' + it.filename : 'on:' + it.url);
     const itemSub = (it) => it.kind === 'lib'
       ? (it.filename.includes('/') ? it.filename.split('/')[0] : '音樂庫')
-      : [it.platform, it.author].filter(Boolean).join(' · ') || '線上歌曲';
+      : [it.platform, it.author].filter(Boolean).join('・') || '線上歌曲';
     const itemTitle = (it) => (it.kind === 'lib' && libInfo(it.filename)?.name) || it.title;
     const itemDur = (it) => (it.kind === 'lib' ? (libInfo(it.filename)?.duration || 0) : (it.durationSec || parseDur(it.duration)));
     // 可以點歌的目標：在線的 Bot、且在語音頻道裡（被踢出但還留著播放狀態的不算；用 voiceChannel 判斷，舊版 Bot 也有這個欄位）
@@ -66,7 +66,7 @@
     async function command(botId, guildId, action, args = {}) {
       const k = botId + '|' + guildId;
       // 不要無聲丟掉:讓使用者知道這次沒送出
-      if (busy.has(k)) { setStatus('這個伺服器上一個指令還在處理中,請稍候再試'); return null; }
+      if (busy.has(k)) { setStatus('這個伺服器上一個指令還在處理中，請稍候再試'); return null; }
       busy.add(k);
       if (visible) render();
       try {
@@ -74,12 +74,12 @@
           method: 'POST', headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ guildId, action, ...args }),
         });
-        if (r.status === 401) { showLogin('登入已過期,請重新登入'); return null; }
+        if (r.status === 401) { showLogin('登入已過期，請重新登入'); return null; }
         const j = await r.json().catch(() => ({}));
-        setStatus(j.message || (j.ok ? '完成' : '操作失敗'), { type: j.ok ? undefined : 'error' });
+        setStatus(j.message || (j.ok ? '完成' : 'Bot 沒有完成這個操作，請再試一次。'), { type: j.ok ? undefined : 'error' });
         return j;
       } catch {
-        setStatus('連線失敗,請檢查網路後再試一次', { type: 'error' });
+        setStatus(navigator.onLine === false ? '目前沒有網路，連上後再試一次。' : '連不上音樂庫，請稍後再試一次。', { type: 'error' });
         return null;
       } finally {
         busy.delete(k);
@@ -112,7 +112,7 @@
       box.append(head);
 
       if (!g.current) {
-        box.append(el('div', 'hint', '在語音頻道待命中,沒有播放。可以從音樂庫或線上搜尋的「⋮」選單「點給 Bot 播放」。'));
+        box.append(el('div', 'hint', '在語音頻道待命中，沒有播放。可以從音樂庫或線上搜尋的「⋮」選單「點給 Bot 播放」。'));
       } else {
         const now = el('div', 'bot-now');
         const info = el('div', 'info');
@@ -136,8 +136,8 @@
             ? ctrlBtn('play', '繼續', () => run('resume'), { disabled: pending })
             : ctrlBtn('pause', '暫停', () => run('pause'), { disabled: pending }),
           ctrlBtn('next', '跳過', () => run('skip'), { disabled: pending }),
-          ctrlBtn('stop', '停止', async () => {
-            const ok = await askConfirm('停止 Bot 播放?', `「${g.guildName}」的播放與佇列都會清除。`, { ok: '停止播放', danger: true });
+          ctrlBtn('stop', '停止播放', async () => {
+            const ok = await askConfirm(`停止「${g.guildName}」的播放？`, g.queueLength ? `目前這首會停止，佇列的 ${g.queueLength} 首也會清空。` : '目前這首會停止。', { ok: '停止播放', danger: true });
             if (ok) run('stop');
           }, { disabled: pending }),
         );
@@ -158,8 +158,8 @@
       if (g.queueLength) {
         const qh = el('div', 'bot-queue-head');
         qh.append(el('h4', '', `佇列 ${g.queueLength} 首`));
-        const clr = ctrlBtn(null, '清空', async () => {
-          const ok = await askConfirm('清空 Bot 的佇列?', `「${g.guildName}」佇列裡的 ${g.queueLength} 首歌會被移除。`, { ok: '清空佇列', danger: true });
+        const clr = ctrlBtn(null, '清空佇列', async () => {
+          const ok = await askConfirm('清空 Bot 的佇列？', `「${g.guildName}」佇列裡的 ${g.queueLength} 首歌會被移除。`, { ok: '清空佇列', danger: true });
           if (ok) run('clearQueue');
         }, { disabled: pending });
         qh.append(clr);
@@ -192,7 +192,7 @@
         if (!b.online) {
           card.append(el('div', 'hint', '最後更新 ' + new Date(b.updatedAt).toLocaleString()));
         } else if (!b.guilds.length) {
-          card.append(el('div', 'hint', '目前不在任何語音頻道。在 Discord 用 /play 讓 Bot 加入後,就能從這裡控制與點歌。'));
+          card.append(el('div', 'hint', '目前不在任何語音頻道。在 Discord 用 /play 讓 Bot 加入後，就能從這裡控制與點歌。'));
         } else {
           for (const g of b.guilds) card.append(guildBlock(b, g));
         }
@@ -222,8 +222,8 @@
       es.onerror = () => {
         // EventSource 會自己重連；斷線期間提示一下，並確認是不是登入過期（SSE 拿不到狀態碼）
         $('botsHint').hidden = false;
-        $('botsHint').textContent = '與伺服器的連線中斷,重新連線中…';
-        fetch('/web/api/bots').then((r) => { if (r.status === 401) { disconnect(); showLogin('登入已過期,請重新登入'); } }).catch(() => {});
+        $('botsHint').textContent = '與伺服器的連線中斷，重新連線中…';
+        fetch('/web/api/bots').then((r) => { if (r.status === 401) { disconnect(); showLogin('登入已過期，請重新登入'); } }).catch(() => {});
       };
     }
     function disconnect() {
@@ -270,30 +270,30 @@
       const list = all.filter((it) => !isPrivateLib(it));
       const skippedPrivate = all.length - list.length;
       if (!all.length) return;
-      if (!list.length) return setStatus(skippedPrivate > 1 ? `選取的 ${skippedPrivate} 首都是私人歌曲,Bot 不能播放` : '私人歌曲不能點給 Bot');
+      if (!list.length) return setStatus(skippedPrivate > 1 ? `選取的 ${skippedPrivate} 首都是私人歌曲，Bot 不能播放` : '私人歌曲不能點給 Bot');
       await refresh();
       const ts = targets();
-      if (!ts.length) return setStatus('沒有可以點歌的 Bot:Bot 要先在 Discord 的語音頻道裡');
+      if (!ts.length) return setStatus('目前沒有 Bot 在語音頻道裡。先在 Discord 用 /play 讓 Bot 加入，就能從這裡點歌。');
       pickItems = list.slice(0, MAX_BATCH); pickDone = onDone || null;
-      $('botPickTitle').textContent = list.length > 1 ? `點給 Bot 播放(${pickItems.length} 首)` : '點給 Bot 播放';
+      $('botPickTitle').textContent = list.length > 1 ? `點給 Bot 播放（${pickItems.length} 首）` : '點給 Bot 播放';
       $('botPickSong').textContent = list.length > 1
-        ? `「${itemTitle(list[0])}」等 ${list.length} 首` + (list.length > MAX_BATCH ? `\n一次最多 ${MAX_BATCH} 首,只會送出前 ${MAX_BATCH} 首` : '')
+        ? `「${itemTitle(list[0])}」等 ${list.length} 首` + (list.length > MAX_BATCH ? `\n一次最多 ${MAX_BATCH} 首，只會送出前 ${MAX_BATCH} 首` : '')
         : itemTitle(list[0]);
-      if (skippedPrivate) $('botPickSong').textContent += `\n已略過 ${skippedPrivate} 首私人歌曲(Bot 不能播放)`;
-      $('botPickNext').parentElement.lastChild.textContent = list.length > 1 ? '下一首播放(整批插到 Bot 佇列最前面)' : '下一首播放(插到 Bot 佇列最前面)';
+      if (skippedPrivate) $('botPickSong').textContent += `\n已略過 ${skippedPrivate} 首私人歌曲（Bot 不能播放）`;
+      $('botPickNext').parentElement.lastChild.textContent = list.length > 1 ? '下一首播放（整批插到 Bot 佇列最前面）' : '下一首播放（插到 Bot 佇列最前面）';
       const ul = $('botPickList');
       ul.textContent = '';
       for (const { bot, g } of ts) {
         const pending = busy.has(bot.id + '|' + g.guildId);
         ul.append(makeRow({
           title: g.guildName + (g.voiceChannel ? ' · 🔊 ' + g.voiceChannel : ''),
-          sub: botLabel(bot) + ' · ' + (pending ? '上一個指令處理中…' : g.current ? '正在播:' + itemTitle(g.current) : '待命中'),
+          sub: botLabel(bot) + '・' + (pending ? '上一個指令處理中…' : g.current ? '正在播「' + itemTitle(g.current) + '」' : '待命中'),
           onClick: async () => {
             // 上一首還在送(Bot 可能正在跑 yt-dlp):先別關選單、也別蓋上「處理中」提示,讓使用者稍後再點
-            if (busy.has(bot.id + '|' + g.guildId)) return setStatus('這個伺服器上一個指令還在處理中,請稍候再試');
+            if (busy.has(bot.id + '|' + g.guildId)) return setStatus('這個伺服器上一個指令還在處理中，請稍候再試');
             const its = pickItems, done = pickDone, next = $('botPickNext').checked;
             closePick();
-            setStatus(its.length > 1 ? `已送出 ${its.length} 首給 Bot,處理中…` : '已送給 Bot,處理中…', { sticky: true });
+            setStatus(its.length > 1 ? `已送出 ${its.length} 首給 Bot，處理中…` : '已送給 Bot，處理中…', { sticky: true });
             const r = its.length > 1
               ? await command(bot.id, g.guildId, 'enqueueMany', { items: its.map(toPayload), next })
               : await command(bot.id, g.guildId, 'enqueue', { item: toPayload(its[0]), next });

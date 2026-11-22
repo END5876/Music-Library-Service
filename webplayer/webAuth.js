@@ -311,15 +311,15 @@ function mountWebAuth(app, { libSecret }) {
     const user = sessionUser(req);
     if (user) { req.webUser = user; return next(); }
     if (hasLibKey(req)) { req.webUser = { id: null, name: '', admin: true }; return next(); }
-    if (isCrossSite(req)) return res.status(403).json({ error: '不接受從其他網站發出的請求' });
-    res.status(401).json({ error: '請先登入' });
+    if (isCrossSite(req)) return res.status(403).json({ error: '不接受從其他網站發出的請求。' });
+    res.status(401).json({ error: '請先登入。' });
   }
 
   // 會影響所有人的操作：只放行管理員（與內部金鑰）
   function requireWebAdmin(req, res, next) {
     requireWebAuth(req, res, () => {
       if (req.webUser.admin) return next();
-      res.status(403).json({ error: '只有管理員可以使用這個功能' });
+      res.status(403).json({ error: '只有管理員可以使用這個功能。' });
     });
   }
 
@@ -334,7 +334,8 @@ function mountWebAuth(app, { libSecret }) {
   function requireAdminPage(req, res, next) {
     requireWebPage(req, res, () => {
       if (req.webUser.admin) return next();
-      sendPage(res, 403, '只有管理員可以使用這個功能', `<p>目前登入的帳號（ID ${escapeHtml(req.webUser.id)}）不是管理員。</p>${backLink}`);
+      sendPage(res, 403, '只有管理員可以使用這個功能', `<p>目前登入的帳號不是管理員（ID ${escapeHtml(req.webUser.id)}）。可以換一個帳號登入，或回到播放器。</p>
+<a class="btn primary" href="/auth/discord/login?switch=1&amp;next=${encodeURIComponent(safeNext(req.originalUrl))}">換一個帳號</a>${backLink}`);
     });
   }
 
@@ -516,15 +517,15 @@ function mountWebAuth(app, { libSecret }) {
       h.confirmToken = crypto.randomBytes(16).toString('hex');
       // 主畫面 App 和瀏覽器通常是同一台裝置、同一個網路；來源不同時多一道醒目的警告（可能是別人傳來的連結）
       const otherNetwork = rateLimitKey(clientIp(req)) !== h.ip;
-      return sendPage(res, 200, '確認登入主畫面 App', `
-<p>要讓顯示下面這組代碼的裝置，以 <b>${escapeHtml(user.name)}</b> 的身分登入播放器嗎？</p>
+      return sendPage(res, 200, '這組代碼和 App 上的一樣嗎？', `
+<p>確認後，顯示這組代碼的裝置會用 <b>${escapeHtml(user.name)}</b> 的身分登入裊器音樂。</p>
 <div class="code">${escapeHtml(h.code)}</div>
-${otherNetwork ? '<p class="warn">⚠️ 這組代碼是從另一個網路要求的。如果不是你自己的裝置剛剛要求的（例如有人傳這個連結給你），請按取消。</p>' : ''}
-<p>只有在<b>你自己的</b>主畫面 App 上看到同一組代碼時才按確認。如果這不是你剛剛要求的，請按取消。</p>
+${otherNetwork ? '<p class="warn">注意：這組代碼是從另一個網路要求的。不是你自己的裝置剛剛要求的話（例如有人傳這個連結給你），請按「取消」。</p>' : ''}
+<p>一樣才按「登入 App」。不一樣或不是你剛剛要求的，請按「取消」。</p>
 <form method="post" action="/auth/handoff/confirm">
 <input type="hidden" name="id" value="${escapeHtml(saved.handoff)}">
 <input type="hidden" name="token" value="${escapeHtml(h.confirmToken)}">
-<button class="primary" type="submit" name="action" value="approve">確認登入</button>
+<button class="primary" type="submit" name="action" value="approve">登入 App</button>
 <button class="secondary" type="submit" name="action" value="cancel">取消</button>
 </form>`);
     }
@@ -545,7 +546,7 @@ ${otherNetwork ? '<p class="warn">⚠️ 這組代碼是從另一個網路要求
   // 路徑與分帳相同（/auth/logout）；/web/logout 是舊路徑，留給還在用舊版頁面（Service Worker 快取）的裝置。
   // 跨站請求不處理：不然別的網站放一個自動送出的表單就能把人登出
   function logout(req, res) {
-    if (isCrossSite(req)) return res.status(403).json({ error: '不接受從其他網站發出的請求' });
+    if (isCrossSite(req)) return res.status(403).json({ error: '不接受從其他網站發出的請求。' });
     const p = readSession(req);
     if (p) revokeSession(p); // 讓這個 Cookie 就算被複製走也不能再用
     res.set('Set-Cookie', cookieString(req, COOKIE_NAME, '', 0));
@@ -557,7 +558,7 @@ ${otherNetwork ? '<p class="warn">⚠️ 這組代碼是從另一個網路要求
   // ── 代碼交接 ──
   app.post('/auth/handoff/start', (req, res) => {
     res.set('Cache-Control', 'no-store');
-    if (isCrossSite(req)) return res.status(403).json({ error: '不接受從其他網站發出的請求' });
+    if (isCrossSite(req)) return res.status(403).json({ error: '不接受從其他網站發出的請求。' });
     const now = Date.now();
     for (const [id, h] of handoffs) if (h.exp < now) handoffs.delete(id);
     // 重新開始：這個 App 之前要的代碼直接作廢，不佔名額（不然重試幾次就被下面的上限擋住）
@@ -567,7 +568,7 @@ ${otherNetwork ? '<p class="warn">⚠️ 這組代碼是從另一個網路要求
     let fromIp = 0;
     for (const h of handoffs.values()) if (h.ip === ip) fromIp += 1;
     if (fromIp >= MAX_HANDOFFS_PER_IP || handoffs.size >= MAX_HANDOFFS) {
-      return res.status(429).json({ error: '登入代碼要求太多次，請稍後再試' });
+      return res.status(429).json({ error: '登入代碼要求太多次了，請過幾分鐘再試。' });
     }
     const id = crypto.randomBytes(16).toString('hex');
     const secret = crypto.randomBytes(24).toString('base64url');
@@ -579,15 +580,15 @@ ${otherNetwork ? '<p class="warn">⚠️ 這組代碼是從另一個網路要求
 
   app.post('/auth/handoff/poll', (req, res) => {
     res.set('Cache-Control', 'no-store');
-    if (isCrossSite(req)) return res.status(403).json({ error: '不接受從其他網站發出的請求' });
+    if (isCrossSite(req)) return res.status(403).json({ error: '不接受從其他網站發出的請求。' });
     const found = handoffFromCookie(req);
-    if (!found) return res.status(410).json({ error: '登入代碼已過期，請重新取得' });
+    if (!found) return res.status(410).json({ error: '登入代碼已過期，請重新取得。' });
     const { id, h } = found;
     if (h.state === 'authorized') return res.status(202).json({ status: 'confirming' });
     if (h.state !== 'approved') return res.status(202).json(h.notice || { status: 'pending' });
     handoffs.delete(id);
     res.append('Set-Cookie', clearHandoffCookie(req));
-    if (!isAllowed(h.user)) return res.status(403).json({ error: '這個帳號沒有使用權限' });
+    if (!isAllowed(h.user)) return res.status(403).json({ error: '這個帳號沒有使用權限。' });
     res.append('Set-Cookie', sessionCookie(req, h.user));
     res.json({ ok: true });
   });
@@ -595,7 +596,7 @@ ${otherNetwork ? '<p class="warn">⚠️ 這組代碼是從另一個網路要求
   // App 按取消：代碼立刻作廢（瀏覽器那邊就算已經登入也不能再確認）
   app.post('/auth/handoff/cancel', (req, res) => {
     res.set('Cache-Control', 'no-store');
-    if (isCrossSite(req)) return res.status(403).json({ error: '不接受從其他網站發出的請求' });
+    if (isCrossSite(req)) return res.status(403).json({ error: '不接受從其他網站發出的請求。' });
     const found = handoffFromCookie(req);
     if (found) handoffs.delete(found.id);
     res.append('Set-Cookie', clearHandoffCookie(req));

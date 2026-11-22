@@ -215,6 +215,7 @@ input[type=range]:focus-visible{box-shadow:0 0 0 2px rgba(255,255,255,.35)}
 .net-banner{display:flex;align-items:center;gap:10px;flex-wrap:wrap;padding:10px 14px;margin-bottom:16px;background:var(--surface-2);border:1px solid var(--border);border-radius:12px;font-size:14px;color:var(--text-2)}
 .net-banner > svg{width:20px;height:20px;color:var(--text-3)}
 .net-banner span{flex:1;min-width:160px}
+#offlineInfo{white-space:pre-line} /* 已下載幾首／大約還能下載多少，分兩行 */
 body.is-offline .row[data-key]:not(.offline){opacity:.4}
 .mini,.bottom-nav{display:none}
 

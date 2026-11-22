@@ -91,7 +91,7 @@ function mountUploadRoutes(app, { store, requireWebAuth, requireWebPage = requir
       res.json(await store.usage(uidOf(req)));
     } catch (err) {
       console.error('❌ [MusicLibrary] 讀取用量失敗:', err);
-      res.status(500).json({ error: '讀取用量失敗' });
+      res.status(500).json({ error: '用量沒有載入成功，請稍後再試一次。' });
     }
   });
 
@@ -110,7 +110,7 @@ function mountUploadRoutes(app, { store, requireWebAuth, requireWebPage = requir
       const items = files.map((f) => {
         const name = String((f && f.name) || '');
         const size = Math.max(0, Number(f && f.size) || 0);
-        if (!audioExtension(name)) return { name, ok: false, error: '不支援的格式' };
+        if (!audioExtension(name)) return { name, ok: false, error: '不支援這種檔案格式' };
         if (size > u.maxUploadBytes) return { name, ok: false, error: `超過單檔上限 ${fmtMB(u.maxUploadBytes)}` };
         const est = estimateOutputBytes(name, size, mode);
         estimated += est;
@@ -284,11 +284,11 @@ function mountUploadRoutes(app, { store, requireWebAuth, requireWebPage = requir
   // 正在處理的那首停不下來（轉檔已經開始），回 409 說明原因
   app.post('/web/api/upload/jobs/:id/cancel', requireWebAuth, (req, res) => {
     const j = jobs.get(req.params.id);
-    if (!j || j.owner !== ownerKey(req)) return res.status(404).json({ error: '找不到這個上傳工作' });
+    if (!j || j.owner !== ownerKey(req)) return res.status(404).json({ error: '找不到這首的上傳紀錄，可能已經處理完。' });
     if (j.status === 'processing') {
       return res.status(409).json({ error: '這首正在處理，沒辦法中途取消。處理完會放進音樂庫，之後可以從清單刪除。' });
     }
-    if (j.status !== 'queued') return res.status(409).json({ error: '這首已經處理完了' });
+    if (j.status !== 'queued') return res.status(409).json({ error: '這首已經處理完了。' });
     const i = waiting.indexOf(j.id);
     if (i >= 0) waiting.splice(i, 1);
     try { fs.unlinkSync(j.staged.tmpPath); } catch {}

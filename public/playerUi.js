@@ -108,13 +108,19 @@
 
   // ── 文字輸入對話框 ────────────────────────────────────
   // ok:確認鍵的文字,必填,寫具體動作(建立、重新命名、移動…),不要用「確定」
-  function askText(title, initial = '', { ok } = {}) {
+  // placeholder：輸入框的範例；maxLength：字數上限；allowEmpty：可以留空（例如「留空＝不分類」）
+  // 沒有 allowEmpty 時只輸入空白不會關掉，而是在輸入框下方提示「請輸入名稱。」
+  function askText(title, initial = '', { ok, placeholder = '', maxLength = 50, allowEmpty = false } = {}) {
     if (!ok) console.warn('askText: 缺少 ok,請寫具體的動作', title);
     return new Promise((resolve) => {
       $('nameTitle').textContent = title;
       $('nameOk').textContent = ok || '儲存';
-      const inp = $('nameInput'), dlg = $('nameDlg'), form = $('nameForm'), cancel = $('nameCancel');
+      const inp = $('nameInput'), dlg = $('nameDlg'), form = $('nameForm'), cancel = $('nameCancel'), err = $('nameErr');
       inp.value = initial;
+      inp.placeholder = placeholder;
+      inp.maxLength = maxLength;
+      inp.required = !allowEmpty;
+      err.textContent = '';
       dlg.classList.add('show');
       pushLayer('nameDlg', () => done(null));
       setTimeout(() => { inp.focus(); inp.select(); }, 50);
@@ -124,7 +130,12 @@
         dropLayer('nameDlg');
         resolve(v);
       };
-      const onSubmit = (e) => { e.preventDefault(); done(inp.value.trim() || null); };
+      const onSubmit = (e) => {
+        e.preventDefault();
+        const v = inp.value.trim();
+        if (!v && !allowEmpty) { err.textContent = '請輸入名稱。'; inp.focus(); return; }
+        done(v);
+      };
       const onCancel = () => done(null);
       form.addEventListener('submit', onSubmit); cancel.addEventListener('click', onCancel);
     });

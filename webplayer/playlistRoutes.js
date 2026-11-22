@@ -29,7 +29,7 @@ function mountPlaylists(app, { requireWebAuth, online, privateScope = () => ({})
     } catch (err) {
       if (err instanceof pl.HttpError) return res.status(err.status).json({ error: err.message });
       console.error('❌ [Playlists] 失敗:', err);
-      res.status(500).json({ error: '播放清單操作失敗' });
+      res.status(500).json({ error: '播放清單沒有更新成功，請再試一次。' });
     }
   };
 
@@ -53,7 +53,7 @@ function mountPlaylists(app, { requireWebAuth, online, privateScope = () => ({})
       if (!w || w.resetAt <= t) { w = { count: 0, resetAt: t + 60 * 1000 }; writes.set(uid, w); }
       if (++w.count > WRITES_PER_MINUTE) {
         res.set('Retry-After', String(Math.ceil((w.resetAt - t) / 1000)));
-        return res.status(429).json({ error: '播放清單修改太頻繁，請稍後再試' });
+        return res.status(429).json({ error: '播放清單改得太頻繁了，請稍等一下再試。' });
       }
       next();
     });
@@ -92,7 +92,7 @@ function mountPlaylists(app, { requireWebAuth, online, privateScope = () => ({})
   // express.json 解析失敗（壞掉的 JSON、超過大小）時回 JSON 而不是 HTML 錯誤頁
   app.use(BASE, (err, req, res, next) => {
     if (err && (err.type === 'entity.parse.failed' || err.type === 'entity.too.large')) {
-      return res.status(err.status || 400).json({ error: '資料格式不正確，請重新整理頁面再試一次' });
+      return res.status(err.status || 400).json({ error: '資料格式不正確，請重新載入頁面再試一次。' });
     }
     next(err);
   });

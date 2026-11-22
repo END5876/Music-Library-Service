@@ -116,7 +116,7 @@
   dlg.className = 'dialog'; dlg.id = 'dbgDlg';
   dlg.innerHTML = '<div class="box" role="dialog" aria-modal="true" aria-labelledby="dbgTitle"><p class="ttl" id="dbgTitle">除錯模式</p><p id="dbgInfo"></p>' +
     '<button class="btn btn-primary" id="dbgToggle" type="button"></button>' +
-    '<textarea id="dbgText" readonly spellcheck="false" aria-label="除錯日誌" placeholder="還沒有日誌。開啟除錯模式後重現問題,再回來複製或匯出。"></textarea>' +
+    '<textarea id="dbgText" readonly spellcheck="false" aria-label="除錯日誌" placeholder="還沒有日誌。開啟除錯模式後重現問題，再回來複製或匯出。"></textarea>' +
     '<div class="row2"><button class="btn btn-secondary" id="dbgKeep" type="button"></button></div>' +
     '<div class="row2"><button class="btn btn-secondary" id="dbgCopy" type="button">複製日誌</button><button class="btn btn-secondary" id="dbgExport" type="button">匯出日誌</button><button class="btn btn-secondary" id="dbgClear" type="button">清除日誌</button></div>' +
     '<div class="dlg-actions"><button class="btn btn-secondary" id="dbgClose" type="button">關閉</button></div></div>';
@@ -125,9 +125,9 @@
 
   function paintDbg() {
     dbgBtn.classList.toggle('on', DEBUG);
-    $('dbgKeep').textContent = '靜音保活:' + (KEEP ? '開' : '關');
-    $('dbgToggle').textContent = DEBUG ? '● 除錯模式:開(點此關閉)' : '○ 除錯模式:關(點此開啟)';
-    $('dbgInfo').textContent = `共 ${logBuf.length} 行(最多保留 ${LOG_MAX} 行,鎖屏後仍會保留)`;
+    $('dbgKeep').textContent = '靜音保活：' + (KEEP ? '開' : '關');
+    $('dbgToggle').textContent = DEBUG ? '● 除錯模式：開（點此關閉）' : '○ 除錯模式：關（點此開啟）';
+    $('dbgInfo').textContent = `共 ${logBuf.length} 行（最多保留 ${LOG_MAX} 行，鎖屏後仍會保留）`;
   }
   let liveTimer = 0;
   function showLog() {
@@ -156,7 +156,7 @@
   const flipFlag = (k, on) => { try { localStorage.setItem(k, on ? '0' : '1'); } catch {} location.reload(); };
   $('dbgKeep').addEventListener('click', async () => {
     // 正在播放或上傳時,重新載入會中斷,先確認
-    if (isBusy() && !await askConfirm('重新載入播放器?', '切換「靜音保活」要重新載入頁面,正在播放的歌和進行中的上傳都會中斷。', { ok: '重新載入' })) return;
+    if (isBusy() && !await askConfirm('重新載入播放器？', '切換「靜音保活」要重新載入頁面，正在播放的歌和進行中的上傳都會中斷。', { ok: '重新載入' })) return;
     flipFlag('ml_keep', KEEP);
   });
   $('dbgToggle').addEventListener('click', () => {
@@ -169,12 +169,12 @@
   $('dbgCopy').addEventListener('click', async () => {
     if (!logBuf.length) return setStatus('目前沒有日誌');
     const text = fullLog();
-    try { await navigator.clipboard.writeText(text); setStatus('已複製日誌(' + logBuf.length + ' 行)'); return; } catch {}
+    try { await navigator.clipboard.writeText(text); setStatus('已複製日誌（' + logBuf.length + ' 行）'); return; } catch {}
     // 後備:選取文字框後用 execCommand(沒有 Clipboard API／非 HTTPS 時)
     const old = ta.value; ta.value = text; ta.focus(); ta.select();
     let ok = false; try { ok = document.execCommand('copy'); } catch {}
     ta.value = old; ta.setSelectionRange(0, 0);
-    setStatus(ok ? '已複製日誌(' + logBuf.length + ' 行)' : '複製失敗,請改用「匯出」', { type: ok ? undefined : 'error' });
+    setStatus(ok ? '已複製日誌（' + logBuf.length + ' 行）' : '複製失敗，請改用「匯出」', { type: ok ? undefined : 'error' });
   });
   $('dbgExport').addEventListener('click', async () => {
     if (!logBuf.length) return setStatus('目前沒有日誌');

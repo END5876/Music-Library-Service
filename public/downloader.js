@@ -22,7 +22,7 @@
 
     function enqueueDownloads(items) {
       const fresh = items.filter((it) => { const k = itemKey(it); return !offlineKeys.has(k) && !dlState.has(k); });
-      if (!fresh.length) { setStatus('這些歌曲已經下載過(或正在下載)'); return; }
+      if (!fresh.length) { setStatus('這些歌曲已經下載過了（或正在下載）。'); return; }
       if (!dlAbort) dlAbort = new AbortController();
       for (const it of fresh) { dlState.set(itemKey(it), { pct: 0, active: false }); dlQueue.push(it); }
       dlBatch.total += fresh.length;
@@ -47,8 +47,10 @@
             if (err && err.name === 'AbortError') return;
             dlBatch.failed++;
             const name = err && (err.name || (err.target && err.target.error && err.target.error.name));
-            dlFailMsg = name === 'QuotaExceededError' ? '儲存空間不足' : (err && err.message) || '下載失敗';
-            if (name === 'QuotaExceededError') cancelDownloads(dlFailMsg);
+            dlFailMsg = name === 'QuotaExceededError' ? '這台裝置的空間不夠'
+              : (err instanceof TypeError || navigator.onLine === false) ? '沒有網路'
+                : (err && err.message) || '下載中斷';
+            if (name === 'QuotaExceededError') cancelDownloads(`這台裝置的空間不夠，已停止下載（已下載 ${dlBatch.done} 首）。到「離線歌曲」移除一些歌後再試。`);
           })
           .finally(() => {
             dlActive--;
@@ -71,10 +73,10 @@
           // 線上串流數已滿(例如正在播線上歌曲)是暫時的:稍等再試,不要直接算失敗(沒裝 yt-dlp 的 503 不重試)
           if (r.status !== 503 || it.kind === 'lib' || attempt >= DL_BUSY_RETRIES) break;
           const j = await r.json().catch(() => ({}));
-          if (/未安裝/.test(j.error || '')) throw new Error(j.error);
+          if (/未安裝/.test(j.error || '')) throw new Error(j.error); // 伺服器缺 yt-dlp／ffmpeg：重試也沒用（訊息見 webplayer/onlineRoutes.js）
           await wait(5000 * (attempt + 1), signal);
         }
-        if (r.status === 401) { showLogin('登入已過期,請重新登入'); throw new Error('登入已過期'); }
+        if (r.status === 401) { showLogin('登入已過期，請重新登入。'); throw new Error('登入已過期'); }
         if (!r.ok) { const j = await r.json().catch(() => ({})); throw new Error(j.error || 'HTTP ' + r.status); }
         const total = Number(r.headers.get('Content-Length')) || 0;
         // 資料流經計數器只更新進度、不留在 JS 陣列裡，由瀏覽器直接組成 Blob
@@ -91,12 +93,12 @@
         });
         const type = r.headers.get('Content-Type') || 'audio/mpeg';
         const blob = await new Response(r.body.pipeThrough(counter), { headers: { 'Content-Type': type } }).blob();
-        if (!got) throw new Error('下載到空檔案');
+        if (!got) throw new Error('下載到的檔案是空的');
         // 🐛 線上即時串流沒有 Content-Length,伺服器中途斷掉時仍會正常結束 response:比對實際長度與歌曲長度,短太多就當失敗(之後可重新下載)
         if (it.kind !== 'lib' && !total) {
           const want = parseDur(it.duration);
           const have = want ? await blobDuration(blob) : 0;
-          if (have && have < want * 0.9 && want - have > 5) throw new Error('下載不完整(串流中斷)');
+          if (have && have < want * 0.9 && want - have > 5) throw new Error('下載不完整');
         }
         const meta = { title: it.title || '', at: Date.now(), author: it.author || '', platform: it.platform || '', duration: it.duration || '' };
         await offlinePut({ key, blob, size: blob.size, ...meta });
@@ -150,7 +152,10 @@
     function finishBatch() {
       if (!dlBatch.total) return; // 已被取消
       const { done, failed } = dlBatch;
-      setStatus(`⬇ 下載完成:${done} 首` + (failed ? `,失敗 ${failed} 首(${dlFailMsg})` : ''));
+      // 有失敗時不自動消失：要讓人知道有幾首沒下載、為什麼
+      if (!failed) setStatus(`已下載 ${done} 首`);
+      else if (!done) setStatus(`${failed} 首都沒有下載（${dlFailMsg}）。${dlFailMsg === '沒有網路' ? '連上網路後再按一次下載。' : '請稍後再試一次。'}`, { type: 'error' });
+      else setStatus(`已下載 ${done} 首，${failed} 首沒有下載（${dlFailMsg}）。再按一次下載會補下載。`, { type: 'error' });
       dlBatch = { total: 0, done: 0, failed: 0 };
       dlAbort = null; dlFailMsg = '';
     }

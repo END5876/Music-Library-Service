@@ -45,7 +45,7 @@ function mountOnlineRoutes(app, { requireWebAuth }) {
     const wait = takeQuery(req);
     if (wait) {
       res.set('Retry-After', String(wait));
-      return res.status(429).json({ error: '搜尋太頻繁，請稍後再試' });
+      return res.status(429).json({ error: `搜尋次數太多了，${wait} 秒後可以再搜尋。` });
     }
     next();
   }
@@ -58,31 +58,31 @@ function mountOnlineRoutes(app, { requireWebAuth }) {
 
   function requireOnline(req, res, next) {
     if (ONLINE_ENABLED && online.isAvailable()) return next();
-    res.status(503).json({ error: '伺服器未安裝 yt-dlp / ffmpeg，無法線上串流' });
+    res.status(503).json({ error: '線上搜尋目前不能用（伺服器未安裝 yt-dlp 或 ffmpeg）。' });
   }
 
   app.get('/web/api/search', requireWebAuth, requireOnline, queryLimit, async (req, res) => {
     const q = String(req.query.q || '').trim().slice(0, 100);
-    if (!q) return res.status(400).json({ error: '請輸入搜尋關鍵字' });
+    if (!q) return res.status(400).json({ error: '請輸入搜尋關鍵字。' });
     try {
       const results = await online.searchMulti(q, 5);
       res.set('Cache-Control', 'no-store');
       res.json({ results });
     } catch (err) {
       console.warn('⚠️ [OnlineMusic] 搜尋失敗:', err.message);
-      res.status(503).json({ error: '搜尋失敗，請稍後再試一次' });
+      res.status(503).json({ error: '搜尋沒有完成，請稍後再試一次。' });
     }
   });
 
   app.get('/web/api/info', requireWebAuth, requireOnline, queryLimit, async (req, res) => {
     const url = online.cleanUrl(String(req.query.url || ''));
-    if (!online.isAllowedUrl(url)) return res.status(400).json({ error: '只支援 YouTube / Bilibili 網址' });
+    if (!online.isAllowedUrl(url)) return res.status(400).json({ error: '只支援 YouTube 和 Bilibili 的網址。' });
     try {
       res.set('Cache-Control', 'no-store');
       res.json(await online.getInfo(url));
     } catch (err) {
       console.warn('⚠️ [OnlineMusic] 讀取影片資訊失敗:', err.message);
-      res.status(502).json({ error: '讀不到這部影片的資訊，可能已被刪除、設為私人，或有地區限制' });
+      res.status(502).json({ error: '讀不到這部影片，可能已被刪除、設為私人，或有地區限制。請換一個網址，或改用關鍵字搜尋。' });
     }
   });
 
@@ -92,7 +92,7 @@ function mountOnlineRoutes(app, { requireWebAuth }) {
       : { cache: true };
     online.handlePlayRequest(req, res, req.query.url, opts).catch((err) => {
       console.error('❌ [OnlineMusic] /web/play 失敗:', err);
-      if (!res.headersSent) res.status(500).json({ error: '串流失敗' });
+      if (!res.headersSent) res.status(500).json({ error: '這首串流中斷了，請再試一次。' });
       else res.end();
     });
   });
