@@ -166,7 +166,7 @@
       await clearDataCaches();
     }
     me = next;
-    $('logoutBtn').title = me.name ? '登出(' + me.name + ')' : '登出';
+    paintAccount();
     showAdminUi();
     if (me.admin) bots.refresh();
   }
@@ -296,15 +296,41 @@
     audio.removeAttribute('src'); audio.load();
     setNow(null);
   }
-  $('logoutBtn').addEventListener('click', async () => {
+  // ── 帳號鈕:選單沿用歌曲列的「⋮」選單(menuEl/placeMenu),頂端顯示登入的是誰 ──
+  function paintAccount() {
+    const name = me.name || '';
+    $('acctAvatar').textContent = name ? Array.from(name)[0].toUpperCase() : '?';
+    $('acctBtn').setAttribute('aria-label', name ? `帳號:${name}` : '帳號');
+  }
+  $('acctBtn').addEventListener('click', (e) => {
+    e.stopPropagation();
+    const anchor = $('acctBtn');
+    if (menuAnchor === anchor) return closeRowMenu();
+    menuAnchor = anchor;
+    menuEl.textContent = '';
+    const info = document.createElement('div'); info.className = 'acct-info';
+    const b = document.createElement('b'); b.textContent = me.name || '已登入';
+    const s = document.createElement('span'); s.textContent = me.admin ? '用 Discord 登入,管理員' : '用 Discord 登入';
+    info.append(b, s);
+    menuEl.appendChild(info);
+    menuItem('logout', '登出', confirmLogout);
+    placeMenu(anchor);
+  });
+
+  async function confirmLogout() {
+    // 登出會停止音樂、清空佇列:先確認(播放清單存在帳號裡,不會不見)
+    const uploading = uploader.busy();
+    if (!await askConfirm('登出這台裝置?',
+      '音樂會停止,佇列會清空。播放清單存在你的帳號裡,下次登入還在。' + (uploading ? '\n還沒傳完的上傳也會停止。' : ''),
+      { ok: '登出' })) return;
     pendingPlay = false; userPaused = true; audio.pause(); // 等伺服器回應的期間先停下來
     await fetch('/auth/logout', { method: 'POST' }).catch(() => {});
     resetAccountState();
     all = []; view = []; byFile = new Map();
     render();
-    $('logoutBtn').hidden = true;
+    $('acctBtn').hidden = true;
     showLogin();
-  });
+  }
 
   // ── 列表元件 ──
   // opts:key / title / sub / dur / idx / btn / grip / qid / onClick
@@ -402,7 +428,7 @@
       badge.textContent = failed ? '!' : n > 99 ? '99+' : String(n);
       badge.title = failed ? `${failed} 首沒有加進音樂庫` : `還有 ${n} 首在上傳或等伺服器處理`;
     }),
-    onFailed: (n) => setStatus(`${n} 首沒有加進音樂庫`, true, { label: '查看', fn: () => { setMode('upload'); uploader.showFailed(); } }),
+    onFailed: (n) => setStatus(`${n} 首沒有加進音樂庫`, { type: 'error', action: { label: '查看', fn: () => { setMode('upload'); uploader.showFailed(); } } }),
   });
   $('libUploadBtn').addEventListener('click', () => setMode('upload'));
   $('libBotBtn').addEventListener('click', () => setMode('bots'));
@@ -517,16 +543,16 @@
       `只有你看得到、聽得到;其他人的播放清單裡這些歌會變成找不到,Bot 也不能再播放。之後可以在「⋮」選單公開回音樂庫。\n\n${names}`,
       { ok: `設為私人(${files.length} 首)` })) return;
     $('selPriv').disabled = true;
-    setStatus(`設為私人中…(${files.length} 首)`, true);
+    setStatus(`設為私人中…(${files.length} 首)`, { sticky: true });
     try {
       const j = await libApi('POST', '/web/api/library/move-batch', { moves: files.map((f) => ({ from: f.filename, to: privateTarget(f.filename) })) });
       for (const m of j.moved) await renameLocalRefs(m.from, m.to);
       setLibSelecting(false);
-      if (j.failed.length) setStatus(`已設為私人 ${j.moved.length} 首,${j.failed.length} 首失敗(${j.failed[0].error})`, true, { label: '知道了', fn: () => {} });
+      if (j.failed.length) setStatus(`已設為私人 ${j.moved.length} 首,${j.failed.length} 首失敗(${j.failed[0].error})`, { type: 'error' });
       else setStatus(`已設為私人 ${j.moved.length} 首`);
       loadList(null, { quiet: true });
     } catch (err) {
-      setStatus('設為私人失敗:' + err.message);
+      setStatus('設為私人失敗:' + err.message, { type: 'error' });
       libSel.update();
     }
   });
@@ -542,15 +568,15 @@
     const warn = pub ? '伺服器上的檔案會被刪除,所有人與 Bot 都無法再播放,所有人播放清單裡的這些歌會變成找不到。' : '伺服器上的私人檔案會被刪除。';
     if (!await askConfirm('再確認一次:真的要刪除?', `${files.length} 首歌將被永久刪除,無法復原。\n${warn}`, { ok: `刪除 ${files.length} 首`, danger: true, delay: 1000 })) return;
     $('selDel').disabled = true;
-    setStatus(`刪除中…(${files.length} 首)`, true);
+    setStatus(`刪除中…(${files.length} 首)`, { sticky: true });
     try {
       const j = await libApi('POST', '/web/api/library/delete', { files: files.map((f) => f.filename) });
       setLibSelecting(false);
-      if (j.failed.length) setStatus(`已刪除 ${j.deleted.length} 首,${j.failed.length} 首失敗(${j.failed[0].error})`, true, { label: '知道了', fn: () => {} });
+      if (j.failed.length) setStatus(`已刪除 ${j.deleted.length} 首,${j.failed.length} 首失敗(${j.failed[0].error})`, { type: 'error' });
       else setStatus(`已刪除 ${j.deleted.length} 首`);
       loadList(null, { quiet: true });
     } catch (err) {
-      setStatus('刪除失敗:' + err.message);
+      setStatus('刪除失敗:' + err.message, { type: 'error' });
       libSel.update();
     }
   });
@@ -598,16 +624,16 @@
   // listReq:可傳入已經發出的請求(初始化時與 IndexedDB 掃描同時進行,省一段等待)
   // quiet:管理動作(移動、改名、刪除、設為私人、上傳完成)後的重新載入,不動提示訊息,免得結果一出現就被蓋掉
   async function loadList(listReq, { quiet = false } = {}) {
-    if (!quiet) setStatus('載入清單中…', true);
+    if (!quiet) setStatus('載入清單中…', { sticky: true });
     let r;
     try { r = await (listReq || fetch('/web/api/list')); } catch (err) {
       dbg('loadList 連線失敗', err);
       serverDown = true; updateNetState();
       if (offlineKeys.size && mode === 'library' && !autoOfflineDone) { autoOfflineDone = true; setMode('offline'); return setStatus('目前無法連線,已切換到離線歌曲'); }
-      return setStatus('連線失敗,請檢查網路後再試一次');
+      return setStatus('連線失敗,請檢查網路後再試一次', { type: 'error' });
     }
     if (r.status === 401) { setStatus(''); return showLogin(); }
-    if (!r.ok) return setStatus('讀取清單失敗,請重新整理頁面再試一次');
+    if (!r.ok) return setStatus('讀取清單失敗,請重新整理頁面再試一次', { type: 'error' });
     // Service Worker 在伺服器沒回應時會改給快取的清單(帶 X-ML-Cached):手機有網路卻拿到快取＝連不上音樂庫
     const cached = r.headers.get('X-ML-Cached') === '1';
     const j = await r.json();
@@ -617,7 +643,7 @@
     for (const f of all) f.q = zhFold(f.name + '\n' + f.filename); // 搜尋用,先算好小寫+繁轉簡,打字時不必每個字都重算
     byFile = new Map(all.map(f => [f.filename, f]));
     queue = queue.filter(e => e.kind !== 'lib' || libAvailable(e.filename)); // 已被刪除(且沒有離線檔)的檔案移出佇列
-    $('logoutBtn').hidden = false;
+    $('acctBtn').hidden = false;
     if (!quiet) setStatus('');
     renderChips();
     applyFilter();
@@ -1212,7 +1238,7 @@
   function waitForNetwork(key) {
     waitingNet = key; waitingSince = 0; pendingPlay = false;
     if (currentFile && audio.currentTime > 3) resumeAt = { key, t: audio.currentTime };
-    setStatus('網路連線中斷,恢復後會自動繼續播放', true);
+    setStatus('網路連線中斷,恢復後會自動繼續播放', { sticky: true });
     dbg('等待網路恢復', key);
   }
   async function checkNetWait() {
@@ -1246,7 +1272,7 @@
     }
     if (nowKey() !== key) return;
     if (onlineCurrent) {
-      setStatus('線上串流失敗(可能被平台限制、影片不可用或伺服器忙碌),請換一首或稍後再試');
+      setStatus('線上串流失敗(可能被平台限制、影片不可用或伺服器忙碌),請換一首或稍後再試', { type: 'error' });
       if (queue.length) later(advance);
       return;
     }
@@ -1264,7 +1290,7 @@
     // 上限依實際的播放範圍(播放清單或音樂庫清單＋佇列)算:播放清單播放中時音樂庫的搜尋只剩 1 首,不該壞一首就整個停掉
     const scopeLen = (playlistCtx ? playlistCtx.items.length : view.length) + queue.length;
     if (errorStreak < Math.min(scopeLen, 5)) { setStatus('這首無法播放,已略過'); later(advance); }
-    else setStatus('連續多首無法播放,已停止播放,請檢查網路後再試');
+    else setStatus('連續多首無法播放,已停止播放,請檢查網路後再試', { type: 'error' });
   });
 
   // ── 補救機制(頁面醒來 / 事件漏掉)──
@@ -1440,7 +1466,8 @@
   }
   function setMode(m) {
     if (m === 'online' && !onlineAvailable) m = 'library';
-    if (m === mode) { $('main').scrollTo({ top: 0, behavior: 'smooth' }); return; } // 再點一次目前的頁籤:回到最上面
+    // 再點一次目前的頁籤:回到最上面(開了「減少動態效果」就直接跳過去)
+    if (m === mode) { $('main').scrollTo({ top: 0, behavior: matchMedia('(prefers-reduced-motion: reduce)').matches ? 'auto' : 'smooth' }); return; }
     saveScroll();
     if (libSel.on) setLibSelecting(false);
     if (plSel.on) setPlSelecting(false);
@@ -1577,7 +1604,7 @@
     endHandled = false;
     const okey = 'on:' + (item.srcUrl || item.url);
     loadSource(okey, '/web/play?url=' + enc(item.srcUrl || item.url) + (WEBM_OK ? '&fmt=webm' : ''));
-    if (!offlineKeys.has(okey)) setStatus('線上串流準備中…', true);
+    if (!offlineKeys.has(okey)) setStatus('線上串流準備中…', { sticky: true });
     setNow({ title: item.title, sub: onlineSub(item) });
   }
 
@@ -1732,8 +1759,9 @@
     updateNetState();
     const c = currentEntry();
     if (c && !audio.paused && !offlineKeys.has(entryKey(c))) {
-      setStatus('網路中斷了,這首歌沒有下載,播放可能會停止', false,
-        offlineKeys.size ? { label: '改播離線歌曲', fn: () => { setMode('offline'); playCtx(OFF_CTX, offView, null, false); } } : null);
+      setStatus('網路中斷了,這首歌沒有下載,播放可能會停止', {
+        action: offlineKeys.size ? { label: '改播離線歌曲', fn: () => { setMode('offline'); playCtx(OFF_CTX, offView, null, false); } } : null,
+      });
     } else setStatus('網路中斷了,目前只能播放已下載的歌曲');
   });
   window.addEventListener('online', () => {
@@ -1787,13 +1815,13 @@
     try { blob = await offlineGet(k); } catch {}
     const size = offlineSizes.get(k) || 0, meta = offlineMeta.get(k) || {};
     await removeOffline([it]);
-    setStatus('已移除離線檔案', false, blob && { label: '復原', fn: async () => {
+    setStatus('已移除離線檔案', { action: blob && { label: '復原', fn: async () => {
       try {
         await offlinePut({ key: k, blob, size, ...meta });
         offlineKeys.add(k); offlineSizes.set(k, size); offlineMeta.set(k, meta);
         refreshDl(); setStatus('已復原');
-      } catch (err) { setStatus('復原失敗:' + (err.message || err)); }
-    } });
+      } catch (err) { setStatus('復原失敗:' + (err.message || err), { type: 'error' }); }
+    } } });
   }
 
   function toggleOffline(it) {
@@ -1871,12 +1899,36 @@
           const worker = registration.installing;
           if (!worker) return;
           worker.addEventListener('statechange', () => {
-            if (worker.state === 'installed' && navigator.serviceWorker.controller) setStatus('播放器已有新版，重新整理後生效');
+            if (worker.state === 'installed' && navigator.serviceWorker.controller) checkUpdateNeeded();
           });
         });
       })
       .catch((err) => dbg('SW 註冊失敗', err && err.message));
   }
+  // 有新版本:播放中就請使用者等暫停或播完這首,不主動打斷音樂
+  // 正在播放或上傳中(重新載入、切換靜音保活前先確認)
+  function isBusy() { return !audio.paused || uploader.busy(); }
+  function paintUpdateBanner() {
+    if ($('updBanner').hidden) return;
+    $('updText').textContent = audio.paused ? '有新版本。重新載入就能套用。' : '有新版本，暫停或播完這首後重新載入。';
+  }
+  // 新的 Service Worker 裝好了:比對新 sw.js 的 VERSION 和這份頁面的版本,真的比較舊才顯示橫幅
+  async function checkUpdateNeeded() {
+    const mine = (document.querySelector('meta[name="ml-version"]') || {}).content || '';
+    try {
+      const latest = (await fetch('/player-sw.js', { method: 'HEAD', cache: 'no-store' })).headers.get('X-ML-Version');
+      if (latest && mine && latest === mine) return;
+    } catch { /* 查不到就照舊提示 */ }
+    $('updBanner').hidden = false;
+    paintUpdateBanner();
+  }
+  audio.addEventListener('play', paintUpdateBanner);
+  audio.addEventListener('pause', paintUpdateBanner);
+  $('updReload').addEventListener('click', async () => {
+    if (isBusy() && !await askConfirm('現在重新載入?',
+      uploader.busy() ? '正在播放的歌會中斷,還沒傳完的上傳也會停止。' : '正在播放的歌會中斷。', { ok: '重新載入' })) return;
+    location.reload();
+  });
   function clearDataCaches() {
     if (!window.caches) return Promise.resolve();
     return caches.keys()
@@ -2064,7 +2116,7 @@
     try {
       const j = await plApi('DELETE', `${PL_API}/${pid}/items/${iid}`);
       upsertPlaylist(j.playlist);
-    } catch (err) { return setStatus(err.message); }
+    } catch (err) { return setStatus(err.message, { type: 'error' }); }
     syncCtx(pid, { removedId: iid });
     renderPlaylists();
     return true;
@@ -2075,8 +2127,8 @@
     const beforeOrder = p.items.map((x) => x.id);
     const ok = its.length === 1 ? await removeFromPlaylist(pid, its[0].id) : await removeManyFromPlaylist(pid, its.map((x) => x.id), true);
     if (!ok) return false;
-    setStatus(its.length === 1 ? `已從「${p.name}」移出` : `已從「${p.name}」移出 ${its.length} 首`, false, {
-      label: '復原', fn: () => restoreItems(pid, its, beforeOrder),
+    setStatus(its.length === 1 ? `已從「${p.name}」移出` : `已從「${p.name}」移出 ${its.length} 首`, {
+      action: { label: '復原', fn: () => restoreItems(pid, its, beforeOrder) },
     });
     return true;
   }
@@ -2084,7 +2136,7 @@
     const p = plById(pid); if (!p) return setStatus('播放清單已不存在');
     const had = new Set(p.items.map((x) => x.id));
     const strip = ({ id, ...rest }) => rest;
-    try { await addToPlaylist(pid, its.map(strip)); } catch (err) { return setStatus('復原失敗:' + err.message); }
+    try { await addToPlaylist(pid, its.map(strip)); } catch (err) { return setStatus('復原失敗:' + err.message, { type: 'error' }); }
     // 加回去的項目會拿到新 id:用歌曲 key 對回原本的 id,再依原順序重排
     const now = plById(pid); if (!now) return;
     const newIdByKey = new Map(now.items.filter((x) => !had.has(x.id)).map((x) => [itemKey(x), x.id]));
@@ -2098,7 +2150,7 @@
   async function removeManyFromPlaylist(pid, ids, quiet = false) {
     let j;
     try { j = await plApi('POST', `${PL_API}/${pid}/items/remove`, { ids }); }
-    catch (err) { setStatus(err.message); return false; }
+    catch (err) { setStatus(err.message, { type: 'error' }); return false; }
     upsertPlaylist(j.playlist);
     if (playlistCtx && playlistCtx.id === pid) { const gone = new Set(ids); queue = queue.filter((e) => !gone.has(e.src)); }
     syncCtx(pid);
@@ -2119,7 +2171,7 @@
       syncCtx(pid); renderPlaylists();
     } catch (err) {
       p.items = old; syncCtx(pid);
-      setStatus(err.message); loadPlaylists();
+      setStatus(err.message, { type: 'error' }); loadPlaylists();
     }
   }
 
@@ -2236,7 +2288,7 @@
             setStatus(!j.added ? `「${p.name}」已經有${its.length > 1 ? '這些歌' : '這首歌'}了`
               : `已加入「${p.name}」` + (its.length > 1 ? `(${j.added} 首` + (dup > 0 ? `,略過 ${dup} 首重複` : '') + ')' : ''));
             if (done) done();
-          } catch (err) { setStatus(err.message); }
+          } catch (err) { setStatus(err.message, { type: 'error' }); }
         },
       }));
     }
@@ -2246,14 +2298,14 @@
   $('pickClose').addEventListener('click', closePick);
   $('pickNew').addEventListener('click', async () => {
     const its = pickItems, done = pickDone; closePick();
-    const name = await askText('新增播放清單');
+    const name = await askText('新增播放清單', '', { ok: '建立' });
     if (!name) return;
     try {
       const p = await createPlaylist(name, its);
       renderPlaylists();
       setStatus(`已建立「${p.name}」並加入 ${p.items.length} 首`);
       if (done) done();
-    } catch (err) { setStatus(err.message); }
+    } catch (err) { setStatus(err.message, { type: 'error' }); }
   });
   $('fAddPl').addEventListener('click', () => {
     const c = currentEntry();
@@ -2265,9 +2317,9 @@
 
   // ── 播放清單頁面的按鈕 ────────────────────────────────
   $('plNew').addEventListener('click', async () => {
-    const name = await askText('新增播放清單');
+    const name = await askText('新增播放清單', '', { ok: '建立' });
     if (!name) return;
-    try { const p = await createPlaylist(name); openPlaylist(p.id); } catch (err) { setStatus(err.message); }
+    try { const p = await createPlaylist(name); openPlaylist(p.id); } catch (err) { setStatus(err.message, { type: 'error' }); }
   });
   $('plEmptyNew').addEventListener('click', () => $('plNew').click());
   $('plGoLib').addEventListener('click', () => setMode('library'));
@@ -2317,15 +2369,15 @@
 
   $('plRename').addEventListener('click', async () => {
     const p = plOpen && plById(plOpen); if (!p) return;
-    const name = await askText('重新命名', p.name);
+    const name = await askText('重新命名', p.name, { ok: '重新命名' });
     if (!name || name === p.name) return;
     try { upsertPlaylist((await plApi('PATCH', `${PL_API}/${p.id}`, { name })).playlist); renderPlaylists(); }
-    catch (err) { setStatus(err.message); }
+    catch (err) { setStatus(err.message, { type: 'error' }); }
   });
   $('plDelete').addEventListener('click', async () => {
     const p = plOpen && plById(plOpen); if (!p) return;
     if (!await askConfirm(`刪除播放清單「${p.name}」?`, '歌曲本身不會被刪除。', { ok: '刪除播放清單', danger: true })) return;
-    try { await plApi('DELETE', `${PL_API}/${p.id}`); } catch (err) { return setStatus(err.message); }
+    try { await plApi('DELETE', `${PL_API}/${p.id}`); } catch (err) { return setStatus(err.message, { type: 'error' }); }
     playlists = playlists.filter((x) => x.id !== p.id);
     if (playlistCtx && playlistCtx.id === p.id) playlistCtx = null;
     if (plSel.on) plSel.setMode(false);
@@ -2348,7 +2400,7 @@
   $('offlineClear').addEventListener('click', async () => {
     if (!await askConfirm('清除全部離線檔案?', '這個裝置上下載的所有歌曲都會被移除。', { ok: '清除全部', danger: true })) return;
     try { await offlineClearAll(); offlineKeys.clear(); offlineSizes.clear(); offlineMeta.clear(); setStatus('已清除全部離線檔案'); }
-    catch (err) { setStatus('清除失敗:' + err.message); }
+    catch (err) { setStatus('清除失敗:' + err.message, { type: 'error' }); }
     refreshDl();
   });
 
@@ -2472,19 +2524,19 @@
       if (!await askConfirm('設為私人?', f.name + '\n只有你看得到、聽得到;其他人的播放清單裡這首會變成找不到,Bot 也不能再播放。', { ok: '設為私人' })) return;
       to = privateTarget(f.filename);
     } else if (how === 'folder' && isPrivateFile(f.filename)) {
-      const d = await askText('移到哪個私人資料夾?(留空＝私人空間最上層)', privSubdir(f.filename));
+      const d = await askText('移到哪個私人資料夾?(留空＝私人空間最上層)', privSubdir(f.filename), { ok: '移動' });
       if (d === null) return;
       to = privRoot + '/' + (cleanDir(d) ? cleanDir(d) + '/' : '') + stem;
     } else if (how === 'folder' || how === 'publish') {
       const folders = [...new Set(all.map(folderOf).filter((k) => k && k !== PRIVATE_DIR))];
       const hint = folders.length ? '(現有:' + folders.slice(0, 5).join('、') + (folders.length > 5 ? '…' : '') + ')' : '';
-      const d = await askText((how === 'publish' ? '公開到哪個資料夾?' : '移到哪個資料夾?') + hint, how === 'publish' ? 'uploads' : (dir || 'favorites'));
+      const d = await askText((how === 'publish' ? '公開到哪個資料夾?' : '移到哪個資料夾?') + hint, how === 'publish' ? 'uploads' : (dir || 'favorites'), { ok: how === 'publish' ? '公開' : '移動' });
       if (d === null) return;
       const clean = d.replace(/\\/g, '/').replace(/^\/+|\/+$/g, '');
       if (!clean) return setStatus('請輸入資料夾名稱(放在根目錄的歌,空間不夠時會被自動清掉)');
       to = clean + '/' + stem;
     } else {
-      const n = await askText('新的檔名', stem);
+      const n = await askText('新的檔名', stem, { ok: '改名' });
       if (n === null || n === stem) return;
       to = (dir ? dir + '/' : '') + n;
     }
@@ -2495,7 +2547,7 @@
       setStatus(how === 'private' ? '已設為私人' : how === 'publish' ? '已公開到「' + where + '」' : how === 'folder' ? '已移到「' + where + '」' : '已重新命名');
       // 正在播的就是這首:清單重新載入後把播放資訊換成新名稱
       loadList(null, { quiet: true }).then(() => { const t = currentFile === j.to && byFile.get(j.to); if (t) setNow({ title: t.name, sub: libSub(t) }); });
-    } catch (err) { setStatus('移動失敗:' + err.message); }
+    } catch (err) { setStatus('移動失敗:' + err.message, { type: 'error' }); }
   }
 
   async function deleteLibFile(f) {
@@ -2507,7 +2559,7 @@
       await libApi('DELETE', streamUrl(f.filename).replace('/web/stream/', '/web/api/library/file/'));
       setStatus(`已刪除「${f.name}」`);
       loadList(null, { quiet: true });
-    } catch (err) { setStatus('刪除失敗:' + err.message); }
+    } catch (err) { setStatus('刪除失敗:' + err.message, { type: 'error' }); }
   }
 
   document.addEventListener('pointerdown', (e) => {
@@ -2618,7 +2670,7 @@
     return li;
   }
 
-  if (DEBUG_UI) setupDebugPanel({ $, setStatus, IS_ANDROID, ANDROID_BY, KEEP, isBusy: () => !audio.paused || uploader.busy() });
+  if (DEBUG_UI) setupDebugPanel({ $, setStatus, IS_ANDROID, ANDROID_BY, KEEP, isBusy });
   // 切到背景時預載下一首(只在 Android 生效,見 preloadNext)
   document.addEventListener('visibilitychange', () => { if (document.hidden) preloadNext(); });
 
@@ -2634,6 +2686,6 @@
 
   offlineInit().finally(() => { updateNetState(); loadList(listReq); });
   // 「點給 Bot 播放」選單項目只在有 Bot 在語音頻道時出現:頁面開著時每分鐘更新一次(Bot 頁籤開著時由 SSE 即時更新)
-  setInterval(() => { if (!document.hidden && me.admin && mode !== 'bots' && $('logoutBtn').hidden === false) bots.refresh(); }, 60 * 1000);
+  setInterval(() => { if (!document.hidden && me.admin && mode !== 'bots' && $('acctBtn').hidden === false) bots.refresh(); }, 60 * 1000);
   registerSW();
 })();

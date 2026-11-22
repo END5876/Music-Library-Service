@@ -4,6 +4,8 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <meta name="color-scheme" content="dark">
+<!-- 這份頁面的版本(伺服器填入 sw.js 的 VERSION),用來判斷「有新版本」是不是真的比現在新 -->
+<meta name="ml-version" content="">
 <meta name="theme-color" content="#0b0b0b">
 <meta name="application-name" content="裊器音樂">
 <meta name="apple-mobile-web-app-capable" content="yes">
@@ -11,8 +13,9 @@
 <meta name="apple-mobile-web-app-title" content="裊器音樂">
 <title>裊器音樂</title>
 <link rel="manifest" href="/manifest.webmanifest">
+<link rel="icon" href="/player-assets/icons/favicon-32.png" sizes="32x32" type="image/png">
 <link rel="icon" href="/player-assets/icons/icon-192.png" sizes="192x192" type="image/png">
-<link rel="apple-touch-icon" href="/player-assets/icons/icon-192.png">
+<link rel="apple-touch-icon" href="/player-assets/icons/apple-touch-icon.png" sizes="180x180">
 <link rel="stylesheet" href="/player-assets/player.css">
 </head>
 <body>
@@ -34,6 +37,7 @@
   <symbol id="i-down" viewBox="0 0 24 24"><path d="M7.41 8.59L12 13.17l4.59-4.58L18 10l-6 6-6-6z"/></symbol>
   <symbol id="i-up" viewBox="0 0 24 24"><path d="M7.41 15.41L12 10.83l4.59 4.58L18 14l-6-6-6 6z"/></symbol>
   <symbol id="i-plus" viewBox="0 0 24 24"><path d="M19 13h-6v6h-2v-6H5v-2h6V5h2v6h6z"/></symbol>
+  <symbol id="i-alert" viewBox="0 0 24 24"><path d="M12 2a10 10 0 100 20 10 10 0 000-20zm1 15h-2v-2h2zm0-4h-2V7h2z"/></symbol>
   <symbol id="i-close" viewBox="0 0 24 24"><path d="M19 6.41L17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"/></symbol>
   <symbol id="i-logout" viewBox="0 0 24 24"><path d="M17 7l-1.41 1.41L18.17 11H8v2h10.17l-2.58 2.58L17 17l5-5zM4 5h8V3H4c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h8v-2H4V5z"/></symbol>
   <symbol id="i-grip" viewBox="0 0 24 24"><path d="M9 6a1.5 1.5 0 110-3 1.5 1.5 0 010 3zm6 0a1.5 1.5 0 110-3 1.5 1.5 0 010 3zM9 13.5a1.5 1.5 0 110-3 1.5 1.5 0 010 3zm6 0a1.5 1.5 0 110-3 1.5 1.5 0 010 3zM9 21a1.5 1.5 0 110-3 1.5 1.5 0 010 3zm6 0a1.5 1.5 0 110-3 1.5 1.5 0 010 3z"/></symbol>
@@ -63,7 +67,8 @@
     <svg><use href="#i-search"/></svg>
     <input type="search" id="search" placeholder="搜尋歌名…" autocomplete="off" enterkeyhint="search">
   </form>
-  <button class="btn-icon ghost" id="logoutBtn" title="登出" aria-label="登出" hidden><svg><use href="#i-logout"/></svg></button>
+  <!-- 帳號鈕:看得到登入的是誰;登出放在選單裡,登出前先確認(會停止音樂、清空佇列) -->
+  <button class="acct-btn" id="acctBtn" type="button" aria-label="帳號" hidden><span class="acct-avatar" id="acctAvatar"></span></button>
 </header>
 
 <aside>
@@ -82,6 +87,12 @@
     <span id="netText">目前離線,只能播放已下載的歌曲</span>
     <button class="btn btn-sm btn-secondary" id="netRetry" hidden>重試</button>
     <button class="btn btn-sm btn-secondary" id="netGoOff">離線歌曲</button>
+  </div>
+  <!-- 有新版本:常駐細橫幅,由使用者決定什麼時候重新載入(播放中不打斷) -->
+  <div class="net-banner" id="updBanner" role="status" hidden>
+    <svg><use href="#i-download"/></svg>
+    <span id="updText"></span>
+    <button class="btn btn-sm btn-secondary" id="updReload">重新載入</button>
   </div>
   <div id="viewLibrary">
     <div class="chips" id="chips" hidden></div>
@@ -232,7 +243,10 @@
   </div>
 </main>
 
-<div class="toast" id="toast" role="status" aria-live="polite"></div>
+<div class="toasts">
+  <div class="toast toast-error" id="toastErr" role="alert"></div>
+  <div class="toast" id="toast" role="status" aria-live="polite"></div>
+</div>
 
 <div class="player">
   <div class="now" id="nowOpen" title="展開播放頁">
@@ -336,7 +350,7 @@
     <input type="text" id="nameInput" maxlength="50" autocomplete="off" placeholder="名稱" required>
     <div class="dlg-actions">
       <button class="btn btn-secondary" type="button" id="nameCancel">取消</button>
-      <button class="btn btn-primary" type="submit">確定</button>
+      <button class="btn btn-primary" type="submit" id="nameOk">儲存</button>
     </div>
   </form>
 </div>

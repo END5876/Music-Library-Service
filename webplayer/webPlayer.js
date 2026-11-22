@@ -28,6 +28,7 @@
 //   GET  /web/stream/*       串流音檔，支援 Range 拖曳進度（需登入）
 //   GET  /web/api/status     服務狀態（管理員；內容同 /api/music/status，見 status.js）
 
+const fs = require('fs');
 const path = require('path');
 const express = require('express');
 const online = require('../ytdlp/onlineStream');
@@ -56,12 +57,19 @@ function mountWebPlayer(app, { store, libSecret, status, botHub }) {
   });
   // Service Worker 必須由根路徑提供才能控制整個網站（離線開啟播放器頁面用）
   app.get('/player-sw.js', (req, res) => {
-    res.set({ 'Cache-Control': 'no-cache', 'Service-Worker-Allowed': '/' });
+    res.set({ 'Cache-Control': 'no-cache', 'Service-Worker-Allowed': '/', 'X-ML-Version': swVersion });
     res.sendFile(path.join(__dirname, '..', 'public', 'sw.js'));
   });
+  // 這一版的版本號(sw.js 的 VERSION)只在這裡讀一次,同時交給頁面(meta)和 /player-sw.js 的回應標頭:
+  // Service Worker 裝好新版時,前端拿兩者比對,判斷頁面是不是真的過期
+  // (頁面是網路優先載入的,多半已經是新版,不該每次部署後都叫使用者重新載入)
+  const swVersion = (fs.readFileSync(path.join(__dirname, '..', 'public', 'sw.js'), 'utf8').match(/const VERSION = '([^']+)'/) || [])[1] || '';
+  if (!swVersion) console.warn('⚠️ [MusicLibrary] 讀不到 sw.js 的 VERSION,「有新版本」提示會在每次更新後都出現');
+  const playerHtml = fs.readFileSync(path.join(__dirname, '..', 'public', 'player.html'), 'utf8')
+    .replace('<meta name="ml-version" content="">', `<meta name="ml-version" content="${swVersion}">`);
   app.get('/player', (req, res) => {
     res.set('Cache-Control', 'no-cache');
-    res.sendFile(path.join(__dirname, '..', 'public', 'player.html'));
+    res.type('html').send(playerHtml);
   });
 
   app.get('/web/api/list', requireWebAuth, async (req, res) => {

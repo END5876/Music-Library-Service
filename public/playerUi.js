@@ -2,7 +2,7 @@
 // playerUi.js
 // 播放器的通用畫面元件，從 player.js 拆出，邏輯不變：
 //   $ / enc / fmt / fmtSize / setIcon   小工具
-//   setStatus(text, sticky, action)     底部提示訊息（可附「復原」等按鈕）
+//   setStatus(text, { type, sticky, action })  底部提示訊息（type:'error' 會放進另一個框、不自動消失）
 //   pushLayer / dropLayer               返回鍵（瀏覽器／Android 返回）關閉最上層的畫面
 //   askText / askConfirm                文字輸入、確認對話框（取代 prompt / confirm）
 // 不依賴 player.js 的任何狀態。載入順序：必須早於 player.js（player.html 的 <script> 順序、sw.js 的 SHELL_URLS 都要列出）。
@@ -13,24 +13,56 @@
   const fmtSize = (b) => b >= 1073741824 ? (b / 1073741824).toFixed(1) + ' GB' : b >= 1048576 ? (b / 1048576).toFixed(1) + ' MB' : Math.max(1, Math.round(b / 1024)) + ' KB';
   const setIcon = (btn, name) => btn.querySelector('use').setAttribute('href', '#i-' + name);
 
-  let toastTimer = null;
-  // action:{ label, fn } 在訊息旁放一個按鈕(例如「復原」),按下後執行並關閉訊息
-  function setStatus(text, sticky = false, action = null) {
-    const el = $('toast');
-    clearTimeout(toastTimer);
-    if (!text) { el.classList.remove('show', 'has-action'); return; }
+  // 三個產品共用的規則(ui-review DECISIONS 第 3 題):
+  //   一般提示 3 秒(字多的稍微久一點);帶動作(action:{ label, fn },例如復原、查看)8 秒;
+  //   滑鼠移上去、手指按住或鍵盤聚焦時暫停倒數;
+  //   錯誤(type:'error')放在另一個框(#toastErr,role=alert):紅底、有關閉鈕、不自動消失,
+  //   不會被後面的一般訊息蓋掉(例如串流失敗後馬上又出現「線上串流準備中…」)
+  let countdown = null; // 只有一般提示(#toast)會倒數:{ timer, remaining, startedAt, paused }
+  function hideToast(el) {
+    if (el.id === 'toast' && countdown) { clearTimeout(countdown.timer); countdown = null; }
+    el.classList.remove('show', 'has-action');
+  }
+  function setStatus(text, { type, sticky = false, action = null } = {}) {
+    const isError = type === 'error';
+    const el = $(isError ? 'toastErr' : 'toast');
+    hideToast(el);
+    if (!text) return;
     el.textContent = '';
-    const msg = document.createElement('span'); msg.textContent = text; el.appendChild(msg);
+    if (isError) el.insertAdjacentHTML('beforeend', '<svg class="toast-ic" aria-hidden="true"><use href="#i-alert"/></svg>');
+    const msg = document.createElement('span'); msg.className = 'toast-msg'; msg.textContent = text; el.appendChild(msg);
     el.classList.toggle('has-action', !!action);
     if (action) {
       const b = document.createElement('button');
-      b.className = 'toast-act'; b.textContent = action.label;
-      b.addEventListener('click', () => { el.classList.remove('show', 'has-action'); action.fn(); });
+      b.className = 'toast-act'; b.type = 'button'; b.textContent = action.label;
+      b.addEventListener('click', () => { hideToast(el); action.fn(); });
       el.appendChild(b);
     }
+    if (isError) {
+      const c = document.createElement('button');
+      c.className = 'toast-close'; c.type = 'button'; c.setAttribute('aria-label', '關閉這則提示');
+      c.innerHTML = '<svg aria-hidden="true"><use href="#i-close"/></svg>';
+      c.addEventListener('click', () => hideToast(el));
+      el.appendChild(c);
+    }
     el.classList.add('show');
-    if (!sticky) toastTimer = setTimeout(() => el.classList.remove('show', 'has-action'), action ? 8000 : 6000);
+    if (sticky || isError) return;
+    const remaining = action ? 8000 : Math.min(6000, Math.max(3000, text.length * 110));
+    countdown = { remaining, startedAt: Date.now(), paused: false, timer: setTimeout(() => hideToast(el), remaining) };
   }
+  // 倒數中的提示:指標在上面或鍵盤焦點在裡面時暫停;兩者都離開後才繼續(至少再留 1.5 秒)
+  const toastEl = $('toast');
+  const pauseToast = () => {
+    if (!countdown || countdown.paused) return;
+    clearTimeout(countdown.timer); countdown.remaining -= Date.now() - countdown.startedAt; countdown.paused = true;
+  };
+  const resumeToast = () => setTimeout(() => {
+    if (!countdown || !countdown.paused || toastEl.matches(':hover') || toastEl.contains(document.activeElement)) return;
+    countdown.paused = false; countdown.startedAt = Date.now();
+    countdown.timer = setTimeout(() => hideToast(toastEl), Math.max(1500, countdown.remaining));
+  }, 0);
+  toastEl.addEventListener('pointerenter', pauseToast); toastEl.addEventListener('pointerleave', resumeToast);
+  toastEl.addEventListener('focusin', pauseToast); toastEl.addEventListener('focusout', resumeToast);
 
   // ── 返回鍵(瀏覽器／Android 返回)──
   // 每打開一層(全螢幕播放頁、播放清單內頁、多選、對話框、選單)就 pushState 一筆;
@@ -75,9 +107,12 @@
   });
 
   // ── 文字輸入對話框 ────────────────────────────────────
-  function askText(title, initial = '') {
+  // ok:確認鍵的文字,必填,寫具體動作(建立、重新命名、移動…),不要用「確定」
+  function askText(title, initial = '', { ok } = {}) {
+    if (!ok) console.warn('askText: 缺少 ok,請寫具體的動作', title);
     return new Promise((resolve) => {
       $('nameTitle').textContent = title;
+      $('nameOk').textContent = ok || '儲存';
       const inp = $('nameInput'), dlg = $('nameDlg'), form = $('nameForm'), cancel = $('nameCancel');
       inp.value = initial;
       dlg.classList.add('show');

@@ -76,10 +76,10 @@
         });
         if (r.status === 401) { showLogin('登入已過期,請重新登入'); return null; }
         const j = await r.json().catch(() => ({}));
-        setStatus((j.ok ? '' : '❌ ') + (j.message || (j.ok ? '完成' : '操作失敗')));
+        setStatus(j.message || (j.ok ? '完成' : '操作失敗'), { type: j.ok ? undefined : 'error' });
         return j;
       } catch {
-        setStatus('❌ 連線失敗,請檢查網路後再試一次');
+        setStatus('連線失敗,請檢查網路後再試一次', { type: 'error' });
         return null;
       } finally {
         busy.delete(k);
@@ -293,7 +293,7 @@
             if (busy.has(bot.id + '|' + g.guildId)) return setStatus('這個伺服器上一個指令還在處理中,請稍候再試');
             const its = pickItems, done = pickDone, next = $('botPickNext').checked;
             closePick();
-            setStatus(its.length > 1 ? `已送出 ${its.length} 首給 Bot,處理中…` : '已送給 Bot,處理中…', true);
+            setStatus(its.length > 1 ? `已送出 ${its.length} 首給 Bot,處理中…` : '已送給 Bot,處理中…', { sticky: true });
             const r = its.length > 1
               ? await command(bot.id, g.guildId, 'enqueueMany', { items: its.map(toPayload), next })
               : await command(bot.id, g.guildId, 'enqueue', { item: toPayload(its[0]), next });
