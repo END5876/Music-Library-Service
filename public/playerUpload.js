@@ -113,7 +113,9 @@
       line.textContent = `${okCount} 首待上傳，處理後預估約 ${fmtBytes(j.estimatedBytes)}` + (original() ? '（保留原檔）' : '');
       box.appendChild(line);
       for (const w of j.warnings || []) {
-        const d = document.createElement('div'); d.className = 'up-warn'; d.textContent = '⚠ ' + w; box.appendChild(d);
+        const d = document.createElement('div'); d.className = 'up-warn';
+        d.innerHTML = '<svg aria-hidden="true"><use href="#i-alert"/></svg>';
+        d.append(w); box.appendChild(d);
       }
       render();
     }

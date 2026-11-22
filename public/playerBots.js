@@ -7,13 +7,13 @@
 // createBots(deps) 回傳 { show, hide, reset, refresh, hasTargets, sendToBot }；deps 由 player.js 傳入：
 //   sendToBot(items, onDone)：items 可以是一首或多首（多選、整份播放清單）；一首走 enqueue（Bot 會查完整影片資訊），
 //   多首走 enqueueMany（一次最多 MAX_BATCH 首，線上歌曲直接用帶過去的資訊）。onDone 在送出成功後呼叫（例如結束多選）。
-//   $ / setStatus / askConfirm / pushLayer / dropLayer / fmt / makeRow   畫面工具
+//   $ / setStatus / askConfirm / pushLayer / dropLayer / fmt / makeRow / paintCover   畫面工具
 //   libInfo(filename) → { name, duration } | null           音樂庫曲目的名稱與長度（Bot 不知道本地檔的長度）
 //   showLogin(msg)                                          登入過期時叫出登入框
 // 頁籤開著時才連 SSE；關掉就斷線，不在背景佔連線。
 // 載入順序：必須早於 player.js（player.html 的 <script> 順序、sw.js 的 SHELL_URLS 都要列出）。
 (() => {
-  function createBots({ $, setStatus, askConfirm, pushLayer, dropLayer, fmt, makeRow, libInfo, showLogin }) {
+  function createBots({ $, setStatus, askConfirm, pushLayer, dropLayer, fmt, makeRow, paintCover, libInfo, showLogin }) {
     let bots = [];
     let receivedAt = 0;        // 收到這份狀態的時間（播放進度從這裡往後推算）
     let es = null;
@@ -107,7 +107,11 @@
 
       const head = el('div', 'bot-guild-head');
       head.append(el('b', '', g.guildName));
-      if (g.voiceChannel) head.append(el('span', 'bot-vc', '🔊 ' + g.voiceChannel + (VOICE_LABEL[g.voice] ? '(' + VOICE_LABEL[g.voice] + ')' : '')));
+      if (g.voiceChannel) {
+        const vc = el('span', 'bot-vc');
+        vc.append(icon('vol'), g.voiceChannel + (VOICE_LABEL[g.voice] ? '（' + VOICE_LABEL[g.voice] + '）' : ''));
+        head.append(vc);
+      }
       else if (g.current) head.append(el('span', 'bot-vc', '已不在語音頻道'));
       box.append(head);
 
@@ -122,7 +126,9 @@
         bar.append(fill);
         prog.append(cur, bar, dur);
         info.append(prog);
-        now.append(el('div', 'cover'), info);
+        const cv = el('div', 'cover');
+        paintCover(cv, itemTitle(g.current));
+        now.append(cv, info);
         box.append(now);
         const durSec = itemDur(g.current);
         dur.textContent = durSec ? fmt(durSec) : '';
@@ -148,7 +154,8 @@
           c.addEventListener('click', () => run('loop', { mode: m }));
           modes.append(c);
         }
-        const rnd = el('button', 'chip' + (g.randomPlay ? ' active' : ''), '🎲 隨機連播');
+        const rnd = el('button', 'chip' + (g.randomPlay ? ' active' : ''));
+        rnd.append(icon('shuffle'), '隨機連播');
         rnd.type = 'button'; rnd.disabled = pending;
         rnd.addEventListener('click', () => run('randomPlay', { on: !g.randomPlay }));
         modes.append(rnd);
@@ -286,7 +293,7 @@
       for (const { bot, g } of ts) {
         const pending = busy.has(bot.id + '|' + g.guildId);
         ul.append(makeRow({
-          title: g.guildName + (g.voiceChannel ? ' · 🔊 ' + g.voiceChannel : ''),
+          title: g.guildName + (g.voiceChannel ? '（' + g.voiceChannel + '）' : ''),
           sub: botLabel(bot) + '・' + (pending ? '上一個指令處理中…' : g.current ? '正在播「' + itemTitle(g.current) + '」' : '待命中'),
           onClick: async () => {
             // 上一首還在送(Bot 可能正在跑 yt-dlp):先別關選單、也別蓋上「處理中」提示,讓使用者稍後再點

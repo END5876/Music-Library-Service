@@ -332,6 +332,55 @@
     showLogin();
   }
 
+  // ── 生成封面 ──
+  // 依歌名在 8 個色相裡挑一個當底色，中間放歌名第一個字（沒有標題才顯示音符）。
+  // 全螢幕頁背景、Android 通知欄／鎖定畫面的封面也用同一個色相，換歌時整個畫面跟著換色。
+  const COVER_HUES = [6, 28, 48, 140, 178, 205, 232, 288];
+  const IDLE_HUE = 250;
+  function coverHue(seed) {
+    let h = 0;
+    for (const c of String(seed || '')) h = (h * 31 + c.codePointAt(0)) >>> 0;
+    return COVER_HUES[h % COVER_HUES.length];
+  }
+  const coverChar = (title) => { const m = String(title || '').match(/[\p{L}\p{N}]/u); return m ? m[0].toUpperCase() : ''; };
+  function paintCover(el, title) {
+    el.classList.remove('quad'); el.textContent = '';
+    el.style.setProperty('--h', coverHue(title));
+    const ch = coverChar(title);
+    if (ch) el.dataset.ch = ch; else delete el.dataset.ch;
+  }
+  // 播放清單：有 4 首以上時用前 4 首的色塊拼 2×2，不到 4 首就用清單名稱
+  function paintPlCover(el, p) {
+    const titles = p.items.slice(0, 4).map(itemTitle);
+    paintCover(el, p.name);
+    if (titles.length < 4) return;
+    delete el.dataset.ch; el.classList.add('quad');
+    for (const t of titles) { const q = document.createElement('i'); q.style.setProperty('--h', coverHue(t)); el.appendChild(q); }
+  }
+  // 通知欄／鎖定畫面用的 512px 封面（跟畫面上的生成封面同一個樣子）
+  function coverArtwork(title) {
+    try {
+      const c = document.createElement('canvas'); c.width = c.height = 512;
+      const g = c.getContext('2d'), h = coverHue(title);
+      const gr = g.createLinearGradient(0, 0, 512, 512);
+      gr.addColorStop(0, `hsl(${h} 40% 34%)`); gr.addColorStop(1, `hsl(${h} 36% 14%)`);
+      g.fillStyle = gr; g.fillRect(0, 0, 512, 512);
+      const ch = coverChar(title);
+      if (ch) {
+        g.fillStyle = `hsl(${h} 60% 85%)`;
+        g.font = `700 232px ${getComputedStyle(document.body).fontFamily}`;
+        g.textAlign = 'center'; g.textBaseline = 'middle';
+        g.fillText(ch, 256, 270);
+      }
+      return [{ src: c.toDataURL('image/png'), sizes: '512x512', type: 'image/png' }];
+    } catch {
+      return [{ src: '/player-assets/icons/icon-512.png', sizes: '512x512', type: 'image/png' }];
+    }
+  }
+  const themeMeta = document.querySelector('meta[name="theme-color"]');
+  let nowHue = IDLE_HUE;
+  const fullTint = () => `hsl(${nowHue} 42% 26%)`;
+
   // ── 列表元件 ──
   // opts:key / title / sub / dur / idx / btn / grip / qid / onClick
   function makeRow({ key, title, sub, dur, idx, btn, grip, qid: rowQid, pv, iid, missing, onClick }) {
@@ -345,6 +394,7 @@
     if (missing) li.classList.add('missing');
     if (key && key.startsWith('lib:.private/')) li.classList.add('private'); // 私人歌曲:副標題前加鎖頭圖示
     const cv = document.createElement('div'); cv.className = 'cover';
+    paintCover(cv, title);
     const info = document.createElement('div'); info.className = 'info';
     const t = document.createElement('div'); t.className = 't'; t.textContent = title; t.title = title;
     const a = document.createElement('div'); a.className = 'a'; a.textContent = sub;
@@ -412,7 +462,7 @@
 
   // ── Bot 正在播放(頁籤畫面與遠端控制在 playerBots.js)──
   const bots = window.MLBots.createBots({
-    $, setStatus, askConfirm, pushLayer, dropLayer, fmt, makeRow, showLogin,
+    $, setStatus, askConfirm, pushLayer, dropLayer, fmt, makeRow, paintCover, showLogin,
     libInfo: (fn) => { const f = byFile.get(fn); return f ? { name: f.name, duration: f.duration || 0 } : null; },
   });
   // ── 上傳音樂(管理員;面板在 playerUpload.js)──上傳完成後重新載入音樂庫清單
@@ -776,9 +826,18 @@
     ['barTitle', 'miniTitle', 'fTitle'].forEach(id => { $(id).textContent = t; });
     ['barArtist', 'miniArtist', 'fArtist'].forEach(id => { $(id).textContent = a; });
     document.title = n ? `${n.title}｜裊器音樂` : '裊器音樂';
+    // 封面與全螢幕頁的顏色跟著這首歌；還沒播放時顯示音符
+    for (const id of ['barCover', 'miniCover', 'bigCover']) {
+      const el = $(id);
+      paintCover(el, n ? n.title : '');
+      if (!n) { delete el.dataset.ch; el.style.setProperty('--h', IDLE_HUE); }
+    }
+    nowHue = n ? coverHue(n.title) : IDLE_HUE;
+    $('full').style.setProperty('--h', nowHue);
+    if (isFullOpen() && themeMeta) themeMeta.content = fullTint();
     if ('mediaSession' in navigator) {
       try {
-        navigator.mediaSession.metadata = n ? new MediaMetadata({ title: n.title, artist: n.sub }) : null;
+        navigator.mediaSession.metadata = n ? new MediaMetadata({ title: n.title, artist: n.sub, artwork: coverArtwork(n.title) }) : null;
       } catch {}
     }
     markPlaying(true);
@@ -1158,6 +1217,7 @@
     const name = audio.paused ? 'play' : 'pause';
     ['toggle', 'miniToggle', 'fToggle'].forEach(id => setIcon($(id), name));
     $('bigCover').classList.toggle('paused', audio.paused);
+    document.body.classList.toggle('is-paused', audio.paused); // 列表上的等化器跟著停
   }
   for (const ev of ['timeupdate', 'durationchange', 'loadedmetadata', 'emptied', 'seeked']) audio.addEventListener(ev, updateProgress);
   for (const ev of ['play', 'pause', 'ended', 'emptied']) audio.addEventListener(ev, updatePlayIcons);
@@ -1446,11 +1506,13 @@
   function openFull() {
     if (isFullOpen()) return;
     $('full').classList.add('open'); document.body.classList.add('full-open'); if (nextDirty) flushNext();
+    if (themeMeta) themeMeta.content = fullTint(); // Android 狀態列接上全螢幕頁的顏色
     pushLayer('full', closeFull);
   }
   function closeFull() {
     if (!isFullOpen()) return;
     $('full').classList.remove('open'); document.body.classList.remove('full-open');
+    if (themeMeta) themeMeta.content = '#0b0b0b';
     dropLayer('full');
   }
   $('nowOpen').addEventListener('click', openFull);
@@ -2291,6 +2353,7 @@
 
   function renderPlDetail(p) {
     $('plTitle').textContent = p.name;
+    paintPlCover(document.querySelector('#plDetailPane .pl-cover'), p);
     if (!plQuery && $('plSearch').value) $('plSearch').value = '';
     const ul = $('plItems'); ul.textContent = '';
     $('plItemsEmpty').hidden = p.items.length > 0;
@@ -2717,6 +2780,7 @@
     };
     const art = document.createElement('div'); art.className = 'pl-card-art';
     const cv = document.createElement('div'); cv.className = 'cover';
+    paintPlCover(cv, p);
     art.append(cv, mkPlay('pl-card-play'));
     const info = document.createElement('div'); info.className = 'pl-card-info';
     const t = document.createElement('div'); t.className = 't'; t.textContent = p.name; t.title = p.name;

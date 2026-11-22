@@ -6,7 +6,11 @@
   --border:#2e2e2e;--border-strong:#444;
   --text:#fff;--text-2:#b3b3b3;--text-3:#8a8a8a;
   --accent:#ff2d55;--danger:#ff6b81;
-  --cover-a:#3a3560;--cover-b:#1a1a2e;--cover-fg:#a99ff0;
+  --ok:#1db954;
+  /* 圓角四階:6 小封面與徽章／10 按鈕、輸入框、列／16 卡片、對話框、選單／999 膠囊 */
+  --r-sm:6px;--r-md:10px;--r-lg:16px;
+  /* 陰影只給浮在上面的東西(選單、提示、對話框);一般卡片不用陰影 */
+  --shadow-pop:0 12px 36px rgba(0,0,0,.6),inset 0 1px 0 rgba(255,255,255,.06);
   --header-h:64px;--player-h:84px;--nav-h:56px;--content-max:1400px;
   --safe-top:env(safe-area-inset-top,0px);--safe-bottom:env(safe-area-inset-bottom,0px);
   --safe-left:env(safe-area-inset-left,0px);--safe-right:env(safe-area-inset-right,0px);
@@ -96,12 +100,12 @@ section{margin-top:28px;min-width:0}
 .sec-btns{display:flex;gap:8px;align-items:center;justify-content:flex-end}
 
 /* 多選模式:頂端固定的動作列 + 列表封面變成勾選框 */
-.sel-bar{position:sticky;top:0;z-index:5;display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin:0 0 12px;padding:8px 10px;background:var(--surface-2);border:1px solid var(--border);border-radius:12px;box-shadow:0 4px 16px rgba(0,0,0,.5)}
+.sel-bar{position:sticky;top:0;z-index:5;display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin:0 0 12px;padding:8px 10px;background:var(--surface-2);border:1px solid var(--border);border-radius:var(--r-md);box-shadow:var(--shadow-pop)}
 .sel-bar .sel-count{flex:1;font-size:14px;white-space:nowrap;padding-left:4px}
-.selecting .row .cover::before{-webkit-mask:none;mask:none;background:none;width:20px;height:20px;border:2px solid #ddd;border-radius:50%}
+.selecting .row .cover::before{content:"";opacity:1;-webkit-mask:none;mask:none;background:none;width:20px;height:20px;border:2px solid #ddd;border-radius:50%}
 .selecting .row.selected{background:var(--surface-3)}
 .selecting .row.selected .cover{background:var(--accent)}
-.selecting .row.selected .cover::before{border:0;border-radius:0;width:24px;height:24px;background:#fff;-webkit-mask:var(--check) center/contain no-repeat;mask:var(--check) center/contain no-repeat}
+.selecting .row.selected .cover::before{content:"";border:0;border-radius:0;width:24px;height:24px;background:#fff;-webkit-mask:var(--check) center/contain no-repeat;mask:var(--check) center/contain no-repeat}
 .selecting .row.selected .cover::after{display:none}
 
 .hint{color:var(--text-2);font-size:14px;padding:4px 0 14px}
@@ -112,15 +116,33 @@ section{margin-top:28px;min-width:0}
 .empty .btn{margin-top:6px}
 
 /* ── 封面:全部統一使用同一個音符 ── */
-.cover{aspect-ratio:1;border-radius:8px;display:grid;place-items:center;position:relative;overflow:hidden;background:linear-gradient(135deg,var(--cover-a),var(--cover-b))}
-.cover::before{content:"";width:42%;height:42%;background:var(--cover-fg);-webkit-mask:var(--note) center/contain no-repeat;mask:var(--note) center/contain no-repeat;box-sizing:border-box}
-.cover::after{content:"";position:absolute;inset:0;background:radial-gradient(circle at 30% 20%,rgba(255,255,255,.18),transparent 55%)}
+.cover{--h:250;aspect-ratio:1;border-radius:var(--r-sm);display:grid;place-items:center;position:relative;overflow:hidden;container-type:inline-size;background:linear-gradient(135deg,hsl(var(--h) 26% 28%),hsl(var(--h) 30% 14%))}
+.cover::before{content:"";width:42%;height:42%;background:hsl(var(--h) 45% 78%);-webkit-mask:var(--note) center/contain no-repeat;mask:var(--note) center/contain no-repeat;box-sizing:border-box}
+/* 生成封面:歌名第一個字(約封面 45%) */
+.cover[data-ch]::before{content:attr(data-ch);width:auto;height:auto;background:none;-webkit-mask:none;mask:none;color:hsl(var(--h) 50% 82%);font-weight:700;font-size:20px;font-size:45cqi;line-height:1}
+.cover::after{content:"";position:absolute;inset:0;background:radial-gradient(circle at 30% 20%,rgba(255,255,255,.14),transparent 55%)}
+/* 播放清單:前 4 首拼 2×2 */
+.cover.quad{grid-template:1fr 1fr/1fr 1fr;place-items:stretch}
+.cover.quad::before{display:none}
+.cover.quad i{background:linear-gradient(135deg,hsl(var(--h) 26% 28%),hsl(var(--h) 30% 14%))}
+/* 播放中:封面上 3 根等化器長條;暫停時停住(高度不同),減少動態時不動 */
+.row.playing .cover{box-shadow:inset 0 0 0 99px rgba(0,0,0,.45)}
+.row.playing .cover::before{opacity:0}
+.row.playing .cover::after{inset:auto;left:50%;bottom:30%;width:13px;height:40%;transform:translateX(-50%);
+  background:linear-gradient(#fff,#fff) 0 100%/3px 55% no-repeat,linear-gradient(#fff,#fff) 5px 100%/3px 100% no-repeat,linear-gradient(#fff,#fff) 10px 100%/3px 40% no-repeat;
+  animation:eq .9s ease-in-out infinite alternate}
+.is-paused .row.playing .cover::after{animation-play-state:paused}
+.selecting .row.playing .cover{box-shadow:none}
+.selecting .row.playing .cover::before{opacity:1}
+.selecting .row.playing .cover::after{display:none}
+@keyframes eq{0%{background-size:3px 55%,3px 100%,3px 40%}35%{background-size:3px 100%,3px 35%,3px 80%}70%{background-size:3px 30%,3px 75%,3px 100%}100%{background-size:3px 80%,3px 50%,3px 55%}}
 
 /* ── 歌曲列(所有列表共用)── */
 .quick{display:grid;grid-template-columns:minmax(0,1fr);gap:2px}
 .quick > *{min-width:0}
 .row{display:flex;align-items:center;gap:12px;padding:6px 8px;border-radius:10px;cursor:pointer;position:relative;min-width:0}
-.row:hover,.row.playing{background:var(--surface-1)}
+.row:hover{background:var(--surface-1)}
+.row.playing{background:color-mix(in srgb,var(--accent) 10%,transparent)}
 /* 鍵盤焦點框往內縮,不會被清單的 overflow 裁掉 */
 .row:focus-visible,.pl-card:focus-visible{outline:2px solid var(--text);outline-offset:-2px}
 .row .idx{width:28px;text-align:right;color:var(--text-3);font-size:13px;font-variant-numeric:tabular-nums;flex-shrink:0}
@@ -157,7 +179,7 @@ section{margin-top:28px;min-width:0}
 
 /* ── 底部播放列(電腦版):左=歌曲資訊 / 中=控制鍵+進度 / 右=音量+展開 ── */
 .player{position:fixed;left:0;right:0;bottom:0;height:var(--player-total);padding-bottom:var(--safe-bottom);background:#121212;border-top:1px solid var(--border);z-index:40;display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1.5fr) minmax(0,1fr);align-items:center;padding:0 max(16px,var(--safe-right)) var(--safe-bottom) max(16px,var(--safe-left));gap:16px}
-.now{display:flex;align-items:center;gap:12px;min-width:0;cursor:pointer;border-radius:8px}
+.now{display:flex;align-items:center;gap:12px;min-width:0;cursor:pointer;border-radius:var(--r-sm)}
 .now .cover{width:52px;border-radius:6px;flex-shrink:0}
 .now .info{min-width:0;flex:1}
 .now .t{font-size:14px;font-weight:600}
@@ -197,7 +219,7 @@ input[type=range]:focus-visible{box-shadow:0 0 0 2px rgba(255,255,255,.35)}
 .toasts{position:fixed;left:50%;bottom:calc(var(--player-total) + 16px);transform:translateX(-50%);z-index:65;width:max-content;max-width:min(560px,calc(100vw - 32px));display:flex;flex-direction:column;align-items:center;gap:8px;pointer-events:none}
 /* 全螢幕播放頁(z-index 60)開著時,提示要浮在它上面,並移到頂端分頁列下方,不擋播放鍵 */
 .full-open .toasts{top:calc(var(--safe-top) + 72px);bottom:auto}
-.toast{display:none;align-items:center;gap:14px;max-width:100%;background:var(--surface-3);color:var(--text);font-size:13px;line-height:1.5;padding:10px 16px;border-radius:12px;box-shadow:0 8px 30px rgba(0,0,0,.5);overflow-wrap:anywhere}
+.toast{display:none;align-items:center;gap:14px;max-width:100%;background:var(--surface-3);color:var(--text);font-size:13px;line-height:1.5;padding:10px 16px;border-radius:var(--r-md);box-shadow:var(--shadow-pop);overflow-wrap:anywhere}
 .toast.show{display:flex;animation:toast-in .2s ease-out}
 @keyframes toast-in{from{opacity:0;transform:translateY(8px)}}
 .toast.has-action.show,.toast-error.show{pointer-events:auto}
@@ -205,14 +227,14 @@ input[type=range]:focus-visible{box-shadow:0 0 0 2px rgba(255,255,255,.35)}
 .toast.toast-error{background:#a3202f;color:#fff}
 .toast-ic{width:18px;height:18px;flex-shrink:0;fill:currentColor}
 .toast-msg{min-width:0}
-.toast-close{flex-shrink:0;display:inline-grid;place-items:center;width:28px;height:28px;margin:-4px -8px -4px auto;border-radius:8px;color:inherit}
+.toast-close{flex-shrink:0;display:inline-grid;place-items:center;width:28px;height:28px;margin:-4px -8px -4px auto;border-radius:var(--r-sm);color:inherit}
 .toast-close svg{width:16px;height:16px;fill:currentColor}
 .toast-close:hover{background:rgba(255,255,255,.15)}
-.toast-act{flex-shrink:0;font-weight:700;color:var(--text);padding:4px 10px;margin:-4px -8px -4px 0;border-radius:8px}
+.toast-act{flex-shrink:0;font-weight:700;color:var(--text);padding:4px 10px;margin:-4px -8px -4px 0;border-radius:var(--r-sm)}
 .toast-act:hover{background:var(--hover)}
 
 /* ── 離線模式:頂部提示 + 沒下載的歌淡化 ── */
-.net-banner{display:flex;align-items:center;gap:10px;flex-wrap:wrap;padding:10px 14px;margin-bottom:16px;background:var(--surface-2);border:1px solid var(--border);border-radius:12px;font-size:14px;color:var(--text-2)}
+.net-banner{display:flex;align-items:center;gap:10px;flex-wrap:wrap;padding:10px 14px;margin-bottom:16px;background:var(--surface-2);border:1px solid var(--border);border-radius:var(--r-lg);font-size:14px;color:var(--text-2)}
 .net-banner > svg{width:20px;height:20px;color:var(--text-3)}
 .net-banner span{flex:1;min-width:160px}
 #offlineInfo{white-space:pre-line} /* 已下載幾首／大約還能下載多少，分兩行 */
@@ -220,7 +242,10 @@ body.is-offline .row[data-key]:not(.offline){opacity:.4}
 .mini,.bottom-nav{display:none}
 
 /* ── 全螢幕播放頁 ── */
-.full{position:fixed;inset:0;padding-left:var(--safe-left);padding-right:var(--safe-right);z-index:60;overflow:hidden;background:linear-gradient(180deg,var(--cover-a),var(--bg) 85%);transform:translateY(100%);visibility:hidden;transition:transform .35s cubic-bezier(.2,.8,.2,1),visibility 0s .35s;display:flex;flex-direction:column;padding:var(--safe-top) 0 var(--safe-bottom)}
+.full{position:fixed;inset:0;padding-left:var(--safe-left);padding-right:var(--safe-right);z-index:60;overflow:hidden;background:var(--bg);transform:translateY(100%);visibility:hidden;transition:transform .35s cubic-bezier(.2,.8,.2,1),visibility 0s .35s;display:flex;flex-direction:column;padding:var(--safe-top) 0 var(--safe-bottom)}
+/* 全螢幕頁背景:當首歌的色相(換歌時 0.6 秒漸變;減少動態時直接換) */
+@property --h{syntax:"<number>";inherits:true;initial-value:250}
+.full::before{content:"";position:absolute;inset:0;z-index:-1;background:linear-gradient(180deg,hsl(var(--h) 42% 26%),var(--bg) 85%);transition:--h .6s}
 .full.open{transform:none;visibility:visible;transition:transform .35s cubic-bezier(.2,.8,.2,1),visibility 0s}
 .full-top{display:flex;align-items:center;justify-content:space-between;padding:12px 16px;flex-shrink:0}
 .full-top > button{width:44px;height:44px;border-radius:50%;flex-shrink:0}
@@ -231,7 +256,7 @@ body.is-offline .row[data-key]:not(.offline){opacity:.4}
 .full-body{flex:1;display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);grid-template-rows:minmax(0,1fr);gap:40px;padding:0 48px 16px;min-height:0;max-width:1200px;width:100%;margin:0 auto;overflow:hidden}
 .left-pane{display:flex;flex-direction:column;justify-content:center;align-items:center;gap:22px;min-height:0;min-width:0}
 .left-pane > *{min-width:0;max-width:100%}
-.big-cover{width:min(100%,46vh,440px);border-radius:12px;box-shadow:0 20px 60px rgba(0,0,0,.5);transition:transform .3s}
+.big-cover{width:min(100%,46vh,440px);border-radius:var(--r-md);box-shadow:0 20px 60px rgba(0,0,0,.5);transition:transform .3s}
 .big-cover.paused{transform:scale(.92)}
 .meta{width:min(100%,440px);min-width:0}
 .meta .t{font-size:22px;font-weight:700;white-space:normal;overflow:hidden;overflow-wrap:anywhere;word-break:break-word;display:-webkit-box;-webkit-line-clamp:2;line-clamp:2;-webkit-box-orient:vertical;text-overflow:clip}
@@ -253,7 +278,7 @@ body.is-offline .row[data-key]:not(.offline){opacity:.4}
 .dialog.show{display:flex}
 /* 確認框可能從其他對話框(例如除錯面板)裡打開,要疊在最上面 */
 #confirmDlg{z-index:90}
-.dialog .box{background:var(--surface-2);border:1px solid var(--border);border-radius:16px;padding:24px;width:100%;max-width:360px;display:flex;flex-direction:column;gap:14px;box-shadow:0 20px 60px rgba(0,0,0,.6)}
+.dialog .box{background:var(--surface-2);border:1px solid var(--border);border-radius:var(--r-lg);padding:24px;width:100%;max-width:360px;display:flex;flex-direction:column;gap:14px;box-shadow:var(--shadow-pop)}
 .dialog .ttl{color:var(--text);font-size:17px;font-weight:700}
 .dialog .msg{color:var(--text-2);font-size:14px;line-height:1.6;white-space:pre-line}
 .dialog input{background:var(--surface-1);border:1px solid var(--border);border-radius:10px;padding:12px 14px;color:var(--text);font:inherit;font-size:15px;outline:0;min-width:0}
@@ -274,9 +299,9 @@ body.is-offline .row[data-key]:not(.offline){opacity:.4}
 .keys kbd{font:inherit;font-size:12px;color:var(--text);background:var(--surface-3);border:1px solid var(--border-strong);border-bottom-width:2px;border-radius:6px;padding:2px 8px;white-space:nowrap;justify-self:start}
 
 /* ── 選單(歌曲列「⋮」、播放清單「⋯」共用外觀)── */
-.row-menu,.pl-menu{background:var(--surface-2);border:1px solid var(--border);border-radius:12px;box-shadow:0 10px 36px rgba(0,0,0,.6);padding:6px}
+.row-menu,.pl-menu{background:var(--surface-2);border:1px solid var(--border);border-radius:var(--r-lg);box-shadow:var(--shadow-pop);padding:6px}
 .row-menu{position:fixed;z-index:70;min-width:210px;max-width:min(300px,calc(100vw - 16px));display:flex;flex-direction:column}
-.menu-item,.pl-menu button{display:flex;align-items:center;gap:12px;width:100%;padding:11px 12px;border-radius:8px;font-size:14px;justify-content:flex-start;text-align:left;color:var(--text)}
+.menu-item,.pl-menu button{display:flex;align-items:center;gap:12px;width:100%;padding:11px 12px;border-radius:var(--r-sm);font-size:14px;justify-content:flex-start;text-align:left;color:var(--text)}
 .menu-item:hover,.pl-menu button:hover{background:var(--surface-3)}
 .menu-item svg,.pl-menu button svg{width:20px;height:20px;color:var(--text-2)}
 .menu-item.done,.menu-item.done svg{color:var(--text)}
@@ -287,17 +312,17 @@ body.is-offline .row[data-key]:not(.offline){opacity:.4}
 
 /* ── 播放清單總覽 ── */
 #plLists{gap:4px}
-.pl-card{display:flex;align-items:center;gap:12px;padding:8px;border-radius:12px;cursor:pointer;position:relative;min-width:0}
+.pl-card{display:flex;align-items:center;gap:12px;padding:8px;border-radius:var(--r-md);cursor:pointer;position:relative;min-width:0}
 .pl-card:hover{background:var(--surface-1)}
 .pl-card-art{width:56px;flex-shrink:0;position:relative}
-.pl-card .cover{border-radius:8px}
+.pl-card .cover{border-radius:var(--r-sm)}
 .pl-card-info{flex:1;min-width:0}
 .pl-card .t{font-weight:600}
 .pl-card .a{font-size:12px;margin-top:3px}
 .pl-card-play{display:none}
 .pl-card-pm{width:40px;height:40px;border-radius:50%;color:var(--text-2);flex-shrink:0}
 .pl-card-pm:hover{background:var(--surface-3);color:var(--text)}
-.storage-card{display:flex;align-items:center;gap:14px;flex-wrap:wrap;padding:14px 16px;background:var(--surface-1);border:1px solid var(--border);border-radius:12px}
+.storage-card{display:flex;align-items:center;gap:14px;flex-wrap:wrap;padding:14px 16px;background:var(--surface-1);border:1px solid var(--border);border-radius:var(--r-lg)}
 .storage-card > svg{color:var(--text-3)}
 .storage-card .hint{flex:1;padding:0;min-width:180px}
 #viewOffline .storage-card{margin-bottom:16px}
@@ -307,12 +332,12 @@ body.is-offline .row[data-key]:not(.offline){opacity:.4}
 /* ── 播放清單內頁 ── */
 body.pl-detail header .search{visibility:hidden}
 .pl-top{display:flex;align-items:center;gap:12px;height:48px}
-.pl-search{flex:1;max-width:460px;display:flex;align-items:center;gap:8px;background:var(--surface-2);border-radius:12px;padding:0 14px;height:40px;color:var(--text-3);min-width:0}
+.pl-search{flex:1;max-width:460px;display:flex;align-items:center;gap:8px;background:var(--surface-2);border-radius:var(--r-md);padding:0 14px;height:40px;color:var(--text-3);min-width:0}
 .pl-search svg{width:20px;height:20px}
 .pl-search input{flex:1;background:none;border:0;outline:0;color:var(--text);font:inherit;font-size:14px;min-width:0;-webkit-appearance:none;appearance:none}
 .pl-search input::-webkit-search-cancel-button{-webkit-appearance:none}
 .pl-header{display:flex;gap:16px;align-items:center;margin:20px 0 18px}
-.pl-cover{width:96px;border-radius:12px;box-shadow:0 8px 24px rgba(0,0,0,.5);flex-shrink:0}
+.pl-cover{width:96px;border-radius:var(--r-md);flex-shrink:0}
 .pl-meta{min-width:0}
 .pl-meta h1{font-size:24px;margin-bottom:4px;overflow-wrap:anywhere;display:-webkit-box;-webkit-line-clamp:2;line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}
 .pl-meta p{font-size:13px;color:var(--text-3)}
@@ -329,7 +354,7 @@ body.pl-detail header .search{visibility:hidden}
   .vol > .vol-ic{display:none}
   .vol-btn{display:inline-flex}
   .vol-btn:hover,.vol.open .vol-btn{background:var(--surface-3);color:var(--text)}
-  .vol-pop{display:none;position:absolute;right:-6px;bottom:calc(100% + 14px);width:200px;padding:16px;background:var(--surface-2);border:1px solid var(--border);border-radius:12px;box-shadow:0 10px 36px rgba(0,0,0,.6);z-index:5}
+  .vol-pop{display:none;position:absolute;right:-6px;bottom:calc(100% + 14px);width:200px;padding:16px;background:var(--surface-2);border:1px solid var(--border);border-radius:var(--r-lg);box-shadow:var(--shadow-pop);z-index:5}
   .vol.open .vol-pop{display:flex}
 }
 /* 平板寬度:側邊欄縮成只有圖示+小字的窄欄;700px 以下由下一條改成隱藏、換下方選單。
@@ -358,7 +383,7 @@ body.pl-detail header .search{visibility:hidden}
   .mini{display:block;position:fixed;left:calc(8px + var(--safe-left));right:calc(8px + var(--safe-right));bottom:calc(var(--nav-h) + var(--safe-bottom) + 6px);height:56px;background:var(--surface-3);border-radius:10px;z-index:40;overflow:hidden}
   .mini-in{display:flex;align-items:center;gap:12px;height:100%;padding:0 6px 3px 8px;min-width:0;touch-action:none} /* 左右滑切歌、上滑展開 */
   .full-top,.left-pane{touch-action:none} /* 往下滑收合播放頁 */
-  .mini .cover{width:40px;border-radius:4px;flex-shrink:0}
+  .mini .cover{width:40px;border-radius:var(--r-sm);flex-shrink:0}
   .mini .info{flex:1;min-width:0}
   .mini button{width:42px;height:42px;border-radius:50%;flex-shrink:0}
   .mini-prog{position:absolute;left:0;bottom:0;height:2px;background:var(--accent);width:0}
@@ -381,7 +406,7 @@ body.pl-detail header .search{visibility:hidden}
   .pl-card{flex-direction:column;align-items:stretch;gap:12px;padding:12px;background:var(--surface-1)}
   .pl-card:hover{background:var(--surface-3)}
   .pl-card-art{width:100%}
-  .pl-card .cover{border-radius:10px;box-shadow:0 8px 24px rgba(0,0,0,.45)}
+  .pl-card .cover{border-radius:var(--r-md)}
   .pl-card-pm{display:none}
   .pl-card-play{display:grid;place-items:center;position:absolute;right:10px;bottom:10px;width:44px;height:44px;border-radius:50%;background:#fff;color:#000;box-shadow:0 6px 16px rgba(0,0,0,.5);opacity:0;transition:opacity .15s}
   .pl-card-play:hover{background:#e6e6e6}
@@ -396,14 +421,14 @@ body.pl-detail header .search{visibility:hidden}
   .pl-top{grid-area:top}
   .pl-side{grid-area:side;position:sticky;top:8px}
   .pl-header{flex-direction:column;align-items:flex-start;gap:18px;margin:12px 0 18px}
-  .pl-cover{width:100%;border-radius:14px}
+  .pl-cover{width:100%;border-radius:var(--r-lg)}
   .pl-meta h1{font-size:30px}
   .pl-listcol{grid-area:list;min-width:0}
   #plItems{margin-top:0}
 }
 
 /* ── Bot 正在播放(playerBots.js)── */
-.bot-card{background:var(--surface-1);border:1px solid var(--border);border-radius:14px;padding:16px;margin-bottom:16px;display:flex;flex-direction:column;gap:14px}
+.bot-card{background:var(--surface-1);border:1px solid var(--border);border-radius:var(--r-lg);padding:16px;margin-bottom:16px;display:flex;flex-direction:column;gap:14px}
 .bot-card.offline{opacity:.6}
 .bot-head{display:flex;align-items:center;gap:10px;min-width:0}
 .bot-head b{font-size:17px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
@@ -411,11 +436,13 @@ body.pl-detail header .search{visibility:hidden}
 .bot-dot{display:inline-flex;align-items:center;gap:6px;font-size:12px;color:var(--text-3);margin-left:auto;flex-shrink:0}
 .bot-dot::before{content:"";width:8px;height:8px;border-radius:50%;background:var(--text-3)}
 .bot-dot.on{color:var(--text-2)}
-.bot-dot.on::before{background:#1db954}
+.bot-dot.on::before{background:var(--ok)}
 .bot-guild{display:flex;flex-direction:column;gap:12px;padding-top:14px;border-top:1px solid var(--border)}
 .bot-guild-head{display:flex;align-items:baseline;gap:10px;flex-wrap:wrap;min-width:0}
 .bot-guild-head b{font-size:15px}
-.bot-vc{font-size:13px;color:var(--text-3)}
+.bot-vc{display:inline-flex;align-items:center;gap:4px;font-size:13px;color:var(--text-3)}
+.bot-vc svg,.chip svg{width:16px;height:16px}
+.chip:has(svg){display:inline-flex;align-items:center;gap:6px}
 .bot-guild .hint{padding:0}
 .bot-now{display:flex;align-items:center;gap:14px;min-width:0}
 .bot-now .cover{width:64px;flex-shrink:0}
@@ -433,29 +460,30 @@ body.pl-detail header .search{visibility:hidden}
 
 /* ── 上傳頁籤(playerUpload.js)── */
 .up-usage{display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:10px;margin-bottom:18px}
-.up-meter{padding:12px 14px;background:var(--surface-1);border:1px solid var(--border);border-radius:12px;display:grid;gap:6px;min-width:0}
+.up-meter{padding:12px 14px;background:var(--surface-1);border:1px solid var(--border);border-radius:var(--r-lg);display:grid;gap:6px;min-width:0}
 .up-meter-top{display:flex;justify-content:space-between;gap:8px;font-size:14px}
 .up-meter-top span{color:var(--text-2);font-variant-numeric:tabular-nums}
 .up-meter small{color:var(--text-3);font-size:12px;line-height:1.4}
 .up-meter.warn{border-color:var(--danger)}
 .up-meter.warn .up-bar i{background:var(--danger)}
 .up-bar{height:4px;border-radius:2px;background:var(--surface-3);overflow:hidden}
-.up-bar i{display:block;height:100%;width:0;background:var(--accent);transition:width .18s ease}
+.up-bar i{display:block;height:100%;width:0;background:var(--text);transition:width .18s ease}
 .up-opts{display:grid;gap:8px;margin-bottom:16px}
 .up-opts .chips{padding:0;margin:0}
 .up-opts .hint{padding:0}
 .up-field{display:grid;gap:6px;font-size:14px;color:var(--text-2);max-width:480px}
-.up-field input,.up-title{width:100%;min-width:0;border:1px solid var(--border);border-radius:8px;padding:9px 12px;background:var(--surface-1);color:var(--text);font:inherit;font-size:14px;outline:0}
+.up-field input,.up-title{width:100%;min-width:0;border:1px solid var(--border);border-radius:var(--r-sm);padding:9px 12px;background:var(--surface-1);color:var(--text);font:inherit;font-size:14px;outline:0}
 .up-field input:focus,.up-title:focus{border-color:var(--text-2)}
 .up-title:disabled{background:transparent;border-color:transparent;padding-left:0;color:var(--text)}
-.up-drop{display:flex;flex-direction:column;align-items:center;gap:6px;padding:28px 16px;border:2px dashed var(--border-strong);border-radius:14px;text-align:center;color:var(--text-2);font-size:13px;cursor:pointer;transition:border-color .15s,background .15s}
+.up-drop{display:flex;flex-direction:column;align-items:center;gap:6px;padding:28px 16px;border:2px dashed var(--border-strong);border-radius:var(--r-lg);text-align:center;color:var(--text-2);font-size:13px;cursor:pointer;transition:border-color .15s,background .15s}
 .up-drop > svg{width:36px;height:36px;color:var(--text-3)}
 .up-drop b{color:var(--text);font-size:15px;font-weight:600}
 .up-drop:hover,.up-drop.over{border-color:var(--text-2);background:var(--surface-1)}
 .up-drop.disabled{opacity:.5;pointer-events:none}
 .up-summary{margin-top:14px;padding:12px 14px;border-radius:10px;background:var(--surface-1);border:1px solid var(--border);font-size:14px;display:grid;gap:4px}
 .up-summary.warn{border-color:var(--danger)}
-.up-warn{color:var(--danger)}
+.up-warn{display:flex;align-items:flex-start;gap:6px;color:var(--danger)}
+.up-warn svg{width:16px;height:16px;margin-top:2px}
 .up-list{list-style:none;margin:14px 0 0;padding:0;display:grid;gap:8px}
 .up-item{display:flex;align-items:center;gap:10px;padding:10px 12px;background:var(--surface-1);border:1px solid var(--border);border-radius:10px}
 .up-main{flex:1;min-width:0;display:grid;gap:6px}
@@ -577,5 +605,7 @@ body.pl-detail header .search{visibility:hidden}
   .toast.show{animation:none}
   .big-cover.paused{transform:none;filter:brightness(.55)}
   .up-item.processing .up-bar i{animation:none}
+  .row.playing .cover::after{animation:none}
+  .full::before{transition:none}
 }
 

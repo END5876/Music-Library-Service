@@ -51,7 +51,8 @@
   <symbol id="i-delete" viewBox="0 0 24 24"><path d="M6 19a2 2 0 002 2h8a2 2 0 002-2V7H6zM19 4h-3.5l-1-1h-5l-1 1H5v2h14z"/></symbol>
   <symbol id="i-keyboard" viewBox="0 0 24 24"><path d="M20 5H4c-1.1 0-2 .9-2 2v10c0 1.1.9 2 2 2h16c1.1 0 2-.9 2-2V7c0-1.1-.9-2-2-2zm-9 3h2v2h-2zm0 3h2v2h-2zM8 8h2v2H8zm0 3h2v2H8zm-1 2H5v-2h2zm0-3H5V8h2zm9 7H8v-2h8zm0-4h-2v-2h2zm0-3h-2V8h2zm3 3h-2v-2h2zm0-3h-2V8h2z"/></symbol>
   <symbol id="i-note" viewBox="0 0 24 24"><path d="M12 3v10.55A4 4 0 1014 17V7h4V3h-6z"/></symbol>
-  <symbol id="i-offline" viewBox="0 0 24 24"><path d="M5 18h14v2H5zm4.6-2.3L5 11.1l1.4-1.4 3.2 3.2L17.6 5 19 6.4z"/></symbol>
+  <symbol id="i-cloud-off" viewBox="0 0 24 24"><path d="M24 15c0-2.64-2.05-4.78-4.65-4.96C18.67 6.59 15.64 4 12 4c-1.33 0-2.57.36-3.65.97l1.49 1.49C10.51 6.17 11.23 6 12 6c3.04 0 5.5 2.46 5.5 5.5v.5H19c1.66 0 3 1.34 3 3 0 .99-.48 1.85-1.21 2.4l1.41 1.41c1.09-.92 1.8-2.27 1.8-3.81zM4.41 3.86L3 5.27l2.77 2.77h-.42C2.34 8.36 0 10.91 0 14c0 3.31 2.69 6 6 6h11.73l2 2 1.41-1.41L4.41 3.86zM6 18c-2.21 0-4-1.79-4-4s1.79-4 4-4h1.73l8 8H6z"/></symbol>
+  <symbol id="i-lock" viewBox="0 0 24 24"><path d="M18 8h-1V6c0-2.76-2.24-5-5-5S7 3.24 7 6v2H6c-1.1 0-2 .9-2 2v10c0 1.1.9 2 2 2h12c1.1 0 2-.9 2-2V10c0-1.1-.9-2-2-2zm-6 9c-1.1 0-2-.9-2-2s.9-2 2-2 2 .9 2 2-.9 2-2 2zm3.1-9H8.9V6c0-1.71 1.39-3.1 3.1-3.1 1.71 0 3.1 1.39 3.1 3.1v2z"/></symbol>
   <symbol id="i-downloaded" viewBox="0 0 24 24"><path d="M12 2C6.49 2 2 6.49 2 12s4.49 10 10 10 10-4.49 10-10S17.51 2 12 2zm-1 8V6h2v4h3l-4 4-4-4h3zm6 7H7v-2h10v2z"/></symbol>
   <symbol id="i-play-next" viewBox="0 0 24 24"><path d="M4 10h12v2H4zm0-4h12v2H4zm0 8h8v2H4zm10 0v6l5-3z"/></symbol>
   <symbol id="i-queue-add" viewBox="0 0 24 24"><path d="M21 3H3c-1.11 0-2 .89-2 2v12c0 1.1.89 2 2 2h5v2h8v-2h5c1.1 0 1.99-.9 1.99-2L23 5c0-1.11-.9-2-2-2zm0 14H3V5h18v12zm-5-7v2h-3v3h-2v-3H8v-2h3V7h2v3h3z"/></symbol>
@@ -74,7 +75,7 @@
 <aside>
   <button class="navitem active" data-view="library"><svg><use href="#i-lib"/></svg>音樂庫</button>
   <button class="navitem" data-view="playlists"><svg><use href="#i-playlist"/></svg>播放清單</button>
-  <button class="navitem" data-view="offline"><svg><use href="#i-offline"/></svg>離線歌曲</button>
+  <button class="navitem" data-view="offline"><svg><use href="#i-downloaded"/></svg>離線歌曲</button>
   <button class="navitem needs-online" data-view="online" hidden><svg><use href="#i-explore"/></svg>線上搜尋</button>
   <button class="navitem" data-view="bots" hidden><svg><use href="#i-bot"/></svg><span>Bot<span class="nav-long"> 正在播放</span></span></button>
   <button class="navitem" data-view="upload" hidden><svg><use href="#i-upload"/></svg>上傳音樂</button>
@@ -83,7 +84,7 @@
 
 <main id="main">
   <div class="net-banner" id="netBanner" hidden>
-    <svg><use href="#i-offline"/></svg>
+    <svg><use href="#i-cloud-off"/></svg>
     <span id="netText">目前離線，只能播放已下載的歌曲</span>
     <button class="btn btn-sm btn-secondary" id="netRetry" hidden>重試</button>
     <button class="btn btn-sm btn-secondary" id="netGoOff">離線歌曲</button>
@@ -114,7 +115,7 @@
         <button class="btn btn-sm btn-secondary sel-act" id="selBot" disabled hidden><svg><use href="#i-bot"/></svg>點給 Bot</button>
         <button class="btn btn-sm btn-secondary sel-act" id="selDl" disabled><svg><use href="#i-download"/></svg>下載離線</button>
         <!-- 設為私人、刪除:只有管理員看得到(伺服器也會擋) -->
-        <button class="btn btn-sm btn-secondary sel-act" id="selPriv" disabled hidden><svg><use href="#i-offline"/></svg>設為私人</button>
+        <button class="btn btn-sm btn-secondary sel-act" id="selPriv" disabled hidden><svg><use href="#i-lock"/></svg>設為私人</button>
         <button class="btn btn-sm btn-secondary danger sel-act" id="selDel" disabled hidden><svg><use href="#i-delete"/></svg>刪除</button>
         <button class="btn btn-sm btn-secondary" id="selCancel">取消</button>
       </div>
@@ -141,7 +142,7 @@
         </div>
       </div>
       <div class="storage-card">
-        <svg><use href="#i-offline"/></svg>
+        <svg><use href="#i-downloaded"/></svg>
         <div class="hint" id="offlineInfo"></div>
         <button class="btn btn-sm btn-secondary danger" id="offlineClear" hidden>清除全部</button>
       </div>
@@ -150,7 +151,7 @@
         <button class="chip" data-sort="name">歌名</button>
       </div>
       <ul class="quick" id="offList"></ul>
-      <div class="empty" id="offEmpty" hidden><svg><use href="#i-offline"/></svg><b id="offEmptyText"></b><span id="offEmptyHint">在播放清單按下載鈕，或從歌曲的「⋮」選「下載離線」。</span><button class="btn btn-primary" id="offGoPl"><svg><use href="#i-playlist"/></svg>前往播放清單</button></div>
+      <div class="empty" id="offEmpty" hidden><svg><use href="#i-downloaded"/></svg><b id="offEmptyText"></b><span id="offEmptyHint">在播放清單按下載鈕，或從歌曲的「⋮」選「下載離線」。</span><button class="btn btn-primary" id="offGoPl"><svg><use href="#i-playlist"/></svg>前往播放清單</button></div>
     </section>
   </div>
 
@@ -298,7 +299,7 @@
 <nav class="bottom-nav">
   <button class="active" data-view="library"><svg><use href="#i-lib"/></svg>音樂庫</button>
   <button data-view="playlists"><svg><use href="#i-playlist"/></svg>播放清單</button>
-  <button data-view="offline"><svg><use href="#i-offline"/></svg>離線</button>
+  <button data-view="offline"><svg><use href="#i-downloaded"/></svg>離線</button>
   <button class="needs-online" data-view="online" hidden><svg><use href="#i-explore"/></svg>線上搜尋</button>
   <!-- Bot、上傳不放這裡(手機底部太擠):入口在音樂庫標題列,只有管理員看得到(player.js 的 showAdminUi) -->
 </nav>
