@@ -194,7 +194,7 @@
       const waitingServer = items.filter((it) => it.status === 'queued' || it.status === 'processing').length;
       if (onPending) onPending(waitingServer + items.filter((it) => it.status === 'uploading').length, unseenFailed);
       $('upServerNote').hidden = !waitingServer;
-      $('upServerNote').textContent = `伺服器還有 ${waitingServer} 首在排隊處理，一次處理一首。已經傳完的話可以關掉網頁，處理會繼續進行；重新打開這個頁籤會接回進度。`;
+      $('upServerNote').textContent = `伺服器還有 ${waitingServer} 首在排隊處理。傳完就可以關掉網頁，處理會繼續。`;
       for (const el of document.querySelectorAll('#upTarget .chip, #upOriginal, #upFolder, #upFiles')) el.disabled = running;
       $('upDrop').classList.toggle('disabled', running);
     }
@@ -204,11 +204,11 @@
       $('upOriginalLine').hidden = target !== 'private';
       $('upFolder').placeholder = target === 'private' ? '留空＝不分類' : '例如：uploads（留空＝不分類）';
       $('upTargetHint').textContent = target === 'private'
-        ? '只有你看得到、聽得到；其他帳號和 Bot 都看不到。會計入私人空間配額。'
+        ? '只有你聽得到，會計入私人空間配額。'
         : '所有登入的人和 Bot 都能播放。';
       $('upModeHint').textContent = original()
-        ? '原檔照存（FLAC、WAV 會占用數倍空間），不統一音量。'
-        : '一般音檔轉成高品質 MP3（約 190 kbps）並統一音量；已經是 200 kbps 以下的 MP3 不重新編碼，只無損調整音量。';
+        ? '原檔照存，不統一音量，會佔比較多空間。'
+        : '會轉成 MP3 並統一音量。';
     }
 
     // ── 上傳(逐一)──

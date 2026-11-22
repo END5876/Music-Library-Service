@@ -112,7 +112,7 @@
       box.append(head);
 
       if (!g.current) {
-        box.append(el('div', 'hint', '在語音頻道待命中，沒有播放。可以從音樂庫或線上搜尋的「⋮」選單「點給 Bot 播放」。'));
+        box.append(el('div', 'hint', '待命中，沒有播放。'));
       } else {
         const now = el('div', 'bot-now');
         const info = el('div', 'info');
@@ -192,7 +192,7 @@
         if (!b.online) {
           card.append(el('div', 'hint', '最後更新 ' + new Date(b.updatedAt).toLocaleString()));
         } else if (!b.guilds.length) {
-          card.append(el('div', 'hint', '目前不在任何語音頻道。在 Discord 用 /play 讓 Bot 加入後，就能從這裡控制與點歌。'));
+          card.append(el('div', 'hint', '不在語音頻道。在 Discord 用 /play 讓 Bot 加入。'));
         } else {
           for (const g of b.guilds) card.append(guildBlock(b, g));
         }

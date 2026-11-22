@@ -1618,7 +1618,7 @@
       // 依推測:搜尋回 { results:[...] },網址解析回單一物件或 { item }
       const list = j.results || (j.item ? [j.item] : (j.url || j.title ? [j] : []));
       if (!list.length) { $('onlineHint').textContent = `找不到「${q}」。換個關鍵字試試，或直接貼上影片網址。`; return; }
-      $('onlineHint').textContent = `找到 ${list.length} 首。點歌名立即播放，按「＋」排到佇列。`;
+      $('onlineHint').textContent = `找到 ${list.length} 首。`;
       const frag = document.createDocumentFragment();
       for (const r of list) {
         frag.appendChild(onlineRow(r, {
@@ -2101,7 +2101,7 @@
     $('offEmptyText').textContent = !none ? '沒有符合的離線歌曲。' : isOffline() ? '這台裝置還沒有下載的歌曲。' : '還沒有離線歌曲。';
     $('offEmptyHint').textContent = isOffline()
       ? '連上網路後，在播放清單按下載鈕，之後沒網路也能聽。'
-      : '在播放清單按下載鈕整份下載，或在歌曲的「⋮」選單選「下載離線」。下載後沒有網路也能播放。';
+      : '在播放清單按下載鈕，或從歌曲的「⋮」選「下載離線」。';
     $('offEmptyHint').hidden = !none; $('offGoPl').hidden = !none || isOffline();
     $('offSort').hidden = none;
     $('offPlay').hidden = $('offShuffle').hidden = none; // 沒有離線歌曲時不顯示播放鈕

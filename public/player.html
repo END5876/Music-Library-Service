@@ -126,7 +126,7 @@
   <div id="viewOnline" hidden>
     <section style="margin-top:0">
       <div class="sec-head"><h2>線上搜尋<small>YouTube + Bilibili</small></h2></div>
-      <div class="hint" id="onlineHint">在上方搜尋列輸入關鍵字後按 Enter，或直接貼上影片網址。點一下立即播放，「＋」加入佇列。</div>
+      <div class="hint" id="onlineHint">輸入關鍵字，或貼上影片網址。</div>
       <ul class="quick" id="onlineResults"></ul>
     </section>
   </div>
@@ -150,7 +150,7 @@
         <button class="chip" data-sort="name">歌名</button>
       </div>
       <ul class="quick" id="offList"></ul>
-      <div class="empty" id="offEmpty" hidden><svg><use href="#i-offline"/></svg><b id="offEmptyText"></b><span id="offEmptyHint">在播放清單按下載鈕整份下載，或在歌曲的「⋮」選單選擇「下載離線」。<br>下載後沒有網路也能播放。</span><button class="btn btn-primary" id="offGoPl"><svg><use href="#i-playlist"/></svg>前往播放清單</button></div>
+      <div class="empty" id="offEmpty" hidden><svg><use href="#i-offline"/></svg><b id="offEmptyText"></b><span id="offEmptyHint">在播放清單按下載鈕，或從歌曲的「⋮」選「下載離線」。</span><button class="btn btn-primary" id="offGoPl"><svg><use href="#i-playlist"/></svg>前往播放清單</button></div>
     </section>
   </div>
 
@@ -159,7 +159,7 @@
       <div class="sec-head"><h2>Bot 正在播放<small id="botsCount"></small></h2></div>
       <div class="hint" id="botsHint" hidden></div>
       <div id="botsList"></div>
-      <div class="empty" id="botsEmpty" hidden><svg><use href="#i-bot"/></svg><b>目前沒有 Bot 連上</b><span>Bot 連上這個音樂庫後，就會出現在這裡。<br>可以看到各伺服器正在播的歌、遠端控制，並從音樂庫點歌給 Bot。</span></div>
+      <div class="empty" id="botsEmpty" hidden><svg><use href="#i-bot"/></svg><b>目前沒有 Bot 連上</b><span>Bot 連上這個音樂庫後會出現在這裡。</span></div>
     </section>
   </div>
 
@@ -192,7 +192,7 @@
       <div class="up-summary" id="upSummary" hidden></div>
       <p class="hint up-server" id="upServerNote" hidden></p>
       <ul class="up-list" id="upList"></ul>
-      <div class="empty" id="upEmpty"><svg><use href="#i-note"/></svg><b>還沒有選擇檔案</b><span>每首的曲名可以在上傳前修改。檔案會全部先傳上去，伺服器再一首一首慢慢處理；失敗的可以重試。</span></div>
+      <div class="empty" id="upEmpty"><svg><use href="#i-note"/></svg><b>還沒有選擇檔案</b><span>選好檔案後，可以先改曲名再上傳。</span></div>
       <div class="up-actions">
         <button class="btn btn-primary" id="upStart" type="button" disabled><svg><use href="#i-upload"/></svg><span>開始上傳</span></button>
         <button class="btn btn-secondary" id="upClear" type="button" hidden>清除已完成</button>
@@ -244,7 +244,7 @@
         <button class="btn btn-sm btn-secondary" id="plSelCancel">取消</button>
       </div>
       <ul class="quick" id="plItems"></ul>
-      <div class="empty" id="plItemsEmpty" hidden><svg><use href="#i-note"/></svg><b>這個播放清單還是空的</b><span>在音樂庫歌曲的「⋮」選單選擇「加入播放清單」，<br>或用音樂庫的「多選」一次加入多首。</span><button class="btn btn-primary" id="plGoLib"><svg><use href="#i-lib"/></svg>前往音樂庫</button></div>
+      <div class="empty" id="plItemsEmpty" hidden><svg><use href="#i-note"/></svg><b>這個播放清單還是空的</b><span>在歌曲的「⋮」選單選「加入播放清單」。</span><button class="btn btn-primary" id="plGoLib"><svg><use href="#i-lib"/></svg>前往音樂庫</button></div>
       </div>
     </div>
   </div>
