@@ -76,7 +76,7 @@
   <button class="navitem" data-view="playlists"><svg><use href="#i-playlist"/></svg>播放清單</button>
   <button class="navitem" data-view="offline"><svg><use href="#i-offline"/></svg>離線歌曲</button>
   <button class="navitem needs-online" data-view="online" hidden><svg><use href="#i-explore"/></svg>線上搜尋</button>
-  <button class="navitem" data-view="bots" hidden><svg><use href="#i-bot"/></svg>Bot 正在播放</button>
+  <button class="navitem" data-view="bots" hidden><svg><use href="#i-bot"/></svg><span>Bot<span class="nav-long"> 正在播放</span></span></button>
   <button class="navitem" data-view="upload" hidden><svg><use href="#i-upload"/></svg>上傳音樂</button>
   <button class="navitem subtle" id="helpBtn" title="鍵盤快捷鍵 (?)"><svg><use href="#i-keyboard"/></svg>鍵盤快捷鍵</button>
 </aside>
@@ -167,6 +167,9 @@
   <div id="viewUpload" hidden>
     <section style="margin-top:0">
       <div class="sec-head"><h2>上傳音樂<small id="upLimitNote"></small></h2></div>
+      <!-- 寬螢幕(≥1100px)分兩欄:左邊設定與選檔(固定不捲走),右邊檔案清單 -->
+      <div class="up-layout">
+      <div class="up-side">
       <div class="up-usage" id="upUsage"></div>
       <div class="up-opts">
         <div class="chips" id="upTarget">
@@ -184,6 +187,8 @@
         <span>支援 MP3、WAV、OGG、FLAC、M4A、AAC</span>
         <input type="file" id="upFiles" multiple accept="audio/mpeg,audio/wav,audio/ogg,audio/flac,audio/mp4,audio/aac,.mp3,.wav,.ogg,.flac,.m4a,.aac" hidden>
       </label>
+      </div>
+      <div class="up-body">
       <div class="up-summary" id="upSummary" hidden></div>
       <p class="hint up-server" id="upServerNote" hidden></p>
       <ul class="up-list" id="upList"></ul>
@@ -191,6 +196,8 @@
       <div class="up-actions">
         <button class="btn btn-primary" id="upStart" type="button" disabled><svg><use href="#i-upload"/></svg><span>開始上傳</span></button>
         <button class="btn btn-secondary" id="upClear" type="button" hidden>清除已完成</button>
+      </div>
+      </div>
       </div>
     </section>
   </div>
@@ -268,7 +275,12 @@
     </div>
   </div>
   <div class="right">
-    <div class="vol"><svg><use href="#i-vol"/></svg><input type="range" id="vol" min="0" max="100" value="100" aria-label="音量"></div>
+    <!-- 音量:寬螢幕直接顯示滑桿;1100px 以下收成圖示鈕,點了彈出滑桿(player.js 的 setVolPop) -->
+    <div class="vol" id="volWrap">
+      <svg class="vol-ic" aria-hidden="true"><use href="#i-vol"/></svg>
+      <button class="vol-btn" id="volBtn" type="button" aria-label="音量" title="音量" aria-expanded="false" aria-controls="volPop"><svg><use href="#i-vol"/></svg></button>
+      <div class="vol-pop" id="volPop"><input type="range" id="vol" min="0" max="100" value="100" aria-label="音量"></div>
+    </div>
     <button id="expand" title="展開" aria-label="展開播放頁"><svg><use href="#i-up"/></svg></button>
   </div>
 </div>

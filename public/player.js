@@ -1368,6 +1368,26 @@
   $('vol').addEventListener('input', (e) => { audio.volume = e.target.value / 100; });
   $('vol').value = Math.round(audio.volume * 100);
   $('vol').style.setProperty('--p', Math.round(audio.volume * 100) + '%');
+  // iOS／iPadOS 不能用網頁調整音量(volume 設了也不會變),整個音量控制藏起來,只能用實體按鍵。
+  // iPadOS 的 Safari 自稱 Mac,用「Mac＋多點觸控」辨認
+  const isIOS = /iP(hone|od|ad)/.test(navigator.platform) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
+  document.body.classList.toggle('no-volume', isIOS);
+  // 1100px 以下音量收成圖示鈕:點一下彈出滑桿;點外面、按 Esc、Tab 離開就收起來
+  const volWrap = $('volWrap');
+  const setVolPop = (open) => {
+    volWrap.classList.toggle('open', open);
+    $('volBtn').setAttribute('aria-expanded', String(open));
+    if (open) $('vol').focus();
+  };
+  $('volBtn').addEventListener('click', () => setVolPop(!volWrap.classList.contains('open')));
+  document.addEventListener('pointerdown', (e) => { if (volWrap.classList.contains('open') && !volWrap.contains(e.target)) setVolPop(false); });
+  volWrap.addEventListener('keydown', (e) => {
+    if (e.key !== 'Escape' || !volWrap.classList.contains('open')) return;
+    e.stopPropagation();
+    setVolPop(false);
+    $('volBtn').focus();
+  });
+  volWrap.addEventListener('focusout', (e) => { if (e.relatedTarget && !volWrap.contains(e.relatedTarget)) setVolPop(false); });
 
   $('shuffleAll').addEventListener('click', () => {
     if (!view.length) return;

@@ -178,6 +178,9 @@ section{margin-top:28px;min-width:0}
 .right button:hover{background:var(--surface-3);color:var(--text)}
 .vol{display:flex;align-items:center;gap:6px;width:140px;color:var(--text-2)}
 .vol svg{width:20px;height:20px}
+.vol-btn{display:none}
+.vol-pop{flex:1;min-width:0;display:flex;align-items:center}
+body.no-volume .vol{display:none}
 /* 音量不是「狀態」,用中性色;粉紅只留給播放進度 */
 #vol{background:linear-gradient(to right,var(--text-2) var(--p,0%),#4a4a4a var(--p,0%))}
 #vol:hover{background:linear-gradient(to right,var(--text) var(--p,0%),#4a4a4a var(--p,0%))}
@@ -319,16 +322,26 @@ body.pl-detail header .search{visibility:hidden}
 #plItems{margin-top:8px}
 
 /* ── 斷點 ── */
-@media (max-width:1100px){.vol{display:none}}
-@media (max-width:900px){.bar-seek span{display:none}}
+/* 1100px 以下:音量收成圖示鈕＋彈出滑桿 */
+@media (max-width:1100px){
+  .vol{width:auto;position:relative}
+  .vol > .vol-ic{display:none}
+  .vol-btn{display:inline-flex}
+  .vol-btn:hover,.vol.open .vol-btn{background:var(--surface-3);color:var(--text)}
+  .vol-pop{display:none;position:absolute;right:-6px;bottom:calc(100% + 14px);width:200px;padding:16px;background:var(--surface-2);border:1px solid var(--border);border-radius:12px;box-shadow:0 10px 36px rgba(0,0,0,.6);z-index:5}
+  .vol.open .vol-pop{display:flex}
+}
 /* 平板寬度:側邊欄縮成只有圖示+小字的窄欄;700px 以下由下一條改成隱藏、換下方選單。
    不寫 min-width:701px:Android 平板的寬度常是小數(如 700.5px),兩條斷點之間會出現縫隙 */
 @media (max-width:900px){
-  aside{width:76px;padding:8px 4px}
-  main{left:76px}
-  .navitem,.navitem.subtle{flex-direction:column;justify-content:center;gap:4px;padding:10px 2px;font-size:10px;line-height:1.25;text-align:center}
+  aside{width:84px;padding:8px 4px}
+  main{left:84px}
+  .navitem,.navitem.subtle{flex-direction:column;justify-content:center;gap:4px;padding:10px 2px;font-size:12px;line-height:1.25;text-align:center}
   .navitem.active{font-weight:600}
+  .nav-long{display:none} /* 「Bot 正在播放」縮成「Bot」 */
 }
+/* 觸控平板通常沒有接鍵盤:不顯示「鍵盤快捷鍵」(按 ? 仍可以打開) */
+@media (hover:none) and (pointer:coarse){#helpBtn{display:none}}
 @media (max-width:700px){aside{display:none}main{left:0}}
 @media (max-width:700px){
   :root{--header-h:56px}
@@ -456,6 +469,20 @@ body.pl-detail header .search{visibility:hidden}
 .up-filter{display:flex;align-items:center;justify-content:space-between;gap:10px;padding:4px 2px;color:var(--text-2);font-size:13px}
 @keyframes up-pulse{50%{opacity:.35}}
 .up-actions{display:flex;gap:10px;flex-wrap:wrap;margin-top:16px}
+/* 上傳頁、Bot 頁不要拉滿整個寬螢幕;說明文字一行不超過 64 個字 */
+#viewUpload{max-width:960px}
+#viewBots{max-width:880px}
+.hint{max-width:64ch}
+@media (min-width:1100px){
+  .up-layout{display:grid;grid-template-columns:360px minmax(0,1fr);gap:28px;align-items:start}
+  /* 固定在左邊;視窗太矮放不下時左欄自己捲動,下面的選檔區才點得到 */
+  .up-side{position:sticky;top:0;max-height:calc(100dvh - var(--header-h) - var(--safe-top) - var(--player-total) - 60px);overflow-y:auto;overscroll-behavior:contain}
+  .up-side .up-drop{padding:22px 16px}
+  .up-body{display:grid;gap:14px}
+  .up-body > *{margin-top:0}
+  .up-body .hint{padding:0}
+  .up-body .empty{padding:48px 16px}
+}
 #viewUpload .empty{padding:28px 16px}
 .nav-badge{margin-left:auto;min-width:20px;padding:1px 6px;border-radius:10px;background:var(--accent);color:#fff;font-size:11px;font-weight:700;line-height:18px;text-align:center}
 /* 有上傳失敗還沒看過:琥珀色「!」,跟一般的進度數字分開 */
@@ -494,6 +521,51 @@ body.pl-detail header .search{visibility:hidden}
   .sel-bar{gap:10px}
   .toast-act{min-height:40px;padding:8px 14px}
   .toast-close{width:40px;height:40px}
+}
+
+/* ══ 平板與手機橫放(ui-review 第 4 批)══════════════════════════════ */
+/* 平板直向的全螢幕播放頁:改單欄,封面＋控制在上、佇列在下(兩欄時封面只剩三分之一寬) */
+@media (min-width:701px) and (max-width:1024px) and (orientation:portrait){
+  .full-body{grid-template-columns:minmax(0,1fr);grid-template-rows:auto minmax(0,1fr);gap:20px;padding:0 40px 16px;max-width:720px}
+  .left-pane{gap:18px}
+  .big-cover{width:min(100%,56vw,38vh)}
+  .queue{border-top:1px solid rgba(255,255,255,.12);padding-top:8px}
+}
+/* 手機橫放(寬度超過 700 但高度很矮):頁首、播放列變矮,側欄只留圖示;
+   全螢幕頁左邊封面、右邊歌名與控制,佇列改用「歌曲／佇列」頁籤 */
+@media (pointer:coarse) and (max-height:500px) and (min-width:701px){
+  :root{--header-h:48px;--player-h:64px}
+  .search{height:36px}
+  aside{width:64px;padding:6px 4px}
+  main{left:64px;padding-top:12px}
+  section{margin-top:16px}
+  .chips + section{margin-top:10px}
+  .sec-head{margin-bottom:8px}
+  .sec-head h2{font-size:22px}
+  .row .cover{width:40px}
+  .navitem,.navitem.subtle{flex-direction:column;justify-content:center;font-size:0;gap:0;padding:10px 0}
+  .player{gap:10px}
+  .now .cover{width:44px}
+  .center{gap:0}
+  .ctrls button{width:40px;height:40px}
+  .ctrls .big{width:44px;height:44px}
+  .vol{display:none}
+  .tabs{display:flex}
+  .full-top{padding:4px 16px}
+  .full-top > button{width:40px;height:40px}
+  .full-body{grid-template-columns:minmax(0,1fr);padding:0 32px 8px;gap:0}
+  .full-body .queue{display:none}
+  .full[data-tab="queue"] .left-pane{display:none}
+  .full[data-tab="queue"] .queue{display:block;height:100%}
+  .left-pane{display:grid;grid-template-columns:auto minmax(0,440px);grid-template-rows:1fr auto auto auto 1fr;justify-content:center;column-gap:40px;row-gap:12px;align-items:center;justify-items:start}
+  .big-cover{grid-column:1;grid-row:1/-1;width:min(40vw,60vh)}
+  .meta{grid-column:2;grid-row:2}
+  .seek{grid-column:2;grid-row:3}
+  .fctrls{grid-column:2;grid-row:4}
+  .fctrls button{width:44px;height:44px}
+  .fctrls .play-big{width:56px;height:56px}
+  .fctrls .play-big svg{width:32px;height:32px}
+  .meta .t{font-size:19px}
 }
 
 /* 減少動態效果:過場改成淡入淡出或直接切換;暫停時封面改成變暗,不縮放 */
