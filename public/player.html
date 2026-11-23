@@ -188,16 +188,15 @@
         <span>支援 MP3、WAV、OGG、FLAC、M4A、AAC</span>
         <input type="file" id="upFiles" multiple accept="audio/mpeg,audio/wav,audio/ogg,audio/flac,audio/mp4,audio/aac,.mp3,.wav,.ogg,.flac,.m4a,.aac" hidden>
       </label>
+      <!-- 選了檔案才出現,接在選檔區正下方:選位置 → 選檔 → 開始上傳 -->
+      <button class="btn btn-primary up-start" id="upStart" type="button" hidden><svg><use href="#i-upload"/></svg><span>開始上傳</span></button>
       </div>
       <div class="up-body">
       <div class="up-summary" id="upSummary" hidden></div>
       <p class="hint up-server" id="upServerNote" hidden></p>
+      <div class="up-list-head"><button class="btn btn-secondary btn-sm" id="upClear" type="button" hidden>清除已完成</button></div>
       <ul class="up-list" id="upList"></ul>
       <div class="empty" id="upEmpty"><svg><use href="#i-note"/></svg><b>還沒有選擇檔案</b><span>選好檔案後，可以先改曲名再上傳。</span></div>
-      <div class="up-actions">
-        <button class="btn btn-primary" id="upStart" type="button" disabled><svg><use href="#i-upload"/></svg><span>開始上傳</span></button>
-        <button class="btn btn-secondary" id="upClear" type="button" hidden>清除已完成</button>
-      </div>
       </div>
       </div>
     </section>

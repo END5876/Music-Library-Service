@@ -318,11 +318,8 @@
   });
 
   async function confirmLogout() {
-    // 登出會停止音樂、清空佇列:先確認(播放清單存在帳號裡,不會不見)
-    const uploading = uploader.busy();
-    if (!await askConfirm('登出這台裝置？',
-      '音樂會停止，佇列會清空。播放清單存在你的帳號裡，下次登入還在。' + (uploading ? '\n還沒傳完的上傳也會停止。' : ''),
-      { ok: '登出' })) return;
+    // 只有上傳還沒傳完時多一句提醒(那是登出後唯一會失去的東西)
+    if (!await askConfirm('確認登出？', uploader.busy() ? '還沒傳完的上傳會停止。' : '', { ok: '登出' })) return;
     pendingPlay = false; userPaused = true; audio.pause(); // 等伺服器回應的期間先停下來
     await fetch('/auth/logout', { method: 'POST' }).catch(() => {});
     resetAccountState();
@@ -332,54 +329,18 @@
     showLogin();
   }
 
-  // ── 生成封面 ──
-  // 依歌名在 8 個色相裡挑一個當底色，中間放歌名第一個字（沒有標題才顯示音符）。
-  // 全螢幕頁背景、Android 通知欄／鎖定畫面的封面也用同一個色相，換歌時整個畫面跟著換色。
-  const COVER_HUES = [6, 28, 48, 140, 178, 205, 232, 288];
+  // ── 封面 ──
+  // 歌曲沒有真正的封面圖：全部用同一個灰底＋圖示（歌曲=音符、播放清單=清單），不依歌名配色。
+  // 全螢幕頁背景固定一個顏色；通知欄／鎖定畫面用 App 圖示。
   const IDLE_HUE = 250;
-  function coverHue(seed) {
-    let h = 0;
-    for (const c of String(seed || '')) h = (h * 31 + c.codePointAt(0)) >>> 0;
-    return COVER_HUES[h % COVER_HUES.length];
+  function paintCover(el) {
+    el.classList.remove('quad', 'pl'); el.textContent = '';
+    delete el.dataset.ch;
   }
-  const coverChar = (title) => { const m = String(title || '').match(/[\p{L}\p{N}]/u); return m ? m[0].toUpperCase() : ''; };
-  function paintCover(el, title) {
-    el.classList.remove('quad'); el.textContent = '';
-    el.style.setProperty('--h', coverHue(title));
-    const ch = coverChar(title);
-    if (ch) el.dataset.ch = ch; else delete el.dataset.ch;
-  }
-  // 播放清單：有 4 首以上時用前 4 首的色塊拼 2×2，不到 4 首就用清單名稱
-  function paintPlCover(el, p) {
-    const titles = p.items.slice(0, 4).map(itemTitle);
-    paintCover(el, p.name);
-    if (titles.length < 4) return;
-    delete el.dataset.ch; el.classList.add('quad');
-    for (const t of titles) { const q = document.createElement('i'); q.style.setProperty('--h', coverHue(t)); el.appendChild(q); }
-  }
-  // 通知欄／鎖定畫面用的 512px 封面（跟畫面上的生成封面同一個樣子）
-  function coverArtwork(title) {
-    try {
-      const c = document.createElement('canvas'); c.width = c.height = 512;
-      const g = c.getContext('2d'), h = coverHue(title);
-      const gr = g.createLinearGradient(0, 0, 512, 512);
-      gr.addColorStop(0, `hsl(${h} 40% 34%)`); gr.addColorStop(1, `hsl(${h} 36% 14%)`);
-      g.fillStyle = gr; g.fillRect(0, 0, 512, 512);
-      const ch = coverChar(title);
-      if (ch) {
-        g.fillStyle = `hsl(${h} 60% 85%)`;
-        g.font = `700 232px ${getComputedStyle(document.body).fontFamily}`;
-        g.textAlign = 'center'; g.textBaseline = 'middle';
-        g.fillText(ch, 256, 270);
-      }
-      return [{ src: c.toDataURL('image/png'), sizes: '512x512', type: 'image/png' }];
-    } catch {
-      return [{ src: '/player-assets/icons/icon-512.png', sizes: '512x512', type: 'image/png' }];
-    }
-  }
+  function paintPlCover(el) { paintCover(el); el.classList.add('pl'); }
+  const coverArtwork = () => [{ src: '/player-assets/icons/icon-512.png', sizes: '512x512', type: 'image/png' }];
   const themeMeta = document.querySelector('meta[name="theme-color"]');
-  let nowHue = IDLE_HUE;
-  const fullTint = () => `hsl(${nowHue} 42% 26%)`;
+  const fullTint = () => `hsl(${IDLE_HUE} 42% 26%)`;
 
   // ── 列表元件 ──
   // opts:key / title / sub / dur / idx / btn / grip / qid / onClick
@@ -826,18 +787,11 @@
     ['barTitle', 'miniTitle', 'fTitle'].forEach(id => { $(id).textContent = t; });
     ['barArtist', 'miniArtist', 'fArtist'].forEach(id => { $(id).textContent = a; });
     document.title = n ? `${n.title}｜裊器音樂` : '裊器音樂';
-    // 封面與全螢幕頁的顏色跟著這首歌；還沒播放時顯示音符
-    for (const id of ['barCover', 'miniCover', 'bigCover']) {
-      const el = $(id);
-      paintCover(el, n ? n.title : '');
-      if (!n) { delete el.dataset.ch; el.style.setProperty('--h', IDLE_HUE); }
-    }
-    nowHue = n ? coverHue(n.title) : IDLE_HUE;
-    $('full').style.setProperty('--h', nowHue);
+    for (const id of ['barCover', 'miniCover', 'bigCover']) paintCover($(id));
     if (isFullOpen() && themeMeta) themeMeta.content = fullTint();
     if ('mediaSession' in navigator) {
       try {
-        navigator.mediaSession.metadata = n ? new MediaMetadata({ title: n.title, artist: n.sub, artwork: coverArtwork(n.title) }) : null;
+        navigator.mediaSession.metadata = n ? new MediaMetadata({ title: n.title, artist: n.sub, artwork: coverArtwork() }) : null;
       } catch {}
     }
     markPlaying(true);
@@ -1515,7 +1469,11 @@
     if (themeMeta) themeMeta.content = '#0b0b0b';
     dropLayer('full');
   }
-  $('nowOpen').addEventListener('click', openFull);
+  // 底部播放列：點哪裡都展開，只有按鈕、進度條、音量照原本的功能
+  document.querySelector('.player').addEventListener('click', (e) => {
+    if (e.target.closest('button, input, .vol')) return;
+    openFull();
+  });
   $('expand').addEventListener('click', openFull);
   $('miniOpen').addEventListener('click', openFull);
   $('close').addEventListener('click', closeFull);

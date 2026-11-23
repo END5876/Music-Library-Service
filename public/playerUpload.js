@@ -187,7 +187,8 @@
       const pending = items.filter((it) => it.status === 'pending').length;
       // 上傳中這顆按鈕變成「停止上傳」：中斷正在傳的那首，剩下的回到「等待上傳」
       const start = $('upStart');
-      start.disabled = running ? stopRequested : !pending;
+      start.hidden = !running && !pending; // 沒有待上傳的檔案就不顯示
+      start.disabled = running && stopRequested;
       start.classList.toggle('btn-primary', !running);
       start.classList.toggle('btn-secondary', running);
       start.querySelector('use').setAttribute('href', running ? '#i-stop' : '#i-upload');
