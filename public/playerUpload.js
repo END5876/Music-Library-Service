@@ -25,9 +25,9 @@
 
   const RESULT_TEXT = {
     transcode: () => '已轉成 MP3 並統一音量',
-    mp3gain: (j) => `保留原始 MP3（${j.kbps} kbps），無損調整音量 ${j.gainDb > 0 ? '+' : ''}${j.gainDb} dB`,
-    copy: (j) => `保留原始 MP3（${j.kbps} kbps），未重新編碼`,
-    original: () => '原檔保存，未轉檔',
+    mp3gain: () => '已統一音量，保留原始音質',
+    copy: () => '已保留原始音質',
+    original: () => '已保留原檔',
   };
 
   function create({ onUploaded, onPending, onFailed }) {
@@ -65,11 +65,11 @@
         d.querySelector('small').textContent = note || '';
         box.appendChild(d);
       };
-      card('音樂庫', u.library.bytes, 0, `${u.library.files.toLocaleString()} 首，不會被自動清除`);
-      card('線上快取', u.cache.bytes, u.cache.limitBytes, `${u.cache.files.toLocaleString()} 首，超過上限時自動清掉最久沒聽的`);
-      card('私人空間', u.private.bytes, u.private.quotaBytes, `${u.private.files.toLocaleString()} 首，只有你看得到`);
+      card('音樂庫', u.library.bytes, 0, `${u.library.files.toLocaleString()} 首`);
+      card('線上播放存下的歌', u.cache.bytes, u.cache.limitBytes, `${u.cache.files.toLocaleString()} 首，空間不夠時會清掉最久沒聽的`);
+      card('私人空間', u.private.bytes, u.private.quotaBytes, `${u.private.files.toLocaleString()} 首`);
       if (u.disk.freeBytes != null) {
-        card('磁碟剩餘', u.disk.freeBytes, 0, `低於 ${fmtBytes(u.disk.minFreeBytes)} 時停止接受上傳`);
+        card('伺服器剩餘空間', u.disk.freeBytes, 0, `低於 ${fmtBytes(u.disk.minFreeBytes)} 時暫停上傳`);
         if (u.disk.freeBytes < u.disk.minFreeBytes * 1.5) box.lastChild.classList.add('warn');
       }
       $('upLimitNote').textContent = `單檔上限 ${fmtBytes(u.maxUploadBytes)}`;
@@ -154,7 +154,7 @@
         if (onlyFailed && it.status !== 'error') continue;
         const li = document.createElement('li');
         li.className = 'up-item ' + it.status;
-        li.innerHTML = '<div class="up-main"><input class="up-title" type="text" maxlength="180" aria-label="曲名"><div class="up-meta"><span class="up-state"></span><span class="up-size"></span><span class="up-msg"></span></div><div class="up-bar"><i></i></div></div><button class="btn-icon ghost up-act"></button>';
+        li.innerHTML = '<div class="up-main"><input class="up-title" type="text" maxlength="180" aria-label="歌名"><div class="up-meta"><span class="up-state"></span><span class="up-size"></span><span class="up-msg"></span></div><div class="up-bar"><i></i></div></div><button class="btn-icon ghost up-act"></button>';
         const input = li.querySelector('.up-title');
         input.value = it.title;
         input.disabled = it.status !== 'pending' && it.status !== 'error';
@@ -205,12 +205,12 @@
     function syncTarget() {
       document.querySelectorAll('#upTarget .chip').forEach((b) => b.classList.toggle('active', b.dataset.target === target));
       $('upOriginalLine').hidden = target !== 'private';
-      $('upFolder').placeholder = target === 'private' ? '留空＝不分類' : '例如：uploads（留空＝不分類）';
+      $('upFolder').placeholder = '留空＝未分類';
       $('upTargetHint').textContent = target === 'private'
-        ? '只有你聽得到，會計入私人空間配額。'
-        : '所有登入的人和 Bot 都能播放。';
+        ? '只有你聽得到。'
+        : '大家和 Bot 都能播放。';
       $('upModeHint').textContent = original()
-        ? '原檔照存，不統一音量，會佔比較多空間。'
+        ? '會佔比較多空間。'
         : '會轉成 MP3 並統一音量。';
     }
 

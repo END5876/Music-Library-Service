@@ -85,7 +85,7 @@
 <main id="main">
   <div class="net-banner" id="netBanner" hidden>
     <svg><use href="#i-cloud-off"/></svg>
-    <span id="netText">目前離線，只能播放已下載的歌曲</span>
+    <span id="netText">目前離線，只能播放離線歌曲。</span>
     <button class="btn btn-sm btn-secondary" id="netRetry" hidden>重試</button>
     <button class="btn btn-sm btn-secondary" id="netGoOff">離線歌曲</button>
   </div>
@@ -127,7 +127,7 @@
   <div id="viewOnline" hidden>
     <section style="margin-top:0">
       <div class="sec-head"><h2>線上搜尋<small>YouTube + Bilibili</small></h2></div>
-      <div class="hint" id="onlineHint">輸入關鍵字，或貼上影片網址。</div>
+      <div class="hint" id="onlineHint"></div>
       <ul class="quick" id="onlineResults"></ul>
     </section>
   </div>
@@ -160,7 +160,7 @@
       <div class="sec-head"><h2>Bot 正在播放<small id="botsCount"></small></h2></div>
       <div class="hint" id="botsHint" hidden></div>
       <div id="botsList"></div>
-      <div class="empty" id="botsEmpty" hidden><svg><use href="#i-bot"/></svg><b>目前沒有 Bot 連上</b><span>Bot 連上這個音樂庫後會出現在這裡。</span></div>
+      <div class="empty" id="botsEmpty" hidden><svg><use href="#i-bot"/></svg><b>目前沒有 Bot 在線上</b></div>
     </section>
   </div>
 
@@ -178,7 +178,7 @@
           <button class="chip lock" type="button" data-target="private">私人上傳</button>
         </div>
         <p class="hint" id="upTargetHint"></p>
-        <label class="check-line" id="upOriginalLine" hidden><input type="checkbox" id="upOriginal">保留原檔、不轉檔（占用較多空間）</label>
+        <label class="check-line" id="upOriginalLine" hidden><input type="checkbox" id="upOriginal">保留原檔（不轉檔、不統一音量）</label>
         <p class="hint" id="upModeHint"></p>
         <label class="up-field">分類<input type="text" id="upFolder" maxlength="200" autocomplete="off"></label>
       </div>
@@ -196,7 +196,7 @@
       <p class="hint up-server" id="upServerNote" hidden></p>
       <div class="up-list-head"><button class="btn btn-secondary btn-sm" id="upClear" type="button" hidden>清除已完成</button></div>
       <ul class="up-list" id="upList"></ul>
-      <div class="empty" id="upEmpty"><svg><use href="#i-note"/></svg><b>還沒有選擇檔案</b><span>選好檔案後，可以先改曲名再上傳。</span></div>
+      <div class="empty" id="upEmpty"><svg><use href="#i-note"/></svg><b>還沒有選擇檔案</b><span>選好檔案後，可以先改歌名再上傳。</span></div>
       </div>
       </div>
     </section>
@@ -329,7 +329,7 @@
       </div>
     </div>
     <div class="queue">
-      <div class="queue-head"><h3 id="queueTitle">佇列</h3><button class="btn btn-sm btn-secondary" id="reshuffle" hidden><svg><use href="#i-shuffle"/></svg>重新洗牌</button></div>
+      <div class="queue-head"><h3 id="queueTitle">佇列</h3><button class="btn btn-sm btn-secondary" id="reshuffle" hidden><svg><use href="#i-shuffle"/></svg>重新打亂</button></div>
       <ul id="nextList"></ul>
     </div>
   </div>
@@ -351,7 +351,7 @@
     <p class="ttl" id="botPickTitle">點給 Bot 播放</p>
     <p class="msg" id="botPickSong"></p>
     <ul class="pick-list" id="botPickList"></ul>
-    <label class="check-line"><input type="checkbox" id="botPickNext">下一首播放（插到 Bot 佇列最前面）</label>
+    <label class="check-line"><input type="checkbox" id="botPickNext">排在下一首播放</label>
     <div class="dlg-actions"><button class="btn btn-secondary" id="botPickClose" type="button">取消</button></div>
   </div>
 </div>
@@ -404,7 +404,7 @@
     <p class="login-note">只會讀取你的 Discord 名稱與頭像。</p>
     <!-- 代碼交接(主畫面 App 用,見 webplayer/webAuth.js) -->
     <div class="handoff" id="handoff" hidden>
-      <p>在瀏覽器完成 Discord 登入後，確認頁上的代碼要和這裡相同：</p>
+      <p>在瀏覽器登入後，確認頁上的代碼要和這裡一樣：</p>
       <div class="handoff-code" id="handoffCode"></div>
       <a class="btn btn-lg btn-primary" id="handoffOpen" target="_blank" rel="noopener">在瀏覽器用 Discord 登入</a>
       <p id="handoffStatus"></p>

@@ -116,7 +116,7 @@
       box.append(head);
 
       if (!g.current) {
-        box.append(el('div', 'hint', '待命中，沒有播放。'));
+        box.append(el('div', 'hint', '沒有在播放。'));
       } else {
         const now = el('div', 'bot-now');
         const info = el('div', 'info');
@@ -197,7 +197,7 @@
         head.append(icon('bot'), el('b', '', botLabel(b)), el('span', 'bot-dot' + (b.online ? ' on' : ''), b.online ? '在線' : '離線'));
         card.append(head);
         if (!b.online) {
-          card.append(el('div', 'hint', '最後更新 ' + new Date(b.updatedAt).toLocaleString()));
+          card.append(el('div', 'hint', '最後連線：' + new Date(b.updatedAt).toLocaleString()));
         } else if (!b.guilds.length) {
           card.append(el('div', 'hint', '不在語音頻道。在 Discord 用 /play 讓 Bot 加入。'));
         } else {
@@ -287,7 +287,7 @@
         ? `「${itemTitle(list[0])}」等 ${list.length} 首` + (list.length > MAX_BATCH ? `\n一次最多 ${MAX_BATCH} 首，只會送出前 ${MAX_BATCH} 首` : '')
         : itemTitle(list[0]);
       if (skippedPrivate) $('botPickSong').textContent += `\n已略過 ${skippedPrivate} 首私人歌曲（Bot 不能播放）`;
-      $('botPickNext').parentElement.lastChild.textContent = list.length > 1 ? '下一首播放（整批插到 Bot 佇列最前面）' : '下一首播放（插到 Bot 佇列最前面）';
+      $('botPickNext').parentElement.lastChild.textContent = '排在下一首播放';
       const ul = $('botPickList');
       ul.textContent = '';
       for (const { bot, g } of ts) {

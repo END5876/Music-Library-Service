@@ -245,7 +245,7 @@
   // 瀏覽器那邊的進度(伺服器回 202 的 status)
   const HANDOFF_STATUS = {
     pending: () => '等待登入…',
-    confirming: () => '請在瀏覽器按「確認登入」',
+    confirming: () => '請在瀏覽器按「登入 App」',
     cancelled: () => '已在 Discord 取消登入，可以在瀏覽器再試一次',
     failed: () => 'Discord 登入失敗，可以在瀏覽器再試一次',
     denied: (j) => deniedMsg(String(j.uid || '').replace(/\D/g, '')),
@@ -1790,7 +1790,7 @@
     document.body.classList.toggle('is-offline', off);
     $('netBanner').hidden = !off;
     $('netText').textContent = noNet
-      ? '手機目前沒有網路。可以播放已下載的歌曲。'
+      ? '目前沒有網路，只能播放離線歌曲。'
       : '暫時連不上音樂庫，可能正在更新。先播放已下載的歌曲，連上後會自動恢復。';
     $('netRetry').hidden = noNet;
     $('netGoOff').hidden = mode === 'offline' || !offlineKeys.size;
@@ -1905,7 +1905,7 @@
     const off = offlineKeys.has(k);
     b.classList.toggle('done', off);
     b.style.fontSize = '';
-    if (off) { b.innerHTML = '<svg><use href="#i-downloaded"/></svg>'; b.title = '已下載（點擊移除）'; }
+    if (off) { b.innerHTML = '<svg><use href="#i-downloaded"/></svg>'; b.title = '已下載，點一下移除'; }
     else if (st) {
       b.textContent = st.active && st.pct > 0 ? st.pct + '%' : '…';
       b.style.fontSize = '11px';
@@ -1927,7 +1927,7 @@
   function updateQuota() {
     if (!navigator.storage || !navigator.storage.estimate) return;
     navigator.storage.estimate().then(({ usage = 0, quota = 0 }) => {
-      quotaText = quota ? `\n大約還能再下載 ${fmtSize(Math.max(0, quota - usage))}（瀏覽器估算，實際以手機剩餘空間為準）` : '';
+      quotaText = quota ? `\n大約還能再下載 ${fmtSize(Math.max(0, quota - usage))}` : '';
       const n = offlineKeys.size;
       let bytes = 0; offlineSizes.forEach((v) => { bytes += v; });
       $('offlineInfo').textContent = (n ? `已下載 ${n} 首，共 ${fmtSize(bytes)}` : '尚未下載任何歌曲') + quotaText;
@@ -1944,7 +1944,7 @@
     b.classList.toggle('done', !busy && allOff);
     b.style.fontSize = '';
     if (busy) { b.textContent = `${getBatch().done + getBatch().failed}/${getBatch().total}`; b.style.fontSize = '12px'; b.title = '取消下載'; }
-    else { b.innerHTML = `<svg><use href="#i-${allOff ? 'downloaded' : 'download'}"/></svg>`; b.title = allOff ? '已下載（點擊移除）' : '下載離線'; }
+    else { b.innerHTML = `<svg><use href="#i-${allOff ? 'downloaded' : 'download'}"/></svg>`; b.title = allOff ? '已下載，點一下移除' : '下載離線'; }
   }
   function paintDl() {
     document.querySelectorAll('.row[data-key]').forEach((r) => r.classList.toggle('offline', offlineKeys.has(r.dataset.key)));
@@ -2534,14 +2534,14 @@
     }
     menuInfo([
       ['分類：', priv ? '私人' + (privSubdir(f.filename) ? ' / ' + privSubdir(f.filename) : '') : (folderOf(f) || '未分類')],
-      ...(priv ? [['可見範圍：', '只有你。其他帳號和 Bot 都看不到。']] : []),
+      ...(priv ? [['可見範圍：', '只有你']] : []),
       ...(f.duration ? [['長度：', fmt(f.duration)]] : []),
       ['檔案大小：', fmtSize(f.size)],
       ['離線狀態：', isOff ? '已下載到此裝置' : (dlState.has(key) ? '下載中' : '未下載')],
       // 只有線上播放時自動存下的歌會被清掉：管理員可以收藏，一般使用者給做得到的事
       ...(f.cache ? [['提醒：', me.admin
         ? '這首是線上播放時自動存下的，空間不夠時會被清掉。移到分類就會一直保留。'
-        : '想確保隨時能聽，請選「下載離線」。']] : []),
+        : '這首之後可能會被清掉，想隨時能聽請「下載離線」。']] : []),
     ]);
     placeMenu(anchor);
   }
@@ -2605,7 +2605,7 @@
       if (!await askConfirm('設為私人？', f.name + '\n只有你看得到、聽得到；其他人的播放清單裡這首會變成找不到，Bot 也不能再播放。', { ok: '設為私人' })) return;
       to = privateTarget(f.filename);
     } else if (how === 'folder' && isPrivateFile(f.filename)) {
-      const d = await askText('移到哪個私人分類？', privSubdir(f.filename), { ok: '移到這裡', allowEmpty: true, placeholder: '留空＝不分類', maxLength: 100 });
+      const d = await askText('移到哪個私人分類？', privSubdir(f.filename), { ok: '移到這裡', allowEmpty: true, placeholder: '留空＝未分類', maxLength: 100 });
       if (d === null) return;
       to = privRoot + '/' + (cleanDir(d) ? cleanDir(d) + '/' : '') + stem;
     } else if (how === 'folder' || how === 'publish') {
