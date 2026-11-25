@@ -40,5 +40,8 @@ jobs:
           curl -fs -X PUT -H 'x-music-lib-key: ci-secret' --data-binary 'x' localhost:4100/api/music/file/ci/test.mp3
           curl -fs -H 'x-music-lib-key: ci-secret' localhost:4100/api/music/file/ci/test.mp3
           docker exec mls yt-dlp --version
+          # 映像內建的 HEALTHCHECK 要能變成 healthy（VPS 的 autodeploy 靠它判斷部署成功）
+          for i in $(seq 1 30); do s=$(docker inspect -f '{{.State.Health.Status}}' mls); [ "$s" = healthy ] && break; sleep 3; done
+          test "$s" = healthy
           docker logs mls
           docker rm -f mls

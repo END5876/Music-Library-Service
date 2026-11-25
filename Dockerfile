@@ -53,6 +53,10 @@ RUN sed -i 's/\r$//' /app/docker-entrypoint.sh && chmod 755 /app/docker-entrypoi
     mkdir -p /app/data && chown node:node /app/data
 
 EXPOSE 4100
+# 健康檢查：只看音樂庫資料夾讀不讀得到。「沒掛 Volume」也會讓 /health 回 503，但重啟修不好，
+# 而 VPS 的 heal.sh 會重啟 unhealthy 的容器，所以這裡不採用狀態碼，避免一直重啟。
+# start-period 留給啟動時的檔案擁有者修正。
+HEALTHCHECK --interval=30s --timeout=10s --start-period=90s --retries=3     CMD node -e "fetch('http://127.0.0.1:'+(process.env.PORT||4100)+'/health').then(r=>r.json()).then(b=>process.exit(b.library==='ok'?0:1)).catch(()=>process.exit(1))"
 
 # node 當 PID 1 不會回收孫行程（例如 yt-dlp 被砍後留下的 ffmpeg），交給 tini 處理；
 # entrypoint 把資料夾交給 node 使用者後降權執行（見 docker-entrypoint.sh）
