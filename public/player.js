@@ -18,11 +18,6 @@
   const REPEATS = ['all', 'one', 'off'];
   const REPEAT_LABEL = { all: '列表循環', one: '單曲循環', off: '不循環' };
 
-  // 拖曳排序的提示線(CSS 檔不用再改)
-  const st = document.createElement('style');
-  st.textContent = '.row.drop-before{box-shadow:0 -2px 0 var(--accent)}.row.drop-after{box-shadow:0 2px 0 var(--accent)}.row.dragging{pointer-events:none}';
-  document.head.appendChild(st);
-
   // ── 狀態 ──
   let all = [];            // 全部曲目
   let view = [];           // 目前篩選後的清單

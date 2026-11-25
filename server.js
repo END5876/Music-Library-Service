@@ -60,7 +60,7 @@ app.use((req, res, next) => {
     'Referrer-Policy': 'no-referrer',
     'X-Frame-Options': 'DENY',
     'Content-Security-Policy':
-      "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; " +
+      "default-src 'self'; script-src 'self'; style-src 'self'; " +
       "img-src 'self' data: blob:; media-src 'self' blob:; connect-src 'self'; " +
       "worker-src 'self'; manifest-src 'self'; object-src 'none'; base-uri 'none'; frame-ancestors 'none'",
   });

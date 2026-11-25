@@ -5,7 +5,8 @@ ARG BGUTIL_SRC_SHA256=1f2ae9ec39405b8e80397dfc2551f58deed09d8dff4b2b8fbc314df8e0
 ARG BGUTIL_PLUGIN_SHA256=a26b980bf6d8e8400d8f21445daa4d8381bf6183d20f0be309391f86b31e27ef
 
 # ── 建置 bgutil server（需要 TypeScript 編譯與 canvas 原生模組，在完整映像裡做）──
-FROM node:22 AS bgutil
+# 基底映像固定到 digest，每次建置內容一致；新版由 Dependabot 每月開 PR 更新
+FROM node:22@sha256:7c400d78797d8cbe3f6bb21d2227b86af4cd24b0014cc9f62ff989cc16de988e AS bgutil
 ARG BGUTIL_VERSION
 ARG BGUTIL_SRC_SHA256
 ARG BGUTIL_PLUGIN_SHA256
@@ -19,7 +20,7 @@ RUN curl -fsSL https://github.com/Brainicism/bgutil-ytdlp-pot-provider/archive/r
       -o /build/bgutil-ytdlp-pot-provider.zip && \
     echo "${BGUTIL_PLUGIN_SHA256}  /build/bgutil-ytdlp-pot-provider.zip" | sha256sum -c -
 
-FROM node:22-slim
+FROM node:22-slim@sha256:be979e5523c76fa4d5ca4ebd3099078f220aa47ec39c48ad5b5df9314debd6eb
 
 ENV NODE_ENV=production
 # yt-dlp 放在 node 使用者可寫的資料夾：服務以 node 身分執行，自動更新（yt-dlp -U）要能取代執行檔

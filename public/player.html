@@ -20,7 +20,7 @@
 </head>
 <body>
 
-<svg style="display:none">
+<svg class="svg-defs">
   <symbol id="i-play" viewBox="0 0 24 24"><path d="M8 5v14l11-7z"/></symbol>
   <symbol id="i-pause" viewBox="0 0 24 24"><path d="M6 19h4V5H6zm8-14v14h4V5z"/></symbol>
   <symbol id="i-next" viewBox="0 0 24 24"><path d="M6 18l8.5-6L6 6zM16 6v12h2V6z"/></symbol>
@@ -125,7 +125,7 @@
   </div>
 
   <div id="viewOnline" hidden>
-    <section style="margin-top:0">
+    <section class="first">
       <div class="sec-head"><h2>線上搜尋<small>YouTube + Bilibili</small></h2></div>
       <div class="hint" id="onlineHint"></div>
       <ul class="quick" id="onlineResults"></ul>
@@ -133,7 +133,7 @@
   </div>
 
   <div id="viewOffline" hidden>
-    <section style="margin-top:0">
+    <section class="first">
       <div class="sec-head">
         <h2>離線歌曲<small id="offCount"></small></h2>
         <div class="sec-btns">
@@ -156,7 +156,7 @@
   </div>
 
   <div id="viewBots" hidden>
-    <section style="margin-top:0">
+    <section class="first">
       <div class="sec-head"><h2>Bot 正在播放<small id="botsCount"></small></h2></div>
       <div class="hint" id="botsHint" hidden></div>
       <div id="botsList"></div>
@@ -166,7 +166,7 @@
 
   <!-- 上傳(只有管理員;邏輯在 playerUpload.js) -->
   <div id="viewUpload" hidden>
-    <section style="margin-top:0">
+    <section class="first">
       <div class="sec-head"><h2>上傳音樂<small id="upLimitNote"></small></h2></div>
       <!-- 寬螢幕(≥1100px)分兩欄:左邊設定與選檔(固定不捲走),右邊檔案清單 -->
       <div class="up-layout">
@@ -204,7 +204,7 @@
 
   <div id="viewPlaylists" hidden>
     <div id="plListPane">
-      <section style="margin-top:0">
+      <section class="first">
         <div class="sec-head"><h2>播放清單<small id="plCount"></small></h2><button class="btn btn-primary" id="plNew"><svg><use href="#i-plus"/></svg>新增</button></div>
         <ul class="quick" id="plLists"></ul>
         <div class="empty" id="plEmpty" hidden><svg><use href="#i-playlist"/></svg><b id="plEmptyText"></b><button class="btn btn-primary" id="plEmptyNew"><svg><use href="#i-plus"/></svg>新增播放清單</button></div>

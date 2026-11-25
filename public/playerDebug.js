@@ -95,16 +95,6 @@
     `# 裊器音樂 除錯日誌\n# 匯出時間 ${new Date().toString()}\n# 頁面 ${location.href}\n# UA ${navigator.userAgent}\n# 除錯模式 ${DEBUG ? '開' : '關'}　共 ${logBuf.length} 行\n\n` +
     logBuf.join('\n') + '\n';
 
-  const dbgStyle = document.createElement('style');
-  dbgStyle.textContent = '.dbg-btn{width:36px;height:36px;border-radius:50%;flex-shrink:0;margin-left:auto;display:inline-flex;align-items:center;justify-content:center;color:var(--text-2)}' +
-    '.dbg-btn:hover{background:var(--hover);color:var(--text)}.dbg-btn svg{width:20px;height:20px;fill:currentColor}' +
-    '.dbg-btn.on{color:var(--text);box-shadow:inset 0 0 0 2px var(--accent)}.dbg-btn + #acctBtn{margin-left:0}' +
-    '#dbgDlg .box{max-width:560px;max-height:calc(100dvh - 32px);overflow:auto}' +
-    '#dbgInfo{color:var(--text-2);font-size:13px}' +
-    '#dbgText{width:100%;height:45vh;min-height:140px;flex-shrink:0;background:#101010;color:#cfcfcf;border:1px solid var(--border);border-radius:10px;padding:8px;font:11px/1.5 ui-monospace,Menlo,Consolas,monospace;resize:none;overflow:auto;white-space:pre;-webkit-appearance:none;appearance:none}' +
-    '#dbgDlg .row2{display:flex;gap:8px;flex-wrap:wrap}#dbgDlg .row2 .btn{flex:1 1 0;min-width:0;padding:0 8px}';
-  document.head.appendChild(dbgStyle);
-
   const dbgBtn = document.createElement('button');
   dbgBtn.className = 'dbg-btn'; dbgBtn.id = 'dbgBtn'; dbgBtn.type = 'button';
   // 單色蟲子圖示(跟著文字顏色,不用彩色 emoji)
