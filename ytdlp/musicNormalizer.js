@@ -8,7 +8,7 @@ const { spawn } = require('child_process');
 const fs   = require('fs');
 const path = require('path');
 const logger = require('../logger');
-const { invalidateList, SAFE_INPUT_ARGS } = require('../musicStore');
+const { SAFE_INPUT_ARGS } = require('../musicStore');
 
 const TARGET_LUFS = -16;   // -t -16
 const TARGET_LRA  = 20;    // -lrt 20
@@ -17,9 +17,13 @@ const TARGET_TP   = -2.0;  // 未指定 -tp 時，ffmpeg-normalize 於 ebu 模�
 // 上傳用：只取第一條音軌（忽略封面圖等視訊串流），輸出 LAME VBR -q:a 2
 const MP3_SELECT = ['-map', '0:a:0', '-vn'];
 const MP3_ENCODE = ['-c:a', 'libmp3lame', '-q:a', '2'];
-// 🐛 背景下載的快取檔：跟下載時 yt-dlp 的 --audio-quality 0 一樣用 VBR -q:a 0。
+// 🐛 背景下載的快取檔：用 VBR -q:a 0（同 Bot）。
 // 以前沒指定編碼參數，ffmpeg 用 LAME 預設的 128 kbps CBR，正規化一次音質就永久掉一半
 const CACHE_ENCODE = ['-c:a', 'libmp3lame', '-q:a', '0'];
+
+// 背景下載的原始音訊：除了 SAFE_INPUT_ARGS 的格式，yt-dlp 還可能抓到 mpegts／flv
+const DOWNLOAD_INPUT_ARGS = SAFE_INPUT_ARGS.map((a, i) =>
+  SAFE_INPUT_ARGS[i - 1] === '-format_whitelist' ? `${a},mpegts,flv` : a);
 
 // 所有 ffmpeg 響度工作（背景下載的正規化、網頁上傳）共用同一個並行上限
 // 記憶體小的機器可設 WEB_MAX_NORMALIZE=1：只是快取檔晚一點完成正規化，不影響播放
@@ -47,13 +51,23 @@ function _enqueue(task) {
 }
 
 /**
- * 成功：覆蓋原檔案，resolve(filePath)
- * 失敗：保留原檔案不動，reject(err)（呼叫端應 catch 但不中斷主流程）
- * ⚠️ 會原地換掉檔案：只能用在還沒發布的暫存檔（見 musicCache.downloadAndCache），
- *    已在庫內的檔案可能正在被播放，換掉後瀏覽器接下來的 Range 請求會用舊檔的位移讀新檔
+ * 背景下載用：從 yt-dlp 抓下來的原始音訊直接編碼成已正規化的 MP3，只壓縮一次（同 Bot）。
+ * 正規化失敗時退回一般轉檔，仍產出可播放的檔案。outputPath 要是還沒發布的暫存檔。
+ * @returns {Promise<{ normalized: boolean }>}
  */
-function normalizeAudioFile(filePath) {
-  return _enqueue(() => _normalizeOne(filePath));
+function encodeNormalizedMp3(inputPath, outputPath) {
+  return _enqueue(async () => {
+    try {
+      const measured = await _analyzeLoudness(inputPath, MP3_SELECT, DOWNLOAD_INPUT_ARGS);
+      await _applyLoudnorm(inputPath, outputPath, measured, [...MP3_SELECT, ...CACHE_ENCODE], DOWNLOAD_INPUT_ARGS);
+      return { normalized: true };
+    } catch (err) {
+      try { fs.unlinkSync(outputPath); } catch {}
+      logger.warn('MusicNormalizer', `⚠️ 正規化失敗，改為一般轉檔: ${path.basename(outputPath)} - ${err.message}`);
+      await _ffmpeg(['-hide_banner', '-nostats', '-y', ...DOWNLOAD_INPUT_ARGS, '-i', inputPath, ...MP3_SELECT, ...CACHE_ENCODE, outputPath]);
+      return { normalized: false };
+    }
+  });
 }
 
 /**
@@ -172,42 +186,11 @@ function _ffmpeg(args) {
   });
 }
 
-function _normalizeOne(filePath) {
-  return new Promise((resolve, reject) => {
-    if (!fs.existsSync(filePath)) {
-      return reject(new Error(`檔案不存在: ${filePath}`));
-    }
-
-    const dir  = path.dirname(filePath);
-    const ext  = path.extname(filePath);
-    const base = path.basename(filePath, ext);
-
-    // 暫存檔建在與原檔相同的資料夾，確保同一個掛載點，rename 不會拋 EXDEV
-    const tmpPath = path.join(dir, `${base}.norm_${Date.now()}.tmp${ext}`);
-
-    _analyzeLoudness(filePath)
-      .then((measured) => _applyLoudnorm(filePath, tmpPath, measured, [...MP3_SELECT, ...CACHE_ENCODE]))
-      .then(() => {
-        fs.renameSync(tmpPath, filePath);
-        invalidateList(); // 檔案大小改變了
-        logger.debug('MusicNormalizer', `✅ 響度正規化完成: ${path.basename(filePath)}`);
-        resolve(filePath);
-      })
-      .catch((err) => {
-        if (fs.existsSync(tmpPath)) {
-          try { fs.unlinkSync(tmpPath); } catch {}
-        }
-        logger.warn('MusicNormalizer', `⚠️ 正規化失敗，保留原檔: ${path.basename(filePath)} - ${err.message}`);
-        reject(err);
-      });
-  });
-}
-
-function _analyzeLoudness(filePath, outputArgs = []) {
+function _analyzeLoudness(filePath, outputArgs = [], inputArgs = SAFE_INPUT_ARGS) {
   return new Promise((resolve, reject) => {
     const args = [
       '-hide_banner', '-nostats',
-      ...SAFE_INPUT_ARGS,
+      ...inputArgs,
       '-i', filePath,
       ...outputArgs,
       '-af', `loudnorm=I=${TARGET_LUFS}:LRA=${TARGET_LRA}:TP=${TARGET_TP}:print_format=json`,
@@ -234,7 +217,7 @@ function _analyzeLoudness(filePath, outputArgs = []) {
   });
 }
 
-function _applyLoudnorm(inputPath, outputPath, measured, outputArgs = []) {
+function _applyLoudnorm(inputPath, outputPath, measured, outputArgs = [], inputArgs = SAFE_INPUT_ARGS) {
   return new Promise((resolve, reject) => {
     const af =
       `loudnorm=I=${TARGET_LUFS}:LRA=${TARGET_LRA}:TP=${TARGET_TP}:` +
@@ -244,7 +227,7 @@ function _applyLoudnorm(inputPath, outputPath, measured, outputArgs = []) {
 
     const args = [
       '-hide_banner', '-nostats', '-y',
-      ...SAFE_INPUT_ARGS,
+      ...inputArgs,
       '-i', inputPath,
       ...outputArgs,
       '-af', af,
@@ -265,7 +248,7 @@ function _applyLoudnorm(inputPath, outputPath, measured, outputArgs = []) {
 }
 
 module.exports = {
-  normalizeAudioFile,
+  encodeNormalizedMp3,
   normalizeToMp3,
   processUpload,
   gainSteps,

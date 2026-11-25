@@ -10,6 +10,7 @@
 //   - 移除網頁用不到的 buildPlaylistCheckArgs（網頁沒有播放清單流程）
 
 const fs   = require('fs');
+const os   = require('os');
 const path = require('path');
 const logger = require('../logger');
 const potProvider = require('./potProvider');
@@ -121,18 +122,43 @@ function isYouTubeUrl(url) {
   return !!u && (hostIs(u.hostname, 'youtube.com') || hostIs(u.hostname, 'youtu.be'));
 }
 
+// yt-dlp 已棄用 `--add-header Cookie:`（會對所有網域送出），改寫成暫存的 Netscape cookie 檔，
+// 讓 Cookie 只套用在指定網域；寫檔失敗時才退回 header 模式（同 Bot）
+const _tempCookieFiles = new Set();
+process.once('exit', () => {
+  for (const file of _tempCookieFiles) {
+    try { fs.unlinkSync(file); } catch { /* 已不存在 */ }
+  }
+});
+
+function _writeTempCookieFile(name, domain, cookies) {
+  const file = path.join(os.tmpdir(), `musiclib-${name}-cookies-${process.pid}.txt`);
+  const lines = ['# Netscape HTTP Cookie File'];
+  for (const [key, value] of cookies) {
+    lines.push([`.${domain}`, 'TRUE', '/', 'TRUE', '2147483647', key, value].join('\t'));
+  }
+  try {
+    fs.writeFileSync(file, lines.join('\n') + '\n', { mode: 0o600 });
+    _tempCookieFiles.add(file);
+    return file;
+  } catch (err) {
+    logger.warn('Cookies', `無法寫入暫存 cookie 檔，改用 header 模式: ${err.message}`);
+    return null;
+  }
+}
+
 // Bilibili 只讀 .env 的 BILIBILI_*，不使用 cookies.txt（cookies.txt 只給 YouTube 用）
 function prepareBilibiliCookies() {
   const sessdata   = process.env.BILIBILI_SESSDATA;
   const biliJct    = process.env.BILIBILI_BILI_JCT;
   const dedeUserId = process.env.BILIBILI_DEDEUSERID;
   if (sessdata) {
-    logger.debug('Bilibili', '從環境變數載入 Cookies（記憶體模式）');
-    const parts = [`SESSDATA=${sessdata}`];
-    if (biliJct)    parts.push(`bili_jct=${biliJct}`);
-    if (dedeUserId) parts.push(`DedeUserID=${dedeUserId}`);
-    BILIBILI_COOKIES_FILE  = null;
-    BILIBILI_COOKIE_HEADER = parts.join('; ');
+    logger.debug('Bilibili', '從環境變數載入 Cookies（暫存檔模式）');
+    const cookies = [['SESSDATA', sessdata]];
+    if (biliJct)    cookies.push(['bili_jct', biliJct]);
+    if (dedeUserId) cookies.push(['DedeUserID', dedeUserId]);
+    BILIBILI_COOKIES_FILE  = _writeTempCookieFile('bilibili', 'bilibili.com', cookies);
+    BILIBILI_COOKIE_HEADER = BILIBILI_COOKIES_FILE ? null : cookies.map(([k, v]) => `${k}=${v}`).join('; ');
     return;
   }
   logger.debug('Bilibili', '未設定 BILIBILI_SESSDATA，播放可能失敗');
@@ -156,12 +182,12 @@ function prepareYouTubeCookies() {
   const ytSessId = process.env.YOUTUBE_SESSION_ID;
   const ytVisitor = process.env.YOUTUBE_VISITOR_INFO;
   if (ytSessId || ytVisitor) {
-    logger.debug('YouTube', '從環境變數載入 Cookies（記憶體模式）');
-    const parts = [];
-    if (ytSessId)  parts.push(`SID=${ytSessId}`);
-    if (ytVisitor) parts.push(`VISITOR_INFO1_LIVE=${ytVisitor}`);
-    YT_COOKIES_FILE   = null;
-    YT_COOKIE_HEADER  = parts.join('; ');
+    logger.debug('YouTube', '從環境變數載入 Cookies（暫存檔模式）');
+    const cookies = [];
+    if (ytSessId)  cookies.push(['SID', ytSessId]);
+    if (ytVisitor) cookies.push(['VISITOR_INFO1_LIVE', ytVisitor]);
+    YT_COOKIES_FILE   = _writeTempCookieFile('youtube', 'youtube.com', cookies);
+    YT_COOKIE_HEADER  = YT_COOKIES_FILE ? null : cookies.map(([k, v]) => `${k}=${v}`).join('; ');
     return;
   }
   logger.debug('YouTube', '未設定 Cookies，使用無帳號模式');
@@ -216,7 +242,8 @@ function buildYouTubeArgs(url, strategy, streamMode = true) {
   if (streamMode) {
     args.push('-f', 'bestaudio/best', '-o', '-', '--quiet', '--buffer-size', '16K');
   } else {
-    args.push('-f', 'bestaudio/best', '-o', '__OUTPUT__', '--extract-audio', '--audio-format', 'mp3', '--audio-quality', '0');
+    // 只抓原始音訊，MP3 編碼交給 musicCache 的正規化步驟一次完成（同 Bot）
+    args.push('-f', 'bestaudio/best', '-o', '__OUTPUT__');
   }
 
   args.push('--no-playlist', '--no-warnings');
@@ -257,7 +284,8 @@ function buildBilibiliArgs(url, streamMode = true) {
   if (streamMode) {
     args.push('-f', 'bestaudio/best', '-o', '-', '--quiet', '--extract-audio', '--audio-format', 'opus', '--audio-quality', '0', '--buffer-size', '16K');
   } else {
-    args.push('-f', 'bestaudio/best', '-o', '__OUTPUT__', '--extract-audio', '--audio-format', 'mp3', '--audio-quality', '0');
+    // 只抓原始音訊，MP3 編碼交給 musicCache 的正規化步驟一次完成（同 Bot）
+    args.push('-f', 'bestaudio/best', '-o', '__OUTPUT__');
   }
 
   args.push('--no-playlist', '--no-warnings');
@@ -313,6 +341,7 @@ function buildYouTubeSearchArgs() {
   }
 
   _appendCookieArgs(args, YT_COOKIES_FILE, YT_COOKIE_HEADER);
+  args.push(...potProvider.extractorArgs());
 
   args.push(
     '--user-agent',   YOUTUBE_HEADERS['User-Agent'],

@@ -107,11 +107,12 @@ function downloadAndCache(url, title, ytdlpArgs, onProgress) {
 
     const filename  = getCacheFilename(url, title);
     const filePath  = path.join(CACHE_DIR, filename);
-    const tmpBase   = path.join(CACHE_DIR, filename.replace(/\.mp3$/, '.tmp'));
-    const tmpActual = tmpBase + '.mp3'; // yt-dlp 轉檔後實際產生的路徑
+    // 原始音訊（yt-dlp 不轉檔，照原樣寫入這個路徑）與編碼中的 MP3
+    const rawTmp    = path.join(CACHE_DIR, filename.replace(/\.mp3$/, '.tmp'));
+    const mp3Tmp    = path.join(CACHE_DIR, filename.replace(/\.mp3$/, `.enc_${Date.now()}.tmp.mp3`));
 
     // -o 是 yt-dlp 的輸出範本：標題裡的 % 要寫成 %%，否則像「%(id)s」會被展開成別的檔名，下載完就找不到輸出檔
-    const finalArgs = ytdlpArgs.map(a => a === '__OUTPUT__' ? tmpBase.replace(/%/g, '%%') : a);
+    const finalArgs = ytdlpArgs.map(a => a === '__OUTPUT__' ? rawTmp.replace(/%/g, '%%') : a);
 
     const platform = isYouTubeUrl(url) ? 'YouTube' : 'Bilibili';
 
@@ -133,7 +134,7 @@ function downloadAndCache(url, title, ytdlpArgs, onProgress) {
 
     const timer = setTimeout(() => {
       console.warn(`⚠️ [${platform}] 下載逾時（${DOWNLOAD_TIMEOUT_MS / 60000} 分鐘），強制終止: ${filename}`);
-      killTree(ytdlp, 'SIGKILL'); // 連同 yt-dlp 轉檔用的 ffmpeg 一起終止
+      killTree(ytdlp, 'SIGKILL'); // 連同 yt-dlp 自己開的 ffmpeg 一起終止
     }, DOWNLOAD_TIMEOUT_MS);
 
     ytdlp.on('error', err => { clearTimeout(timer); reject(new Error('執行 yt-dlp 失敗: ' + err.message)); });
@@ -141,44 +142,41 @@ function downloadAndCache(url, title, ytdlpArgs, onProgress) {
     ytdlp.on('close', code => {
       clearTimeout(timer);
       if (code !== 0) {
-        try { if (fs.existsSync(tmpActual)) fs.unlinkSync(tmpActual); } catch {}
-        try { if (fs.existsSync(tmpBase))   fs.unlinkSync(tmpBase);   } catch {}
+        safeUnlink(rawTmp);
+        safeUnlink(`${rawTmp}.part`);
         console.error(`❌ [${platform}] 下載失敗:`, errorOutput.slice(-300));
         reject(new Error(`下載失敗 (code: ${code}): ${errorOutput.slice(-200)}`));
         return;
       }
 
-      const actualTmp = fs.existsSync(tmpActual) ? tmpActual
-        : fs.existsSync(tmpBase)                 ? tmpBase
-        : null;
-
-      if (!actualTmp) {
+      if (!fs.existsSync(rawTmp)) {
         reject(new Error('下載完成但找不到輸出檔案'));
         return;
       }
 
-      // 🐛 先在暫存檔上做響度正規化，再改名成快取檔名發布：以前是發布後才正規化、原地換掉檔案，
-      // 已經開始播這個檔的瀏覽器接下來的 Range 請求會用舊檔的位移讀新檔（雜音或 416）。
-      // 正規化失敗就照原檔發布（原檔仍可正常播放）
-      normalizer.normalizeAudioFile(actualTmp)
-        .then(
-          () => console.log(`🎚️ [Normalizer] 響度正規化完成: ${filename}`),
-          (err) => console.warn(`⚠️ [Normalizer] 正規化失敗（略過，原檔仍可正常播放）: ${err.message}`),
-        )
-        .then(() => {
-          try {
-            fs.renameSync(actualTmp, filePath);
-            invalidateList();
-            evictCacheIfNeeded(); // 新檔加入後再檢查一次容量（下載前的檢查看不到這一首）
-            const sizeMB = (fs.statSync(filePath).size / 1024 / 1024).toFixed(2);
-            console.log(`✅ [${platform}] 下載完成: ${filename} (${sizeMB} MB)`);
-            resolve(filePath);
-          } catch (err) {
-            reject(new Error('重新命名快取檔失敗: ' + err.message));
-          }
+      // 響度正規化與 MP3 編碼一次完成（正規化失敗會退回一般轉檔），做完才改名發布：
+      // 發布後才換掉檔案的話，正在播的瀏覽器會用舊檔的位移讀新檔（雜音或 416）
+      normalizer.encodeNormalizedMp3(rawTmp, mp3Tmp)
+        .then(({ normalized }) => {
+          safeUnlink(rawTmp);
+          fs.renameSync(mp3Tmp, filePath);
+          invalidateList();
+          evictCacheIfNeeded(); // 新檔加入後再檢查一次容量（下載前的檢查看不到這一首）
+          const sizeMB = (fs.statSync(filePath).size / 1024 / 1024).toFixed(2);
+          console.log(`✅ [${platform}] 下載完成: ${filename} (${sizeMB} MB${normalized ? '，已正規化響度' : '，未正規化'})`);
+          resolve(filePath);
+        })
+        .catch((err) => {
+          safeUnlink(rawTmp);
+          safeUnlink(mp3Tmp);
+          reject(new Error('轉檔快取檔失敗: ' + err.message));
         });
     });
   });
+}
+
+function safeUnlink(f) {
+  try { fs.unlinkSync(f); } catch {}
 }
 
 module.exports = {
