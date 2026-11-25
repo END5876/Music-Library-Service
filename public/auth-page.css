@@ -1,0 +1,9 @@
+/* 登入流程中的小頁面（webplayer/webAuth.js 的 sendPage） */
+body{margin:0;min-height:100vh;display:flex;align-items:center;justify-content:center;padding:16px;box-sizing:border-box;background:#0b0b0b;color:#fff;font-family:-apple-system,"Segoe UI","Noto Sans TC","PingFang TC","Microsoft JhengHei",Roboto,sans-serif}
+main{background:#1c1c1c;border:1px solid #2e2e2e;border-radius:16px;padding:24px;width:100%;max-width:360px;display:flex;flex-direction:column;gap:14px;text-align:center}
+h1{font-size:18px;margin:0}p{color:#b3b3b3;font-size:14px;line-height:1.6;margin:0}
+.code{font:700 30px/1.2 ui-monospace,Menlo,Consolas,monospace;letter-spacing:.2em;color:#fff}
+form{display:flex;flex-direction:column;gap:10px}
+button,a.btn{height:46px;border-radius:23px;border:0;font:inherit;font-size:15px;font-weight:700;cursor:pointer;display:flex;align-items:center;justify-content:center;text-decoration:none}
+.primary{background:#fff;color:#000}.secondary{background:#2a2a2a;color:#fff}
+p.warn{color:#ff6b81;font-weight:600}

@@ -356,7 +356,8 @@ npm run lint    # ESLint
 GitHub Actions（`.github/workflows/ci.yml`）在每次 push／PR 時跑 lint 與測試，並建置 Docker 映像做冒煙測試；
 每週一也會自動重建一次，確認上游 yt-dlp／bgutil 更新後映像仍可建置。
 
-前端在 `public/`，都是不需打包的一般 `<script>`：`player.js` 是核心（佇列、播放、清單共用同一組閉包狀態），
+前端在 `public/`，都是不需打包的一般 `<script>`：核心拆成 `playerState.js`、`playerQueue.js`、`playerPlayback.js` 等 11 個檔
+（分工與載入順序見 `player.js` 開頭，跨檔的狀態與函式放在 `window.MLPlayer`），
 其餘拆成 `playerUi.js`（提示訊息、返回鍵層級、對話框）、`playerDebug.js`（`?debug=1` 除錯面板）、
 `playerPlatform.js`（Android 判斷與靜音保活）、`playerGestures.js`（手機手勢）、`downloader.js`、`offlineStore.js`，
 彼此透過 `window.ML*` 取用。新增前端檔案時，`player.html` 的 `<script>` 順序與 `sw.js` 的 `SHELL_URLS` 都要列出，並把 `sw.js` 的 `VERSION` 加一。

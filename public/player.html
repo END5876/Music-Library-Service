@@ -415,7 +415,7 @@
   </div>
 </div>
 
-<!-- 載入順序有依賴:offlineStore.js、downloader.js 必須早於 player.js(player.js 一開始就會取用 window.MLOfflineStore / window.MLDownloader);
+<!-- 載入順序有依賴:順序照 player.js 開頭的說明;offlineStore.js、downloader.js 必須早於 player*.js 的其他檔;
      新增或更名腳本時,sw.js 的 SHELL_URLS 也要同步 -->
 <script src="/player-assets/zhFold.js"></script>
 <script src="/player-assets/offlineStore.js"></script>
@@ -426,6 +426,16 @@
 <script src="/player-assets/playerGestures.js"></script>
 <script src="/player-assets/playerBots.js"></script>
 <script src="/player-assets/playerUpload.js"></script>
+<script src="/player-assets/playerState.js"></script>
+<script src="/player-assets/playerAccount.js"></script>
+<script src="/player-assets/playerLibrary.js"></script>
+<script src="/player-assets/playerQueue.js"></script>
+<script src="/player-assets/playerPlayback.js"></script>
+<script src="/player-assets/playerControls.js"></script>
+<script src="/player-assets/playerSource.js"></script>
+<script src="/player-assets/playerDownloads.js"></script>
+<script src="/player-assets/playerPlaylists.js"></script>
+<script src="/player-assets/playerMenus.js"></script>
 <script src="/player-assets/player.js"></script>
 </body>
 </html>

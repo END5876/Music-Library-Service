@@ -1,7 +1,7 @@
 'use strict';
 // sw.js — 讓播放器頁面與清單在離線時仍能開啟（離線音檔本身存在 IndexedDB，由 player.js 處理）
 // 由 /player-sw.js 提供（scope 為 /），改版時把 VERSION 加一即可讓舊快取失效。
-const VERSION = 'v35';
+const VERSION = 'v36';
 const SHELL = `ml-shell-${VERSION}`;
 const DATA = `ml-data-${VERSION}`;
 const SHELL_URLS = [
@@ -17,6 +17,16 @@ const SHELL_URLS = [
   '/player-assets/playerGestures.js',
   '/player-assets/playerBots.js',
   '/player-assets/playerUpload.js',
+  '/player-assets/playerState.js',
+  '/player-assets/playerAccount.js',
+  '/player-assets/playerLibrary.js',
+  '/player-assets/playerQueue.js',
+  '/player-assets/playerPlayback.js',
+  '/player-assets/playerControls.js',
+  '/player-assets/playerSource.js',
+  '/player-assets/playerDownloads.js',
+  '/player-assets/playerPlaylists.js',
+  '/player-assets/playerMenus.js',
   '/player-assets/player.js',
   '/player-assets/icons/icon-192.png',
   '/player-assets/icons/icon-512.png',
